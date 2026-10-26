@@ -1,11 +1,19 @@
+import asyncio
 import json
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
-from aiverse_server.app import create_app
-from aiverse_server.protocol import ERROR_MAX_LENGTH, PROTOCOL_VERSION, bad_message
+from aiverse_server.app import CLOSE_POLICY_VIOLATION, Game, Outbox, create_app
+from aiverse_server.protocol import (
+    ERROR_MAX_LENGTH,
+    PROTOCOL_VERSION,
+    StateMessage,
+    bad_message,
+    world_view,
+)
 from aiverse_server.world import Position, Resident, World, WorldMap
 
 HELLO = {"type": "hello", "protocolVersion": PROTOCOL_VERSION}
@@ -101,3 +109,148 @@ def test_error_details_are_truncated() -> None:
     message = bad_message("x" * 500).message
     assert len(message) == ERROR_MAX_LENGTH
     assert message.endswith("…")
+
+
+def move(resident_id: str, x: object, y: object) -> str:
+    action = {"type": "move_to", "residentId": resident_id, "target": {"x": x, "y": y}}
+    return json.dumps({"type": "action", "action": action})
+
+
+def greet(ws: Any) -> dict[str, Any]:
+    """Says hello and returns the world from the reply."""
+    ws.send_text(json.dumps(HELLO))
+    assert ws.receive_json()["type"] == "welcome"
+    state: dict[str, Any] = ws.receive_json()
+    assert state["type"] == "state"
+    return state["world"]  # type: ignore[no-any-return]
+
+
+def positions(world: dict[str, Any]) -> dict[str, dict[str, float]]:
+    return {r["id"]: r["position"] for r in world["residents"]}
+
+
+def test_move_to_is_acknowledged_then_the_new_world_is_sent(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(move("b", 30, 40.5))
+        assert ws.receive_json() == {"type": "action_result", "ok": True}
+        state = ws.receive_json()
+    assert state["type"] == "state"
+    assert positions(state["world"]) == {"a": {"x": 0, "y": 50}, "b": {"x": 30, "y": 40.5}}
+
+
+def test_moves_reach_every_greeted_connection_and_persist(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as mover, client.websocket_connect("/ws") as watcher:
+        greet(mover)
+        greet(watcher)
+        with client.websocket_connect("/ws") as stranger:
+            mover.send_text(move("a", 5, 6))
+            assert mover.receive_json()["ok"] is True
+            assert positions(mover.receive_json()["world"])["a"] == {"x": 5, "y": 6}
+            assert positions(watcher.receive_json()["world"])["a"] == {"x": 5, "y": 6}
+            # Not greeted, so no broadcast was queued: the welcome comes first.
+            assert positions(greet(stranger))["a"] == {"x": 5, "y": 6}
+    with client.websocket_connect("/ws") as later:
+        assert positions(greet(later))["a"] == {"x": 5, "y": 6}
+
+
+def test_actions_before_hello_are_refused(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(move("a", 5, 5))
+        reply = ws.receive_json()
+        assert reply["code"] == "bad_message"
+        assert "hello" in reply["message"]
+        assert positions(greet(ws))["a"] == {"x": 0, "y": 50}
+
+
+@pytest.mark.parametrize(
+    ("resident_id", "x", "y", "code"),
+    [
+        ("a", 50.01, 0, "out_of_bounds"),
+        ("a", 0, -1, "out_of_bounds"),
+        ("nobody", 1, 1, "unknown_resident"),
+        ("x" * 1000, 1, 1, "unknown_resident"),
+    ],
+)
+def test_rejected_actions_change_nothing(
+    client: TestClient, resident_id: str, x: float, y: float, code: str
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(move(resident_id, x, y))
+        reply = ws.receive_json()
+        assert reply["type"] == "action_result"
+        assert reply["ok"] is False
+        assert reply["code"] == code
+        assert 0 < len(reply["message"]) <= ERROR_MAX_LENGTH
+        # No state follows a rejection; the next message answers the next hello.
+        assert positions(greet(ws)) == {"a": {"x": 0, "y": 50}, "b": {"x": 12.5, "y": 7}}
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        move("a", True, 1),
+        move("a", "1", 1),
+        move("a", None, 1),
+        move("a", 1, 1).replace("1", "NaN", 1),
+        move("a", 1, 1).replace("1", "Infinity", 1),
+        json.dumps({"type": "action"}),
+        json.dumps({"type": "action", "action": {"type": "teleport"}}),
+        json.dumps({"type": "action", "action": {"type": "move_to", "residentId": "a"}}),
+        json.dumps({"type": "action", "action": {"type": "move_to", "target": {"x": 1, "y": 1}}}),
+    ],
+)
+def test_malformed_actions_get_a_bounded_error(client: TestClient, frame: str) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(frame)
+        reply = ws.receive_json()
+        assert reply["type"] == "error"
+        assert reply["code"] == "bad_message"
+        assert 0 < len(reply["message"]) <= ERROR_MAX_LENGTH
+        assert positions(greet(ws))["a"] == {"x": 0, "y": 50}
+
+
+def test_outbox_flags_overflow_instead_of_growing() -> None:
+    outbox = Outbox(limit=2)
+    for text in ("a", "b", "c", "d"):
+        outbox.put(text)
+    assert list(outbox.replies) == ["a", "b"]
+    assert outbox.overflowed.is_set()
+
+
+def test_outbox_keeps_only_the_latest_state_and_sends_it_after_replies() -> None:
+    async def drain(outbox: Outbox) -> list[str]:
+        return [await outbox.get() for _ in range(3)]
+
+    outbox = Outbox(limit=2)
+    outbox.put_state("state 1")
+    outbox.put("welcome")
+    outbox.put_state("state 2")
+    outbox.put("result")
+    assert asyncio.run(drain(outbox)) == ["welcome", "result", "state 2"]
+    assert outbox.state is None
+    assert not outbox.replies
+
+
+def test_a_burst_of_moves_does_not_overflow_other_connections() -> None:
+    game = Game(SMALL_WORLD)
+    watcher = Outbox(limit=2)
+    game.watch(watcher)
+    for _ in range(1000):
+        game.broadcast(StateMessage(world=world_view(game.world)))
+    assert not watcher.overflowed.is_set()
+    assert not watcher.replies
+    assert watcher.state is not None
+
+
+def test_a_connection_that_falls_behind_is_closed() -> None:
+    # The test client reads between frames, so force the overflow: no room for the welcome.
+    client = TestClient(create_app(SMALL_WORLD, outbox_limit=0))
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps(HELLO))
+        with pytest.raises(WebSocketDisconnect) as closed:
+            while True:
+                ws.receive_json()
+    assert closed.value.code == CLOSE_POLICY_VIOLATION

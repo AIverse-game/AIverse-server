@@ -5,14 +5,23 @@ PROTOCOL_VERSION on incompatible changes.
 """
 
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    TypeAdapter,
+    ValidationError,
+)
 from pydantic.alias_generators import to_camel
 
-from .world import COLOR_PATTERN, World
+from .actions import Action, ActionRejected, MoveTo, RejectionCode
+from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 ERROR_MAX_LENGTH = 200
 
@@ -23,13 +32,35 @@ class _Message(BaseModel):
 
 # Client -> server. Untrusted, so validated on arrival; unknown keys are ignored.
 
+# Strict so that booleans and numeric strings are refused; NaN and infinities too.
+Coordinate = Annotated[StrictFloat, Field(allow_inf_nan=False)]
+
+
+class TargetInput(_Message):
+    x: Coordinate
+    y: Coordinate
+
+
+class MoveToInput(_Message):
+    type: Literal["move_to"]
+    resident_id: str
+    target: TargetInput
+
 
 class HelloMessage(_Message):
     type: Literal["hello"]
     protocol_version: StrictInt
 
 
-ClientMessage = HelloMessage
+class ActionMessage(_Message):
+    type: Literal["action"]
+    # One primitive so far; becomes a union discriminated on `type` as more arrive.
+    action: MoveToInput
+
+
+ClientMessage = Annotated[HelloMessage | ActionMessage, Field(discriminator="type")]
+
+_client_message: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
 
 
 # Server -> client.
@@ -66,6 +97,16 @@ class StateMessage(_Message):
     world: WorldView
 
 
+class ActionResultMessage(_Message):
+    """Reply to the sender's `action`. On success the new world follows as a `state`
+    sent to every connection; `code` and `message` are present only on rejection."""
+
+    type: Literal["action_result"] = "action_result"
+    ok: bool
+    code: RejectionCode | None = None
+    message: str | None = Field(default=None, max_length=ERROR_MAX_LENGTH)
+
+
 ErrorCode = Literal["bad_message", "protocol_mismatch"]
 
 
@@ -75,7 +116,7 @@ class ErrorMessage(_Message):
     message: str = Field(max_length=ERROR_MAX_LENGTH)
 
 
-ServerMessage = WelcomeMessage | StateMessage | ErrorMessage
+ServerMessage = WelcomeMessage | StateMessage | ActionResultMessage | ErrorMessage
 
 
 def world_view(world: World) -> WorldView:
@@ -93,24 +134,39 @@ def world_view(world: World) -> WorldView:
     )
 
 
+def to_action(message: ActionMessage) -> Action:
+    action = message.action
+    return MoveTo(resident_id=action.resident_id, target=Position(action.target.x, action.target.y))
+
+
 def encode(message: ServerMessage) -> str:
-    return message.model_dump_json(by_alias=True)
+    # Optional fields are left out rather than sent as null.
+    return message.model_dump_json(by_alias=True, exclude_none=True)
+
+
+def _truncate(detail: str) -> str:
+    if len(detail) > ERROR_MAX_LENGTH:
+        return detail[: ERROR_MAX_LENGTH - 1] + "…"
+    return detail
 
 
 def bad_message(detail: str) -> ErrorMessage:
-    if len(detail) > ERROR_MAX_LENGTH:
-        detail = detail[: ERROR_MAX_LENGTH - 1] + "…"
-    return ErrorMessage(code="bad_message", message=detail)
+    return ErrorMessage(code="bad_message", message=_truncate(detail))
 
 
-def parse_client_message(text: str) -> ClientMessage | ErrorMessage:
+def action_rejected(rejection: ActionRejected) -> ActionResultMessage:
+    # The message may echo client input, such as an unknown resident id, so bound it.
+    return ActionResultMessage(ok=False, code=rejection.code, message=_truncate(rejection.message))
+
+
+def parse_client_message(text: str) -> HelloMessage | ActionMessage | ErrorMessage:
     try:
         data = json.loads(text)
     except (ValueError, RecursionError):
         # ValueError covers malformed JSON and over-long integers; deep nesting recurses.
         return bad_message("message is not valid JSON or exceeds parser limits")
     try:
-        return HelloMessage.model_validate(data)
+        return _client_message.validate_python(data)
     except ValidationError as error:
         issues = "; ".join(
             f"{'.'.join(str(part) for part in issue['loc']) or '(root)'}: {issue['msg']}"
