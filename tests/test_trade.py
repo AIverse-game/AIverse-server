@@ -9,21 +9,21 @@ from aiverse_server.events import (
     send_event,
     withdraw_event,
 )
-from aiverse_server.inventory import InventoryError, list_items, store_item
-from aiverse_server.trade import COIN, MAX_AMOUNT, PurchaseOffer, SaleOffer, TradeError
+from aiverse_server.inventory import (
+    InventoryError,
+    add_coins,
+    coin_balance,
+    list_items,
+    store_item,
+)
+from aiverse_server.trade import MAX_AMOUNT, PurchaseOffer, SaleOffer, TradeError, reserved_coins
 from aiverse_server.world import Inventory, Position, Resident, World, WorldMap
 
 # a has coins and wants bread; b bakes bread and has no coins.
 WORLD = World(
     map=WorldMap(size=10),
     residents=(
-        Resident(
-            id="a",
-            name="a",
-            color="#ffffff",
-            position=Position(1, 1),
-            inventory=Inventory(((COIN, 20),)),
-        ),
+        Resident(id="a", name="a", color="#ffffff", position=Position(1, 1), coins=20),
         Resident(
             id="b",
             name="b",
@@ -35,23 +35,27 @@ WORLD = World(
 )
 
 
+def holdings(world: World, resident_id: str) -> tuple[dict[str, int], int]:
+    return list_items(world, resident_id), coin_balance(world, resident_id)
+
+
 def test_a_purchase_offer_sets_the_coins_aside_and_completes_on_accept() -> None:
     world, offer = send_event(WORLD, "a", "b", PurchaseOffer("bread", 3, 10))
-    assert list_items(world, "a") == {COIN: 10}
-    assert list_items(world, "b") == {"bread": 5}
+    assert holdings(world, "a") == ({}, 10)
+    assert holdings(world, "b") == ({"bread": 5}, 0)
     world = accept_event(world, "b", offer.id)
-    assert list_items(world, "a") == {"bread": 3, COIN: 10}
-    assert list_items(world, "b") == {"bread": 2, COIN: 10}
+    assert holdings(world, "a") == ({"bread": 3}, 10)
+    assert holdings(world, "b") == ({"bread": 2}, 10)
     assert world.events.pending == ()
 
 
 def test_a_sale_offer_sets_the_items_aside_and_completes_on_accept() -> None:
     world, offer = send_event(WORLD, "b", "a", SaleOffer("bread", 3, 10))
-    assert list_items(world, "a") == {COIN: 20}
-    assert list_items(world, "b") == {"bread": 2}
+    assert holdings(world, "a") == ({}, 20)
+    assert holdings(world, "b") == ({"bread": 2}, 0)
     world = accept_event(world, "a", offer.id)
-    assert list_items(world, "a") == {"bread": 3, COIN: 10}
-    assert list_items(world, "b") == {"bread": 2, COIN: 10}
+    assert holdings(world, "a") == ({"bread": 3}, 10)
+    assert holdings(world, "b") == ({"bread": 2}, 10)
     assert world.events.pending == ()
 
 
@@ -73,31 +77,37 @@ def test_declining_gives_the_sender_back_what_was_set_aside(
 
 
 @pytest.mark.parametrize(
-    ("sender", "recipient", "offer"),
-    [("a", "b", PurchaseOffer("bread", 1, 21)), ("b", "a", SaleOffer("bread", 6, 1))],
+    ("sender", "recipient", "offer", "code"),
+    [
+        ("a", "b", PurchaseOffer("bread", 1, 21), "not_enough_coins"),
+        ("b", "a", SaleOffer("bread", 6, 1), "not_enough_items"),
+    ],
 )
 def test_a_sender_cannot_offer_more_than_they_hold(
-    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer
+    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer, code: str
 ) -> None:
     with pytest.raises(InventoryError) as raised:
         send_event(WORLD, sender, recipient, offer)
-    assert raised.value.code == "not_enough_items"
+    assert raised.value.code == code
 
 
 @pytest.mark.parametrize(
-    ("sender", "recipient", "offer"),
-    [("a", "b", PurchaseOffer("bread", 6, 10)), ("b", "a", SaleOffer("bread", 1, 21))],
+    ("sender", "recipient", "offer", "code"),
+    [
+        ("a", "b", PurchaseOffer("bread", 6, 10), "not_enough_items"),
+        ("b", "a", SaleOffer("bread", 1, 21), "not_enough_coins"),
+    ],
 )
 def test_a_recipient_short_of_their_side_leaves_the_offer_pending(
-    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer
+    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer, code: str
 ) -> None:
     world, event = send_event(WORLD, sender, recipient, offer)
     with pytest.raises(InventoryError) as raised:
         accept_event(world, recipient, event.id)
-    assert raised.value.code == "not_enough_items"
+    assert raised.value.code == code
     assert pending_for(world, recipient) == (event,)
     # Once they have enough, the same offer goes through.
-    topped_up = store_item(store_item(world, "a", COIN, 1), "b", "bread")
+    topped_up = store_item(add_coins(world, "a", 1), "b", "bread")
     assert accept_event(topped_up, recipient, event.id).events.pending == ()
 
 
@@ -109,17 +119,26 @@ def test_offers_are_sent_before_the_recipient_can_pay() -> None:
     assert pending_for(world, "b") == (event,)
 
 
+def test_reserved_coins_count_only_pending_purchases_by_that_resident() -> None:
+    world, first = send_event(WORLD, "a", "b", PurchaseOffer("bread", 1, 4))
+    world, _ = send_event(world, "a", "b", PurchaseOffer("bread", 1, 6))
+    world, _ = send_event(world, "b", "a", SaleOffer("bread", 1, 7))
+    assert reserved_coins(world, "a") == 10
+    assert reserved_coins(world, "b") == 0
+    assert reserved_coins(reject_event(world, "b", first.id), "a") == 6
+
+
 @pytest.mark.parametrize("payload", [PurchaseOffer, SaleOffer])
 @pytest.mark.parametrize(
     ("kind", "quantity", "price"),
     [
         ("", 1, 1),
         (5, 1, 1),
-        (COIN, 1, 1),
         ("bread", 0, 1),
         ("bread", True, 1),
         ("bread", 1.0, 1),
         pytest.param("bread", 10**5000, 1, id="huge-quantity"),
+        ("bread", MAX_AMOUNT + 1, 1),
         ("bread", 1, 0),
         ("bread", 1, True),
         ("bread", 1, 2.5),
@@ -136,16 +155,19 @@ def test_terms_that_cannot_make_a_trade_are_refused(
 
 
 @pytest.mark.parametrize(
-    ("sender", "recipient", "offer"),
-    [("a", "b", PurchaseOffer("bread", 1, 15)), ("b", "a", SaleOffer("bread", 4, 1))],
+    ("sender", "recipient", "offer", "code"),
+    [
+        ("a", "b", PurchaseOffer("bread", 1, 15), "not_enough_coins"),
+        ("b", "a", SaleOffer("bread", 4, 1), "not_enough_items"),
+    ],
 )
 def test_what_is_set_aside_cannot_be_offered_twice(
-    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer
+    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer, code: str
 ) -> None:
     world, _ = send_event(WORLD, sender, recipient, offer)
     with pytest.raises(InventoryError) as raised:
         send_event(world, sender, recipient, offer)
-    assert raised.value.code == "not_enough_items"
+    assert raised.value.code == code
 
 
 def test_residents_cannot_trade_with_themselves() -> None:
@@ -164,17 +186,18 @@ def test_offer_primitives_complete_a_trade_from_either_side() -> None:
         (event,) = pending_for(world, recipient)
         results.append(perform(world, RespondToEvent(recipient, event.id, accept=True)))
     assert results[0] == results[1]
-    assert list_items(results[0], "a") == {"bread": 2, COIN: 14}
-    assert list_items(results[0], "b") == {"bread": 3, COIN: 6}
+    assert holdings(results[0], "a") == ({"bread": 2}, 14)
+    assert holdings(results[0], "b") == ({"bread": 3}, 6)
 
 
 @pytest.mark.parametrize(
     ("offer", "code"),
     [
-        (OfferToBuy("a", "b", "bread", 1, 21), "not_enough_items"),
+        (OfferToBuy("a", "b", "bread", 1, 21), "not_enough_coins"),
         (OfferToSell("b", "a", "bread", 1, 0), "invalid_trade"),
         (OfferToBuy("a", "a", "bread", 1, 1), "self_addressed"),
         (OfferToSell("b", "nobody", "bread", 1, 1), "unknown_resident"),
+        (OfferToSell("nobody", "a", "bread", 1, 1), "unknown_resident"),
     ],
 )
 def test_refused_offers_become_rejections(offer: OfferToBuy | OfferToSell, code: str) -> None:

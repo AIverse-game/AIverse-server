@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from aiverse_server.app import CLOSE_POLICY_VIOLATION, Game, Outbox, create_app
+from aiverse_server.lifecycle import GAME_DURATION
 from aiverse_server.protocol import (
     ERROR_MAX_LENGTH,
     PROTOCOL_VERSION,
@@ -27,9 +28,24 @@ SMALL_WORLD = World(
 )
 
 
+class FakeClock:
+    """Time that moves only when a test says so."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(create_app(SMALL_WORLD))
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def client(clock: FakeClock) -> TestClient:
+    return TestClient(create_app(SMALL_WORLD, clock=clock))
 
 
 def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
@@ -41,9 +57,26 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
             "world": {
                 "map": {"size": 50},
                 "residents": [
-                    {"id": "a", "name": "甲", "color": "#112233", "position": {"x": 0, "y": 50}},
-                    {"id": "b", "name": "乙", "color": "#AABBCC", "position": {"x": 12.5, "y": 7}},
+                    {
+                        "id": "a",
+                        "name": "甲",
+                        "color": "#112233",
+                        "position": {"x": 0, "y": 50},
+                        "coins": 0,
+                        "left": False,
+                        "rank": 1,
+                    },
+                    {
+                        "id": "b",
+                        "name": "乙",
+                        "color": "#AABBCC",
+                        "position": {"x": 12.5, "y": 7},
+                        "coins": 0,
+                        "left": False,
+                        "rank": 1,
+                    },
                 ],
+                "game": {"ended": False, "remainingSeconds": GAME_DURATION},
             },
         }
 
@@ -55,6 +88,7 @@ def test_default_app_serves_the_fixed_layout() -> None:
         world = ws.receive_json()["world"]
     assert world["map"]["size"] == 100
     assert [r["id"] for r in world["residents"]] == ["r1", "r2", "r3", "r4"]
+    assert {r["coins"] for r in world["residents"]} == {10_000}
 
 
 @pytest.mark.parametrize(
@@ -199,6 +233,8 @@ def test_rejected_actions_change_nothing(
         json.dumps({"type": "action", "action": {"type": "teleport"}}),
         json.dumps({"type": "action", "action": {"type": "move_to", "residentId": "a"}}),
         json.dumps({"type": "action", "action": {"type": "move_to", "target": {"x": 1, "y": 1}}}),
+        json.dumps({"type": "action", "action": {"type": "leave_game"}}),
+        json.dumps({"type": "action", "action": {"type": "leave_game", "residentId": 1}}),
     ],
 )
 def test_malformed_actions_get_a_bounded_error(client: TestClient, frame: str) -> None:
@@ -239,7 +275,7 @@ def test_a_burst_of_moves_does_not_overflow_other_connections() -> None:
     watcher = Outbox(limit=2)
     game.watch(watcher)
     for _ in range(1000):
-        game.broadcast(StateMessage(world=world_view(game.world)))
+        game.broadcast(StateMessage(world=world_view(game.world, game.remaining())))
     assert not watcher.overflowed.is_set()
     assert not watcher.replies
     assert watcher.state is not None
@@ -254,3 +290,52 @@ def test_a_connection_that_falls_behind_is_closed() -> None:
             while True:
                 ws.receive_json()
     assert closed.value.code == CLOSE_POLICY_VIOLATION
+
+
+def leave(resident_id: str) -> str:
+    return json.dumps(
+        {"type": "action", "action": {"type": "leave_game", "residentId": resident_id}}
+    )
+
+
+def test_a_resident_who_leaves_is_marked_and_can_no_longer_act(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(leave("a"))
+        assert ws.receive_json() == {"type": "action_result", "ok": True}
+        residents = ws.receive_json()["world"]["residents"]
+        assert [(r["id"], r["left"]) for r in residents] == [("a", True), ("b", False)]
+        ws.send_text(move("a", 1, 1))
+        assert ws.receive_json()["code"] == "resident_left"
+        # The game goes on for everyone else.
+        ws.send_text(move("b", 1, 1))
+        assert ws.receive_json()["ok"] is True
+
+
+def test_remaining_time_counts_down_and_actions_end_with_the_game(
+    client: TestClient, clock: FakeClock
+) -> None:
+    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
+        clock.now = 100
+        assert greet(ws)["game"] == {"ended": False, "remainingSeconds": GAME_DURATION - 100}
+        greet(watcher)
+        clock.now = GAME_DURATION
+        # The first frame after the deadline ends the game before it is handled.
+        ws.send_text(move("a", 1, 1))
+        assert ws.receive_json()["code"] == "game_over"
+        for connection in (ws, watcher):
+            state = connection.receive_json()
+            assert state["world"]["game"] == {"ended": True, "remainingSeconds": 0}
+            assert positions(state["world"])["a"] == {"x": 0, "y": 50}
+    with client.websocket_connect("/ws") as later:
+        assert greet(later)["game"]["ended"] is True
+
+
+def test_the_clock_ends_the_game_without_any_action() -> None:
+    # Entering the client runs the app's lifespan, which starts the timer.
+    with TestClient(create_app(SMALL_WORLD, duration=0.2)) as client:
+        with client.websocket_connect("/ws") as ws:
+            world = greet(ws)
+            if not world["game"]["ended"]:
+                world = ws.receive_json()["world"]
+    assert world["game"] == {"ended": True, "remainingSeconds": 0}

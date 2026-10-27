@@ -2,17 +2,22 @@
 
 Every connection greets with `hello` and receives the map. After that it may send operation
 primitives; when one changes the world, every greeted connection receives the new `state`.
+The game ends a fixed time after the app is created; every connection then receives the
+final `state`.
 """
 
 import asyncio
+import time
 from collections import deque
-from contextlib import suppress
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .actions import ActionRejected, perform
 from .layout import create_default_world
+from .lifecycle import GAME_DURATION, end_game
 from .protocol import (
     PROTOCOL_VERSION,
     ActionResultMessage,
@@ -43,8 +48,9 @@ class Outcome:
     """Whether the sender has completed the handshake and may act."""
 
 
-def handle_text(text: str, world: World, greeted: bool) -> Outcome:
-    """Handles one client frame. Errors leave the connection open and the world unchanged."""
+def handle_text(text: str, world: World, greeted: bool, remaining_seconds: float) -> Outcome:
+    """Handles one client frame. Errors leave the connection open and the world unchanged.
+    `remaining_seconds` is the game time left, for the state that answers `hello`."""
     message = parse_client_message(text)
     if isinstance(message, ErrorMessage):
         return Outcome([message], world, greeted)
@@ -54,7 +60,8 @@ def handle_text(text: str, world: World, greeted: bool) -> Outcome:
                 code="protocol_mismatch", message=f"server speaks protocol {PROTOCOL_VERSION}"
             )
             return Outcome([mismatch], world, greeted)
-        return Outcome([WelcomeMessage(), StateMessage(world=world_view(world))], world, True)
+        state = StateMessage(world=world_view(world, remaining_seconds))
+        return Outcome([WelcomeMessage(), state], world, True)
     if not greeted:
         return Outcome([bad_message("send hello before any action")], world, greeted)
     try:
@@ -114,15 +121,38 @@ class Outbox:
 
 
 class Game:
-    """The world all connections share, and the outboxes of those that said hello.
+    """The world all connections share, its clock, and the outboxes of those that said hello.
 
     A broadcast reaches every outbox at once, so no connection can see an older state
     after a newer one.
     """
 
-    def __init__(self, world: World) -> None:
+    def __init__(
+        self,
+        world: World,
+        duration: float = GAME_DURATION,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.world = world
+        self._clock = clock
+        self._deadline = clock() + duration
         self._outboxes: set[Outbox] = set()
+
+    def remaining(self) -> float:
+        return max(self._deadline - self._clock(), 0.0)
+
+    def expire(self) -> None:
+        """End the game if its time is up, and tell everyone. Called by the timer and before
+        each frame, so no action slips in late while the timer waits for its turn."""
+        if self.world.ended or self.remaining() > 0:
+            return
+        self.world = end_game(self.world)
+        self.broadcast_world()
+
+    async def run_clock(self) -> None:
+        while not self.world.ended:
+            await asyncio.sleep(self.remaining())
+            self.expire()
 
     def watch(self, outbox: Outbox) -> None:
         self._outboxes.add(outbox)
@@ -134,6 +164,9 @@ class Game:
         text = encode(message)
         for outbox in self._outboxes:
             outbox.put_state(text)
+
+    def broadcast_world(self) -> None:
+        self.broadcast(StateMessage(world=world_view(self.world, self.remaining())))
 
 
 async def _send_all(websocket: WebSocket, outbox: Outbox) -> None:
@@ -158,7 +191,8 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                 continue
             # No await from here to the broadcast, so each frame sees and commits the
             # latest world without interleaving with other connections.
-            outcome = handle_text(text, game.world, greeted)
+            game.expire()
+            outcome = handle_text(text, game.world, greeted, game.remaining())
             changed = outcome.world is not game.world
             game.world = outcome.world
             if outcome.greeted and not greeted:
@@ -171,15 +205,30 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                 else:
                     outbox.put(encode(reply))
             if changed:
-                game.broadcast(StateMessage(world=world_view(game.world)))
+                game.broadcast_world()
     except WebSocketDisconnect:
         # The client left mid-receive; nothing else to clean up.
         return
 
 
-def create_app(world: World | None = None, outbox_limit: int = OUTBOX_LIMIT) -> FastAPI:
-    game = Game(world if world is not None else create_default_world())
-    app = FastAPI(title="AIverse server")
+def create_app(
+    world: World | None = None,
+    outbox_limit: int = OUTBOX_LIMIT,
+    duration: float = GAME_DURATION,
+    clock: Callable[[], float] = time.monotonic,
+) -> FastAPI:
+    """The game starts now, when its world is created, and ends `duration` seconds later."""
+    game = Game(world if world is not None else create_default_world(), duration, clock)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        timer = asyncio.create_task(game.run_clock())
+        try:
+            yield
+        finally:
+            timer.cancel()
+
+    app = FastAPI(title="AIverse server", lifespan=lifespan)
 
     @app.websocket("/ws")
     async def game_socket(websocket: WebSocket) -> None:

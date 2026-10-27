@@ -1,8 +1,10 @@
 import math
+from dataclasses import replace
 
 import pytest
 
-from aiverse_server.layout import MAP_SIZE, create_default_world
+from aiverse_server.events import Event, EventPayload, EventQueue
+from aiverse_server.layout import MAP_SIZE, STARTING_COINS, create_default_world
 from aiverse_server.world import Position, Resident, World, WorldMap
 
 
@@ -49,3 +51,25 @@ def test_resident_color_must_be_hex_rrggbb(color: str) -> None:
 def test_world_rejects_duplicate_resident_ids() -> None:
     with pytest.raises(ValueError, match="unique"):
         World(map=WorldMap(size=10), residents=(resident("a", 1, 1), resident("a", 2, 2)))
+
+
+def test_default_residents_start_with_the_same_coins() -> None:
+    assert {r.coins for r in create_default_world().residents} == {STARTING_COINS}
+
+
+@pytest.mark.parametrize("coins", [-1, True, 1.0])
+def test_resident_coins_must_be_a_non_negative_integer(coins: object) -> None:
+    with pytest.raises(ValueError, match="coins"):
+        Resident(id="a", name="a", color="#ffffff", position=Position(1, 1), coins=coins)  # type: ignore[arg-type]
+
+
+def test_world_rejects_pending_events_after_leaving_or_ending() -> None:
+    event = Event(id=1, sender_id="a", recipient_id="b", payload=EventPayload())
+    queue = EventQueue((event,), next_id=2)
+    residents = (resident("a", 1, 1), resident("b", 2, 2))
+    World(map=WorldMap(size=10), residents=residents, events=queue)
+    with pytest.raises(ValueError, match="pending after"):
+        World(map=WorldMap(size=10), residents=residents, events=queue, ended=True)
+    gone = (resident("a", 1, 1), replace(resident("b", 2, 2), left=True))
+    with pytest.raises(ValueError, match="pending after"):
+        World(map=WorldMap(size=10), residents=gone, events=queue)

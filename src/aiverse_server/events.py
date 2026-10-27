@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from .world import World
 
-EventErrorCode = Literal["unknown_resident", "unknown_event", "self_addressed"]
+EventErrorCode = Literal["unknown_resident", "unknown_event", "self_addressed", "resident_left"]
 
 
 class EventError(Exception):
@@ -109,8 +109,11 @@ def send_event(
     world: World, sender_id: str, recipient_id: str, payload: EventPayload
 ) -> tuple[World, Event]:
     """Queue a request from sender to recipient; returns the next world and the new event."""
-    _check_resident(world, sender_id)
-    _check_resident(world, recipient_id)
+    for party in (sender_id, recipient_id):
+        _check_resident(world, party)
+        # Someone who left the game no longer deals with anyone.
+        if any(resident.id == party and resident.left for resident in world.residents):
+            raise EventError("resident_left", f"resident {party!r} has left the game")
     if sender_id == recipient_id:
         raise EventError("self_addressed", f"resident {sender_id!r} cannot send an event to itself")
     queue = world.events

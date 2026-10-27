@@ -4,7 +4,8 @@ A primitive is a small immutable request, such as "move this resident to (x, y)"
 send them by hand now; AI-driven residents will send the same ones later. `perform` checks
 a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
-every rule lives here rather than with the caller.
+every rule lives here rather than with the caller. Every primitive names the resident who
+acts, and none goes through for a resident who has left or once the game is over.
 """
 
 from dataclasses import dataclass, replace
@@ -19,11 +20,14 @@ from .events import (
     withdraw_event,
 )
 from .inventory import InventoryError, InventoryErrorCode
+from .lifecycle import GameError, GameErrorCode, check_can_act, leave_game
 from .trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from .world import Position, World
 
 # Sending or answering an event runs that kind's hooks, which may refuse with their own codes.
-RejectionCode = Literal["out_of_bounds"] | EventErrorCode | InventoryErrorCode | TradeErrorCode
+RejectionCode = (
+    Literal["out_of_bounds"] | EventErrorCode | InventoryErrorCode | TradeErrorCode | GameErrorCode
+)
 
 
 class ActionRejected(Exception):
@@ -96,10 +100,22 @@ class OfferToSell:
     """Coins for the whole lot."""
 
 
-Action = MoveTo | RespondToEvent | WithdrawEvent | OfferToBuy | OfferToSell
+@dataclass(frozen=True)
+class LeaveGame:
+    """Leave the game for good, see `lifecycle.py`: pending offers are called off, items are
+    lost and coins are kept for the ranking. The game goes on for everyone else."""
+
+    resident_id: str
+
+
+Action = MoveTo | RespondToEvent | WithdrawEvent | OfferToBuy | OfferToSell | LeaveGame
 
 
 def perform(world: World, action: Action) -> World:
+    try:
+        check_can_act(world, action.resident_id)
+    except GameError as error:
+        raise ActionRejected(error.code, error.message) from error
     match action:
         case MoveTo():
             return _move_to(world, action)
@@ -107,6 +123,8 @@ def perform(world: World, action: Action) -> World:
             return _answer(world, action)
         case OfferToBuy() | OfferToSell():
             return _offer(world, action)
+        case LeaveGame():
+            return leave_game(world, action.resident_id)
 
 
 def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
@@ -136,8 +154,6 @@ def _offer(world: World, action: OfferToBuy | OfferToSell) -> World:
 
 
 def _move_to(world: World, action: MoveTo) -> World:
-    if all(resident.id != action.resident_id for resident in world.residents):
-        raise ActionRejected("unknown_resident", f"no resident with id {action.resident_id!r}")
     target = action.target
     if not world.map.contains(target):
         size = world.map.size

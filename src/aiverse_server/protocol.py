@@ -18,10 +18,11 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from .actions import Action, ActionRejected, MoveTo, RejectionCode
+from .actions import Action, ActionRejected, LeaveGame, MoveTo, RejectionCode
+from .lifecycle import ranks, total_coins
 from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 ERROR_MAX_LENGTH = 200
 
@@ -47,6 +48,14 @@ class MoveToInput(_Message):
     target: TargetInput
 
 
+class LeaveGameInput(_Message):
+    type: Literal["leave_game"]
+    resident_id: str
+
+
+ActionInput = Annotated[MoveToInput | LeaveGameInput, Field(discriminator="type")]
+
+
 class HelloMessage(_Message):
     type: Literal["hello"]
     protocol_version: StrictInt
@@ -54,9 +63,9 @@ class HelloMessage(_Message):
 
 class ActionMessage(_Message):
     type: Literal["action"]
-    # Only move_to is on the wire so far; becomes a union discriminated on `type` as more
-    # primitives reach clients.
-    action: MoveToInput
+    # Only the primitives clients can use so far; answering events and trading come with a
+    # way to show them.
+    action: ActionInput
 
 
 ClientMessage = Annotated[HelloMessage | ActionMessage, Field(discriminator="type")]
@@ -77,15 +86,27 @@ class ResidentView(_Message):
     name: str
     color: str = Field(pattern=f"^{COLOR_PATTERN.pattern}$")
     position: PositionView
+    coins: int
+    """Total coins, including those set aside by pending offers; public to everyone."""
+    left: bool
+    rank: int
+    """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""
 
 
 class MapView(_Message):
     size: float
 
 
+class GameView(_Message):
+    ended: bool
+    remaining_seconds: float
+    """Time left when this was sent; 0 once the game has ended."""
+
+
 class WorldView(_Message):
     map: MapView
     residents: list[ResidentView]
+    game: GameView
 
 
 class WelcomeMessage(_Message):
@@ -120,7 +141,8 @@ class ErrorMessage(_Message):
 ServerMessage = WelcomeMessage | StateMessage | ActionResultMessage | ErrorMessage
 
 
-def world_view(world: World) -> WorldView:
+def world_view(world: World, remaining_seconds: float) -> WorldView:
+    places = ranks(world)
     return WorldView(
         map=MapView(size=world.map.size),
         residents=[
@@ -129,15 +151,27 @@ def world_view(world: World) -> WorldView:
                 name=resident.name,
                 color=resident.color,
                 position=PositionView(x=resident.position.x, y=resident.position.y),
+                coins=total_coins(world, resident.id),
+                left=resident.left,
+                rank=places[resident.id],
             )
             for resident in world.residents
         ],
+        game=GameView(
+            ended=world.ended,
+            remaining_seconds=0.0 if world.ended else max(remaining_seconds, 0.0),
+        ),
     )
 
 
 def to_action(message: ActionMessage) -> Action:
     action = message.action
-    return MoveTo(resident_id=action.resident_id, target=Position(action.target.x, action.target.y))
+    match action:
+        case MoveToInput():
+            target = Position(action.target.x, action.target.y)
+            return MoveTo(resident_id=action.resident_id, target=target)
+        case LeaveGameInput():
+            return LeaveGame(resident_id=action.resident_id)
 
 
 def encode(message: ServerMessage) -> str:

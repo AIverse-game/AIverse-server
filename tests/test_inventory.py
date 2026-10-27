@@ -6,10 +6,13 @@ import pytest
 
 from aiverse_server.inventory import (
     InventoryError,
+    add_coins,
     clear_items,
+    coin_balance,
     item_count,
     list_items,
     store_item,
+    take_coins,
     take_item,
 )
 from aiverse_server.layout import create_default_world
@@ -139,3 +142,34 @@ def test_inventory_equality_ignores_order() -> None:
 def test_inventory_rejects_invalid_stacks(stacks: tuple[tuple[str, Any], ...]) -> None:
     with pytest.raises(ValueError):
         Inventory(stacks)
+
+
+def test_coins_are_paid_and_earned_all_or_nothing() -> None:
+    world = add_coins(WORLD, "a", 30)
+    assert coin_balance(world, "a") == 30
+    world = take_coins(world, "a", 30)
+    assert coin_balance(world, "a") == 0
+    with pytest.raises(InventoryError) as raised:
+        take_coins(world, "a", 1)
+    assert raised.value.code == "not_enough_coins"
+    assert coin_balance(WORLD, "a") == 0
+
+
+def test_coins_are_not_items_and_survive_clearing() -> None:
+    world = clear_items(add_coins(WORLD, "a", 5), "a")
+    assert coin_balance(world, "a") == 5
+    assert list_items(world, "a") == {}
+
+
+@pytest.mark.parametrize("amount", [0, -1, True, 1.5])
+def test_coin_amounts_must_be_positive_integers(amount: Any) -> None:
+    for change in (add_coins, take_coins):
+        with pytest.raises(ValueError):
+            change(WORLD, "a", amount)
+
+
+def test_coin_functions_refuse_unknown_residents() -> None:
+    for call in (lambda: coin_balance(WORLD, "x"), lambda: add_coins(WORLD, "x", 1)):
+        with pytest.raises(InventoryError) as raised:
+            call()
+        assert raised.value.code == "unknown_resident"

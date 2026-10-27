@@ -61,10 +61,19 @@ class Resident:
     """Display colour as `#rrggbb`."""
     position: Position
     inventory: Inventory = Inventory()
+    coins: int = 0
+    """Spendable coins; those set aside by pending offers are not included, see `trade.py`."""
+    left: bool = False
+    """Left the game: stays in the world and the ranking, but can no longer act or trade."""
 
     def __post_init__(self) -> None:
         if not COLOR_PATTERN.fullmatch(self.color):
             raise ValueError(f"resident {self.id} has an invalid color: {self.color!r}")
+        # Exactly int, as for item counts.
+        if type(self.coins) is not int or self.coins < 0:
+            raise ValueError(
+                f"resident {self.id} has {self.coins!r} coins, must be an integer >= 0"
+            )
 
 
 @dataclass(frozen=True)
@@ -88,6 +97,8 @@ class World:
     residents: tuple[Resident, ...]
     events: EventQueue = EventQueue()
     """Requests between residents waiting for an answer, see `events.py`."""
+    ended: bool = False
+    """The game is over: nothing changes any more, see `lifecycle.py`."""
 
     def __post_init__(self) -> None:
         ids = [resident.id for resident in self.residents]
@@ -102,3 +113,8 @@ class World:
                     raise ValueError(f"event {event.id} involves unknown resident {party!r}")
             if event.sender_id == event.recipient_id:
                 raise ValueError(f"event {event.id} is addressed to its own sender")
+        # Leaving and ending both settle every pending event first.
+        left = {resident.id for resident in self.residents if resident.left}
+        for event in self.events.pending:
+            if self.ended or {event.sender_id, event.recipient_id} & left:
+                raise ValueError(f"event {event.id} is pending after its game or resident ended")

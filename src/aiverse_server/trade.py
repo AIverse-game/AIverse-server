@@ -8,8 +8,7 @@ takes the recipient's side and completes the swap; rejecting or withdrawing give
 back what was set aside. If the recipient lacks their side when accepting, nothing changes
 and the offer stays pending.
 
-Coins are inventory items of kind `COIN` for now; whether they become a separate balance, and
-where trading may happen on the map, are still open design questions.
+Where trading may happen on the map is still an open design question.
 """
 
 from __future__ import annotations
@@ -18,13 +17,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from .events import EventPayload
-from .inventory import store_item, take_item
+from .inventory import add_coins, store_item, take_coins, take_item
 
 if TYPE_CHECKING:
     from .events import Event
     from .world import World
-
-COIN = "coin"
 
 # A sanity bound, not a balance rule: keeps untrusted numbers small enough to print and count.
 MAX_AMOUNT = 10**9
@@ -39,10 +36,19 @@ class TradeError(Exception):
         self.message = message
 
 
+def reserved_coins(world: World, resident_id: str) -> int:
+    """Coins the resident has set aside in purchase offers still waiting for an answer."""
+    return sum(
+        event.payload.price
+        for event in world.events.pending
+        if event.sender_id == resident_id and isinstance(event.payload, PurchaseOffer)
+    )
+
+
 @dataclass(frozen=True)
 class _Trade(EventPayload):
     kind: str
-    """The item kind changing hands; never coins themselves."""
+    """The item kind changing hands."""
     quantity: int
     price: int
     """Coins for the whole lot, not per item."""
@@ -52,8 +58,6 @@ class _Trade(EventPayload):
         raises `TradeError` rather than `ValueError`."""
         if type(self.kind) is not str or not self.kind:
             raise TradeError("invalid_trade", "item kind must be a non-empty string")
-        if self.kind == COIN:
-            raise TradeError("invalid_trade", "coins cannot be traded for coins")
         # Exactly int: True is not one item, and floats such as NaN slip past `< 1`. The
         # messages leave the value out, since a huge integer cannot even be printed.
         if type(self.quantity) is not int or not 1 <= self.quantity <= MAX_AMOUNT:
@@ -64,7 +68,7 @@ class _Trade(EventPayload):
 
     def _swap(self, world: World, buyer_id: str, seller_id: str) -> World:
         world = store_item(world, buyer_id, self.kind, self.quantity)
-        return store_item(world, seller_id, COIN, self.price)
+        return add_coins(world, seller_id, self.price)
 
 
 @dataclass(frozen=True)
@@ -73,14 +77,14 @@ class PurchaseOffer(_Trade):
 
     def on_send(self, world: World, event: Event) -> World:
         self.check()
-        return take_item(world, event.sender_id, COIN, self.price)
+        return take_coins(world, event.sender_id, self.price)
 
     def on_accept(self, world: World, event: Event) -> World:
         world = take_item(world, event.recipient_id, self.kind, self.quantity)
         return self._swap(world, buyer_id=event.sender_id, seller_id=event.recipient_id)
 
     def on_decline(self, world: World, event: Event) -> World:
-        return store_item(world, event.sender_id, COIN, self.price)
+        return add_coins(world, event.sender_id, self.price)
 
 
 @dataclass(frozen=True)
@@ -92,7 +96,7 @@ class SaleOffer(_Trade):
         return take_item(world, event.sender_id, self.kind, self.quantity)
 
     def on_accept(self, world: World, event: Event) -> World:
-        world = take_item(world, event.recipient_id, COIN, self.price)
+        world = take_coins(world, event.recipient_id, self.price)
         return self._swap(world, buyer_id=event.recipient_id, seller_id=event.sender_id)
 
     def on_decline(self, world: World, event: Event) -> World:
