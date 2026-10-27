@@ -54,7 +54,8 @@ class HelloMessage(_Message):
 
 class ActionMessage(_Message):
     type: Literal["action"]
-    # One primitive so far; becomes a union discriminated on `type` as more arrive.
+    # Only move_to is on the wire so far; becomes a union discriminated on `type` as more
+    # primitives reach clients.
     action: MoveToInput
 
 

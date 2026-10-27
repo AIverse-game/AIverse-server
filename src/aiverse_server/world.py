@@ -10,6 +10,8 @@ import math
 import re
 from dataclasses import dataclass
 
+from .events import EventQueue
+
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 
 
@@ -84,6 +86,8 @@ class WorldMap:
 class World:
     map: WorldMap
     residents: tuple[Resident, ...]
+    events: EventQueue = EventQueue()
+    """Requests between residents waiting for an answer, see `events.py`."""
 
     def __post_init__(self) -> None:
         ids = [resident.id for resident in self.residents]
@@ -92,3 +96,9 @@ class World:
         for resident in self.residents:
             if not self.map.contains(resident.position):
                 raise ValueError(f"resident {resident.id} is outside the map: {resident.position}")
+        for event in self.events.pending:
+            for party in (event.sender_id, event.recipient_id):
+                if party not in ids:
+                    raise ValueError(f"event {event.id} involves unknown resident {party!r}")
+            if event.sender_id == event.recipient_id:
+                raise ValueError(f"event {event.id} is addressed to its own sender")

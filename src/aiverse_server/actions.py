@@ -10,9 +10,12 @@ every rule lives here rather than with the caller.
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from .events import EventError, EventErrorCode, accept_event, reject_event, withdraw_event
+from .inventory import InventoryError, InventoryErrorCode
 from .world import Position, World
 
-RejectionCode = Literal["unknown_resident", "out_of_bounds"]
+# Answering an event runs that kind's hooks, which may refuse with their own codes.
+RejectionCode = Literal["out_of_bounds"] | EventErrorCode | InventoryErrorCode
 
 
 class ActionRejected(Exception):
@@ -34,12 +37,47 @@ class MoveTo:
     target: Position
 
 
-# The only primitive so far; becomes a union, dispatched in `perform`, as more arrive.
-Action = MoveTo
+@dataclass(frozen=True)
+class RespondToEvent:
+    """Accept or reject an event sent to the resident, see `events.py`.
+
+    Accepting carries out what the event asks for, which can still fail, for example when
+    the sender no longer has the coins; the event then stays pending.
+    """
+
+    resident_id: str
+    event_id: int
+    accept: bool
+
+
+@dataclass(frozen=True)
+class WithdrawEvent:
+    """Take back an event the resident sent that has not been answered yet."""
+
+    resident_id: str
+    event_id: int
+
+
+Action = MoveTo | RespondToEvent | WithdrawEvent
 
 
 def perform(world: World, action: Action) -> World:
-    return _move_to(world, action)
+    match action:
+        case MoveTo():
+            return _move_to(world, action)
+        case RespondToEvent() | WithdrawEvent():
+            return _answer(world, action)
+
+
+def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
+    try:
+        if isinstance(action, WithdrawEvent):
+            return withdraw_event(world, action.resident_id, action.event_id)
+        if action.accept:
+            return accept_event(world, action.resident_id, action.event_id)
+        return reject_event(world, action.resident_id, action.event_id)
+    except (EventError, InventoryError) as error:
+        raise ActionRejected(error.code, error.message) from error
 
 
 def _move_to(world: World, action: MoveTo) -> World:
