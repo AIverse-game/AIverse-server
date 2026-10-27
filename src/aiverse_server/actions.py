@@ -10,12 +10,20 @@ every rule lives here rather than with the caller.
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from .events import EventError, EventErrorCode, accept_event, reject_event, withdraw_event
+from .events import (
+    EventError,
+    EventErrorCode,
+    accept_event,
+    reject_event,
+    send_event,
+    withdraw_event,
+)
 from .inventory import InventoryError, InventoryErrorCode
+from .trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from .world import Position, World
 
-# Answering an event runs that kind's hooks, which may refuse with their own codes.
-RejectionCode = Literal["out_of_bounds"] | EventErrorCode | InventoryErrorCode
+# Sending or answering an event runs that kind's hooks, which may refuse with their own codes.
+RejectionCode = Literal["out_of_bounds"] | EventErrorCode | InventoryErrorCode | TradeErrorCode
 
 
 class ActionRejected(Exception):
@@ -58,7 +66,37 @@ class WithdrawEvent:
     event_id: int
 
 
-Action = MoveTo | RespondToEvent | WithdrawEvent
+@dataclass(frozen=True)
+class OfferToBuy:
+    """Offer `seller_id` `price` coins for `quantity` items of `kind`, see `trade.py`.
+
+    The coins are set aside at once and the trade completes when the seller accepts.
+    """
+
+    resident_id: str
+    seller_id: str
+    kind: str
+    quantity: int
+    price: int
+    """Coins for the whole lot."""
+
+
+@dataclass(frozen=True)
+class OfferToSell:
+    """Offer `buyer_id` `quantity` items of `kind` for `price` coins, see `trade.py`.
+
+    The items are set aside at once and the trade completes when the buyer accepts.
+    """
+
+    resident_id: str
+    buyer_id: str
+    kind: str
+    quantity: int
+    price: int
+    """Coins for the whole lot."""
+
+
+Action = MoveTo | RespondToEvent | WithdrawEvent | OfferToBuy | OfferToSell
 
 
 def perform(world: World, action: Action) -> World:
@@ -67,6 +105,8 @@ def perform(world: World, action: Action) -> World:
             return _move_to(world, action)
         case RespondToEvent() | WithdrawEvent():
             return _answer(world, action)
+        case OfferToBuy() | OfferToSell():
+            return _offer(world, action)
 
 
 def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
@@ -76,7 +116,22 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
         if action.accept:
             return accept_event(world, action.resident_id, action.event_id)
         return reject_event(world, action.resident_id, action.event_id)
-    except (EventError, InventoryError) as error:
+    except (EventError, InventoryError, TradeError) as error:
+        raise ActionRejected(error.code, error.message) from error
+
+
+def _offer(world: World, action: OfferToBuy | OfferToSell) -> World:
+    if isinstance(action, OfferToBuy):
+        recipient_id = action.seller_id
+        payload: PurchaseOffer | SaleOffer = PurchaseOffer(
+            action.kind, action.quantity, action.price
+        )
+    else:
+        recipient_id = action.buyer_id
+        payload = SaleOffer(action.kind, action.quantity, action.price)
+    try:
+        return send_event(world, action.resident_id, recipient_id, payload)[0]
+    except (EventError, InventoryError, TradeError) as error:
         raise ActionRejected(error.code, error.message) from error
 
 
