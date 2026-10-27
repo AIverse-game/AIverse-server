@@ -1,4 +1,4 @@
-"""Operation primitives: the only ways to change the world.
+"""Operation primitives: the only ways players and AI change the world.
 
 A primitive is a small immutable request, such as "move this resident to (x, y)". Players
 send them by hand now; AI-driven residents will send the same ones later. `perform` checks

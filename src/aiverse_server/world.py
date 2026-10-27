@@ -20,12 +20,45 @@ class Position:
 
 
 @dataclass(frozen=True)
+class Inventory:
+    """Items a resident carries: a count per item kind, every count at least 1.
+
+    Capacity is unlimited for now. Items belong to one game only: residents start with
+    empty inventories, and nothing outlives the in-memory world.
+    """
+
+    stacks: tuple[tuple[str, int], ...] = ()
+    """(item kind, count) pairs in any order; stored sorted by kind, so equal contents
+    compare equal."""
+
+    def __post_init__(self) -> None:
+        kinds = [kind for kind, _ in self.stacks]
+        if len(set(kinds)) != len(kinds):
+            raise ValueError("inventory item kinds must be unique")
+        for kind, count in self.stacks:
+            if not kind:
+                raise ValueError("item kind must not be empty")
+            # Exactly int: bool is an int subclass, and floats such as NaN slip past `< 1`.
+            if type(count) is not int or count < 1:
+                raise ValueError(f"item {kind!r} has count {count!r}, must be an integer >= 1")
+        object.__setattr__(self, "stacks", tuple(sorted(self.stacks)))
+
+    def count(self, kind: str) -> int:
+        return dict(self.stacks).get(kind, 0)
+
+    def counts(self) -> dict[str, int]:
+        """A fresh copy, sorted by kind; changing it leaves the inventory untouched."""
+        return dict(self.stacks)
+
+
+@dataclass(frozen=True)
 class Resident:
     id: str
     name: str
     color: str
     """Display colour as `#rrggbb`."""
     position: Position
+    inventory: Inventory = Inventory()
 
     def __post_init__(self) -> None:
         if not COLOR_PATTERN.fullmatch(self.color):

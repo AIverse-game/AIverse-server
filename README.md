@@ -2,7 +2,7 @@
 
 AIverse 的权威游戏服务端。游戏状态只在这里计算，网页客户端（同级目录 `aiverse-client`）只接收并渲染。设计、规则与协作约定都在客户端仓库的文档中，先读那边的 `AGENTS.md` 与 `docs/architecture.md`。
 
-当前功能：生成一张固定布局的正方形地图（边长 100）和 4 名居民，客户端经 WebSocket 读取；通过操作原语改变世界，目前只有“移动到坐标”（`move_to`）。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
+当前功能：生成一张固定布局的正方形地图（边长 100）和 4 名居民，客户端经 WebSocket 读取；通过操作原语改变世界，目前只有“移动到坐标”（`move_to`）。居民可以持有物品，服务端内部有存入、移出、计数、列出和清空的接口（`inventory.py`），尚未开放给客户端或 AI。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
 
 ## 坐标系
 
@@ -63,10 +63,11 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 | 文件 | 用途 |
 | --- | --- |
-| `src/aiverse_server/world.py` | 坐标、居民、地图与世界模型，越界与重复 id 校验 |
+| `src/aiverse_server/world.py` | 坐标、居民、物品栏、地图与世界模型，越界与重复 id 校验 |
 | `src/aiverse_server/layout.py` | 固定的初始地图与居民 |
-| `src/aiverse_server/actions.py` | 操作原语：改变世界的唯一入口，校验并执行 |
+| `src/aiverse_server/actions.py` | 操作原语：玩家与 AI 改变世界的唯一入口，校验并执行 |
+| `src/aiverse_server/inventory.py` | 居民物品的存入、移出、计数、列出与清空；服务端内部接口，不是原语 |
 | `src/aiverse_server/protocol.py` | 消息模型、客户端消息解析、消息到原语与世界到视图的转换 |
 | `src/aiverse_server/app.py` | FastAPI 应用与 WebSocket `/ws`：共享世界、握手、执行原语、广播状态 |
 | `src/aiverse_server/__main__.py` | 启动入口 |
-| `tests/` | 世界模型、操作原语与 WebSocket 接口测试 |
+| `tests/` | 世界模型、操作原语、物品栏与 WebSocket 接口测试 |
