@@ -9,6 +9,7 @@ later other places can stand anywhere inside the map.
 import math
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from .events import EventQueue
 
@@ -65,6 +66,85 @@ class MiningJob:
 
 
 @dataclass(frozen=True)
+class PoolSighting:
+    """A pool as a resident last saw it, see `perception.py`."""
+
+    pool_id: str
+    position: Position
+    radius: float
+    reserve: int
+    """Tokens left when it was seen; the pool may hold fewer by now."""
+    seen_at: float
+    """Game time of the sighting, see `World.time`."""
+
+
+@dataclass(frozen=True)
+class Memory:
+    """What a resident has noticed so far, see `perception.py`. Empty when the game starts."""
+
+    known_pools: tuple[PoolSighting, ...] = ()
+    """Every pool the resident has discovered, at its latest sighting, ordered by pool id."""
+    activity_seen: int = 0
+    """Sequence number of the last activity entry already looked at; 0 before the first look."""
+
+    def __post_init__(self) -> None:
+        ids = [sighting.pool_id for sighting in self.known_pools]
+        if len(set(ids)) != len(ids):
+            raise ValueError("known pools must be unique")
+        object.__setattr__(
+            self, "known_pools", tuple(sorted(self.known_pools, key=lambda s: s.pool_id))
+        )
+        if type(self.activity_seen) is not int or self.activity_seen < 0:
+            raise ValueError(f"activity seen must be an integer >= 0, got {self.activity_seen!r}")
+
+
+ActivityKind = Literal["moved", "started_mining", "finished_mining", "left_game"]
+
+
+@dataclass(frozen=True)
+class Activity:
+    """Something a resident did at a place on the map, which others nearby can notice."""
+
+    seq: int
+    """Unique within a world, counting up from 1 in the order things happened."""
+    time: float
+    resident_id: str
+    kind: ActivityKind
+    position: Position
+    """Where it happened; for a move, where the resident arrived."""
+    origin: Position | None = None
+    """Where a move started; None for every other kind."""
+    pool_id: str | None = None
+    """The pool mined, for the two mining kinds; None otherwise."""
+
+
+ACTIVITY_LIMIT = 500
+"""Entries the activity log keeps; older ones are dropped, so the log stays small."""
+
+
+@dataclass(frozen=True)
+class ActivityLog:
+    """Recent activity, oldest first, and the sequence number the next entry will get."""
+
+    entries: tuple[Activity, ...] = ()
+    next_seq: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.next_seq) is not int or self.next_seq < 1:
+            raise ValueError(f"next activity seq must be an integer >= 1, got {self.next_seq!r}")
+        if len(self.entries) > ACTIVITY_LIMIT:
+            raise ValueError(f"activity log holds {len(self.entries)} entries, over the limit")
+        previous = 0
+        for entry in self.entries:
+            if type(entry.seq) is not int or not previous < entry.seq < self.next_seq:
+                raise ValueError(
+                    f"activity seq {entry.seq!r} must be an integer above {previous} "
+                    f"and below {self.next_seq}"
+                )
+            previous = entry.seq
+
+
+@dataclass(frozen=True)
 class Resident:
     id: str
     name: str
@@ -77,6 +157,7 @@ class Resident:
     left: bool = False
     """Left the game: stays in the world and the ranking, but can no longer act or trade."""
     mining: MiningJob | None = None
+    memory: Memory = Memory()
 
     def __post_init__(self) -> None:
         if not COLOR_PATTERN.fullmatch(self.color):
@@ -146,6 +227,8 @@ class World:
     """Token pools, fixed for the whole game."""
     time: float = 0.0
     """Seconds since the game started, as of the latest change; the server moves it on."""
+    activity: ActivityLog = ActivityLog()
+    """What residents have done where, for others nearby to notice, see `perception.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -167,6 +250,16 @@ class World:
                     raise ValueError(f"resident {resident.id} mines unknown pool")
                 if self.ended:
                     raise ValueError(f"resident {resident.id} is mining after the game ended")
+            for sighting in resident.memory.known_pools:
+                if sighting.pool_id not in pool_ids:
+                    raise ValueError(f"resident {resident.id} remembers unknown pool")
+            if resident.memory.activity_seen >= self.activity.next_seq:
+                raise ValueError(f"resident {resident.id} has seen activity not yet logged")
+        for entry in self.activity.entries:
+            if entry.resident_id not in ids:
+                raise ValueError(f"activity {entry.seq} involves unknown resident")
+            if entry.pool_id is not None and entry.pool_id not in pool_ids:
+                raise ValueError(f"activity {entry.seq} involves unknown pool")
         for event in self.events.pending:
             for party in (event.sender_id, event.recipient_id):
                 if party not in ids:

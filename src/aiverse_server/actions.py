@@ -7,7 +7,9 @@ a request against the current world and either returns the next world or raises
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
 leaving, for a resident who is mining. A resident whose last token is spent by a primitive,
-their own or one they agreed to, is out of the game afterwards, see `lifecycle.py`.
+their own or one they agreed to, is out of the game afterwards, see `lifecycle.py`. What a
+primitive changes on the map goes into the activity log for others nearby to notice, see
+`perception.py`.
 """
 
 from dataclasses import dataclass, replace
@@ -24,6 +26,7 @@ from .events import (
 from .inventory import InventoryError, InventoryErrorCode
 from .lifecycle import GameError, GameErrorCode, check_can_act, knock_out_exhausted, leave_game
 from .mining import MiningError, MiningErrorCode, check_not_busy, start_mining
+from .perception import record_activity
 from .tokens import TokenError, TokenErrorCode, pay_for_walk
 from .trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from .world import Position, World
@@ -139,7 +142,7 @@ def perform(world: World, action: Action) -> World:
             check_not_busy(world, action.resident_id)
     except (GameError, MiningError) as error:
         raise ActionRejected(error.code, error.message) from error
-    return knock_out_exhausted(world, _carry_out(world, action))
+    return record_activity(world, knock_out_exhausted(world, _carry_out(world, action)))
 
 
 def _carry_out(world: World, action: Action) -> World:

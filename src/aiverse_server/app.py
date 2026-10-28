@@ -19,6 +19,7 @@ from .actions import ActionRejected, perform
 from .layout import create_default_world
 from .lifecycle import GAME_DURATION, end_game
 from .mining import finish_mining, next_finish
+from .perception import record_activity
 from .protocol import (
     PROTOCOL_VERSION,
     ActionResultMessage,
@@ -146,8 +147,8 @@ class Game:
         return max(self._duration - (self._clock() - self._start), 0.0)
 
     def tick(self) -> None:
-        """Bring the world up to now: move its time on, pay out the mining jobs that are
-        done, end the game if its time is up, and tell everyone if anything changed. Called
+        """Bring the world up to now: move its time on, pay out and log the mining jobs that
+        are done, end the game if its time is up, and tell everyone if anything changed. Called
         by the timer and before each frame, so no action slips in late while the timer waits
         for its turn."""
         if self.world.ended:
@@ -156,7 +157,8 @@ class Game:
         elapsed = self._clock() - self._start
         # Capped at the end, so jobs due after the deadline never pay out.
         timed = replace(self.world, time=max(min(elapsed, self._duration), self.world.time))
-        after = finish_mining(timed)
+        # Logged before ending, which only stops jobs: nothing after the end is news.
+        after = record_activity(timed, finish_mining(timed))
         if elapsed >= self._duration:
             after = end_game(after)
         self.world = after
