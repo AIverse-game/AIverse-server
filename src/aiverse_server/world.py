@@ -2,8 +2,8 @@
 
 Coordinates: the origin (0, 0) is the north-west (top-left) corner, x grows east
 (right) and y grows south (down), matching screen space. Both axes cover the closed
-range [0, size]. Positions are real numbers, not grid cells: residents, token pools and
-later other places can stand anywhere inside the map.
+range [0, size]. Positions are real numbers, not grid cells: residents, token pools, the
+market and later other places can stand anywhere inside the map.
 """
 
 import math
@@ -288,6 +288,33 @@ class Pool:
 
 
 @dataclass(frozen=True)
+class Market:
+    """Where residents sell tokens for coins, see `market.py`. It never moves; only the
+    pressure of recent sales, which sets the price, changes."""
+
+    position: Position
+    radius: float
+    """Residents within this distance of `position` can sell here."""
+    pressure: float = 0.0
+    """Tokens sold recently, as measured at `pressure_at`; it fades as time passes."""
+    pressure_at: float = 0.0
+    """Game time of the last sale, see `World.time`."""
+
+    def __post_init__(self) -> None:
+        if not (math.isfinite(self.radius) and self.radius > 0):
+            raise ValueError(f"market has radius {self.radius}, must be positive")
+        if not (math.isfinite(self.pressure) and self.pressure >= 0):
+            raise ValueError(f"market pressure must be a finite number >= 0, got {self.pressure}")
+        if not (math.isfinite(self.pressure_at) and self.pressure_at >= 0):
+            raise ValueError(f"market pressure time must be finite and >= 0: {self.pressure_at}")
+
+    def reaches(self, position: Position) -> bool:
+        return (
+            math.dist((self.position.x, self.position.y), (position.x, position.y)) <= self.radius
+        )
+
+
+@dataclass(frozen=True)
 class WorldMap:
     """Side length of the square map, in map units."""
 
@@ -316,10 +343,17 @@ class World:
     """Seconds since the game started, as of the latest change; the server moves it on."""
     activity: ActivityLog = ActivityLog()
     """What residents have done where, for others nearby to notice, see `perception.py`."""
+    market: Market | None = None
+    """Where tokens sell for coins, see `market.py`; None on a map without one."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
             raise ValueError(f"world time must be a finite number >= 0, got {self.time}")
+        if self.market is not None:
+            if not self.map.contains(self.market.position):
+                raise ValueError(f"the market is outside the map: {self.market.position}")
+            if self.market.pressure_at > self.time:
+                raise ValueError("the market was last sold to after the current time")
         pool_ids = [pool.id for pool in self.pools]
         if len(set(pool_ids)) != len(pool_ids):
             raise ValueError("pool ids must be unique")

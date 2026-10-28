@@ -18,13 +18,14 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from .actions import Action, ActionRejected, LeaveGame, Mine, MoveTo, RejectionCode
+from .actions import Action, ActionRejected, LeaveGame, Mine, MoveTo, RejectionCode, SellTokens
 from .lifecycle import ranks, total_coins
+from .market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, pressure_at
 from .tokens import token_total
 from .walking import position_at
 from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 
 ERROR_MAX_LENGTH = 200
 
@@ -61,7 +62,15 @@ class MineInput(_Message):
     pool_id: str
 
 
-ActionInput = Annotated[MoveToInput | LeaveGameInput | MineInput, Field(discriminator="type")]
+class SellTokensInput(_Message):
+    type: Literal["sell_tokens"]
+    resident_id: str
+    quantity: StrictInt
+
+
+ActionInput = Annotated[
+    MoveToInput | LeaveGameInput | MineInput | SellTokensInput, Field(discriminator="type")
+]
 
 
 class HelloMessage(_Message):
@@ -130,6 +139,21 @@ class PoolView(_Message):
     reserve: int
 
 
+class MarketView(_Message):
+    """The market and what sets its price, so clients can follow the price as it recovers
+    between states: one more token fetches `base_price * depth / (depth + p)` coins, where
+    the pressure p halves every `half_life_seconds` after this was sent, and selling q tokens
+    pays `floor(base_price * depth * ln((depth + p + q) / (depth + p)))`."""
+
+    position: PositionView
+    radius: float
+    base_price: float
+    depth: float
+    half_life_seconds: float
+    pressure: float
+    """Recent sales in tokens when this was sent."""
+
+
 class MapView(_Message):
     size: float
 
@@ -145,6 +169,8 @@ class WorldView(_Message):
     pools: list[PoolView]
     residents: list[ResidentView]
     game: GameView
+    market: MarketView | None = None
+    """Left out on a map without a market."""
 
 
 class WelcomeMessage(_Message):
@@ -222,6 +248,16 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
             ended=world.ended,
             remaining_seconds=0.0 if world.ended else max(remaining_seconds, 0.0),
         ),
+        market=None
+        if world.market is None
+        else MarketView(
+            position=_position_view(world.market.position),
+            radius=world.market.radius,
+            base_price=MARKET_BASE_PRICE,
+            depth=MARKET_DEPTH,
+            half_life_seconds=MARKET_HALF_LIFE,
+            pressure=pressure_at(world.market, world.time),
+        ),
     )
 
 
@@ -239,6 +275,8 @@ def to_action(message: ActionMessage) -> Action:
             return LeaveGame(resident_id=action.resident_id)
         case MineInput():
             return Mine(resident_id=action.resident_id, pool_id=action.pool_id)
+        case SellTokensInput():
+            return SellTokens(resident_id=action.resident_id, quantity=action.quantity)
 
 
 def encode(message: ServerMessage) -> str:

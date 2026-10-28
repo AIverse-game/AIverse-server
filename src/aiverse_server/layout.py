@@ -1,14 +1,16 @@
-"""The starting layout: a fixed map and residents, with token pools scattered at random.
+"""The starting layout: a fixed map, residents and market, with token pools scattered at random.
 
-Every match uses the same map and residents. The pools are placed when the world is created,
-from a seed, and stay where they are for the whole game.
+Every match uses the same map, residents and market, which stands in the middle of the map.
+The pools are placed when the world is created, from a seed, and stay where they are for the
+whole game.
 """
 
 import math
 import random
 
+from .market import MARKET_RADIUS
 from .tokens import TOKEN
-from .world import Inventory, Pool, Position, Resident, World, WorldMap
+from .world import Inventory, Market, Pool, Position, Resident, World, WorldMap
 
 MAP_SIZE = 100.0
 
@@ -24,6 +26,8 @@ POOL_MARGIN = 10.0
 """Least distance from a pool's centre to the map edge."""
 POOL_SPACING = 15.0
 """Least distance between two pools' centres, so they do not overlap."""
+MARKET_CLEARANCE = 20.0
+"""Least distance from a pool's centre to the market's, so selling takes a walk from mining."""
 
 _STARTING_INVENTORY = Inventory(((TOKEN, STARTING_TOKENS),))
 
@@ -49,9 +53,11 @@ DEFAULT_RESIDENTS = (
 
 
 def scatter_pools(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Pool, ...]:
-    """`POOL_COUNT` pools at random spots at least `POOL_SPACING` apart, each with a random
-    reserve. The same seed gives the same pools; without one, every call differs."""
+    """`POOL_COUNT` pools at random spots at least `POOL_SPACING` apart and `MARKET_CLEARANCE`
+    from the market, each with a random reserve. The same seed gives the same pools; without
+    one, every call differs."""
     rng = random.Random(seed)
+    market = market_position(size)
     pools: list[Pool] = []
     # The spacing leaves plenty of room on the default map; the bound only guards a
     # misconfigured one from looping forever.
@@ -62,7 +68,7 @@ def scatter_pools(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Pool
             round(rng.uniform(POOL_MARGIN, size - POOL_MARGIN), 1),
             round(rng.uniform(POOL_MARGIN, size - POOL_MARGIN), 1),
         )
-        if all(
+        if math.dist((market.x, market.y), (position.x, position.y)) >= MARKET_CLEARANCE and all(
             math.dist((p.position.x, p.position.y), (position.x, position.y)) >= POOL_SPACING
             for p in pools
         ):
@@ -73,7 +79,15 @@ def scatter_pools(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Pool
     return tuple(pools)
 
 
+def market_position(size: float = MAP_SIZE) -> Position:
+    """The centre of the map."""
+    return Position(size / 2, size / 2)
+
+
 def create_default_world(seed: int | None = None) -> World:
     return World(
-        map=WorldMap(size=MAP_SIZE), residents=DEFAULT_RESIDENTS, pools=scatter_pools(seed)
+        map=WorldMap(size=MAP_SIZE),
+        residents=DEFAULT_RESIDENTS,
+        pools=scatter_pools(seed),
+        market=Market(market_position(), MARKET_RADIUS),
     )

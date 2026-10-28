@@ -15,6 +15,9 @@ their positions are public anyway (see the observation rules in the design docum
 client repository). Range is measured from where the perceiver stands now, not where they
 stood when something happened; a move is in range when either end is.
 
+The market is in sight wherever the resident stands: its place and price are public, like a
+price board in town, see `market.py`.
+
 Each look also hands back the notes the resident chose to keep, long and short term, with
 the expired ones cleared first, see `memory.py`.
 
@@ -31,6 +34,7 @@ import math
 from dataclasses import dataclass, replace
 
 from .lifecycle import check_can_act
+from .market import unit_price
 from .memory import forget_expired
 from .walking import position_at
 from .world import (
@@ -62,6 +66,17 @@ class ResidentSighting:
 
 
 @dataclass(frozen=True)
+class MarketSighting:
+    """The market as it is right now."""
+
+    position: Position
+    radius: float
+    price: float
+    """Coins one more token fetches right now, before rounding; it falls as tokens are sold
+    and recovers with time."""
+
+
+@dataclass(frozen=True)
 class Perception:
     """What a resident noticed at the start of a round."""
 
@@ -82,6 +97,8 @@ class Perception:
     """The notes the resident keeps for the whole game, oldest first, see `memory.py`."""
     short_term: tuple[Note, ...]
     """The short-term notes not yet expired, oldest first."""
+    market: MarketSighting | None
+    """The market, wherever the resident stands; None on a map without one."""
 
 
 def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
@@ -140,6 +157,11 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         known_pools=memory.known_pools,
         long_term=memory.long_term,
         short_term=memory.short_term,
+        market=None
+        if world.market is None
+        else MarketSighting(
+            world.market.position, world.market.radius, unit_price(world.market, world.time)
+        ),
     )
     return replace(world, residents=residents_after), perception
 

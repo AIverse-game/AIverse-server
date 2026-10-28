@@ -25,6 +25,7 @@ from .events import (
 )
 from .inventory import InventoryError, InventoryErrorCode
 from .lifecycle import GameError, GameErrorCode, check_can_act, knock_out_exhausted, leave_game
+from .market import MarketError, MarketErrorCode, sell_tokens
 from .mining import MiningError, MiningErrorCode, check_not_busy, start_mining
 from .perception import record_activity
 from .tokens import TokenError, TokenErrorCode, pay_for_walk
@@ -41,6 +42,7 @@ RejectionCode = (
     | GameErrorCode
     | TokenErrorCode
     | MiningErrorCode
+    | MarketErrorCode
 )
 
 
@@ -133,7 +135,25 @@ class Mine:
     pool_id: str
 
 
-Action = MoveTo | RespondToEvent | WithdrawEvent | OfferToBuy | OfferToSell | LeaveGame | Mine
+@dataclass(frozen=True)
+class SellTokens:
+    """Sell `quantity` carried tokens to the market the resident stands at, for coins at the
+    market price, see `market.py`. Selling the last token owned takes them out of the game."""
+
+    resident_id: str
+    quantity: int
+
+
+Action = (
+    MoveTo
+    | RespondToEvent
+    | WithdrawEvent
+    | OfferToBuy
+    | OfferToSell
+    | LeaveGame
+    | Mine
+    | SellTokens
+)
 
 
 def perform(world: World, action: Action) -> World:
@@ -160,6 +180,11 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return start_mining(world, action.resident_id, action.pool_id)
             except MiningError as error:
+                raise ActionRejected(error.code, error.message) from error
+        case SellTokens():
+            try:
+                return sell_tokens(world, action.resident_id, action.quantity)
+            except (MarketError, TokenError) as error:
                 raise ActionRejected(error.code, error.message) from error
 
 

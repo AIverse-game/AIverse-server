@@ -10,6 +10,7 @@ from starlette.websockets import WebSocketDisconnect
 from aiverse_server.app import CLOSE_POLICY_VIOLATION, Game, Outbox, create_app
 from aiverse_server.layout import POOL_COUNT, STARTING_TOKENS
 from aiverse_server.lifecycle import GAME_DURATION
+from aiverse_server.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE
 from aiverse_server.mining import MINE_SECONDS, MINE_YIELD
 from aiverse_server.protocol import (
     ERROR_MAX_LENGTH,
@@ -22,6 +23,7 @@ from aiverse_server.tokens import TOKEN
 from aiverse_server.walking import WALK_SPEED
 from aiverse_server.world import (
     Inventory,
+    Market,
     MiningJob,
     Pool,
     Position,
@@ -528,3 +530,95 @@ def test_the_timer_wakes_for_a_job_started_while_it_waits(
     b = resident_view(paid, "b")
     assert b["tokens"] == 100 + MINE_YIELD
     assert "mining" not in b
+
+
+def sell(resident_id: str, quantity: object) -> str:
+    action = {"type": "sell_tokens", "residentId": resident_id, "quantity": quantity}
+    return json.dumps({"type": "action", "action": action})
+
+
+MARKET_WORLD = replace(SMALL_WORLD, market=Market(Position(12, 7), radius=5))
+
+
+def test_selling_tokens_pays_coins_and_lowers_the_price_for_everyone(clock: FakeClock) -> None:
+    client = TestClient(create_app(MARKET_WORLD, clock=clock))
+    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
+        world = greet(ws)
+        greet(watcher)
+        assert world["market"] == {
+            "position": {"x": 12, "y": 7},
+            "radius": 5,
+            "basePrice": MARKET_BASE_PRICE,
+            "depth": MARKET_DEPTH,
+            "halfLifeSeconds": MARKET_HALF_LIFE,
+            "pressure": 0,
+        }
+        clock.now = 3
+        ws.send_text(sell("b", 30))
+        assert ws.receive_json()["ok"] is True
+        for connection in (ws, watcher):
+            world = connection.receive_json()["world"]
+            b = resident_view(world, "b")
+            assert b["coins"] == 524
+            assert b["tokens"] == 70
+            assert b["rank"] == 1
+            assert resident_view(world, "a")["rank"] == 2
+            assert world["market"]["pressure"] == 30
+        # The pressure in a later state has faded with the time since the sale.
+        clock.now = 3 + MARKET_HALF_LIFE
+        ws.send_text(sell("a", 1))
+        assert ws.receive_json()["code"] == "not_at_market"
+        ws.send_text(sell("b", 1))
+        assert ws.receive_json()["ok"] is True
+        assert ws.receive_json()["world"]["market"]["pressure"] == pytest.approx(16)
+
+
+@pytest.mark.parametrize(
+    ("frame", "code"),
+    [(sell("b", 0), "invalid_quantity"), (sell("b", 101), "not_enough_tokens")],
+)
+def test_market_rejections_reach_the_sender(clock: FakeClock, frame: str, code: str) -> None:
+    client = TestClient(create_app(MARKET_WORLD, clock=clock))
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(frame)
+        assert ws.receive_json()["code"] == code
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "sell_tokens", "residentId": "b"},
+        {"type": "sell_tokens", "quantity": 1},
+        {"type": "sell_tokens", "residentId": "b", "quantity": 1.5},
+        {"type": "sell_tokens", "residentId": "b", "quantity": "1"},
+        {"type": "sell_tokens", "residentId": "b", "quantity": True},
+    ],
+)
+def test_malformed_sell_actions_get_a_bounded_error(
+    client: TestClient, action: dict[str, Any]
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(json.dumps({"type": "action", "action": action}))
+        assert ws.receive_json()["code"] == "bad_message"
+
+
+def test_a_quantity_too_big_for_a_float_is_refused_and_the_socket_stays_usable(
+    clock: FakeClock,
+) -> None:
+    client = TestClient(create_app(MARKET_WORLD, clock=clock))
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        action = '{"type": "sell_tokens", "residentId": "b", "quantity": 1' + "0" * 400 + "}"
+        ws.send_text('{"type": "action", "action": ' + action + "}")
+        assert ws.receive_json()["code"] == "not_enough_tokens"
+        ws.send_text(sell("b", 1))
+        assert ws.receive_json()["ok"] is True
+
+
+def test_default_world_has_a_market_in_the_middle() -> None:
+    with TestClient(create_app()).websocket_connect("/ws") as ws:
+        world = greet(ws)
+    assert world["market"]["position"] == {"x": 50, "y": 50}
+    assert world["market"]["pressure"] == 0
