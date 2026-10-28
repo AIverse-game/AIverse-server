@@ -3,7 +3,7 @@
 Every connection greets with `hello` and receives the map. After that it may send operation
 primitives; when one changes the world, every greeted connection receives the new `state`.
 The game ends a fixed time after the app is created; every connection then receives the
-final `state`.
+final `state`. Mining jobs finish on the same clock, and their payout is broadcast too.
 """
 
 import asyncio
@@ -11,13 +11,14 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .actions import ActionRejected, perform
 from .layout import create_default_world
 from .lifecycle import GAME_DURATION, end_game
+from .mining import finish_mining, next_finish
 from .protocol import (
     PROTOCOL_VERSION,
     ActionResultMessage,
@@ -135,24 +136,47 @@ class Game:
     ) -> None:
         self.world = world
         self._clock = clock
-        self._deadline = clock() + duration
+        self._start = clock()
+        self._duration = duration
         self._outboxes: set[Outbox] = set()
+        # Set on every broadcast: a new mining job may end before what the timer waits for.
+        self._changed = asyncio.Event()
 
     def remaining(self) -> float:
-        return max(self._deadline - self._clock(), 0.0)
+        return max(self._duration - (self._clock() - self._start), 0.0)
 
-    def expire(self) -> None:
-        """End the game if its time is up, and tell everyone. Called by the timer and before
-        each frame, so no action slips in late while the timer waits for its turn."""
-        if self.world.ended or self.remaining() > 0:
+    def tick(self) -> None:
+        """Bring the world up to now: move its time on, pay out the mining jobs that are
+        done, end the game if its time is up, and tell everyone if anything changed. Called
+        by the timer and before each frame, so no action slips in late while the timer waits
+        for its turn."""
+        if self.world.ended:
             return
-        self.world = end_game(self.world)
-        self.broadcast_world()
+        # One reading decides both, so the deadline cannot pass between paying and ending.
+        elapsed = self._clock() - self._start
+        # Capped at the end, so jobs due after the deadline never pay out.
+        timed = replace(self.world, time=max(min(elapsed, self._duration), self.world.time))
+        after = finish_mining(timed)
+        if elapsed >= self._duration:
+            after = end_game(after)
+        self.world = after
+        if after is not timed:
+            self.broadcast_world()
+
+    def _until_next(self) -> float:
+        """Seconds until the game ends or the next mining job does, whichever comes first."""
+        wait = self.remaining()
+        finish = next_finish(self.world)
+        if finish is not None:
+            wait = min(wait, finish - (self._clock() - self._start))
+        return max(wait, 0.0)
 
     async def run_clock(self) -> None:
         while not self.world.ended:
-            await asyncio.sleep(self.remaining())
-            self.expire()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._changed.wait(), self._until_next())
+            self._changed.clear()
+            self.tick()
 
     def watch(self, outbox: Outbox) -> None:
         self._outboxes.add(outbox)
@@ -164,6 +188,7 @@ class Game:
         text = encode(message)
         for outbox in self._outboxes:
             outbox.put_state(text)
+        self._changed.set()
 
     def broadcast_world(self) -> None:
         self.broadcast(StateMessage(world=world_view(self.world, self.remaining())))
@@ -191,7 +216,7 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                 continue
             # No await from here to the broadcast, so each frame sees and commits the
             # latest world without interleaving with other connections.
-            game.expire()
+            game.tick()
             outcome = handle_text(text, game.world, greeted, game.remaining())
             changed = outcome.world is not game.world
             game.world = outcome.world

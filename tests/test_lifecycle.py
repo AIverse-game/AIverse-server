@@ -32,7 +32,7 @@ WORLD = World(
     map=WorldMap(size=10),
     residents=(
         resident("a", 100, (("bread", 4),)),
-        resident("b", 50, (("wood", 3),)),
+        resident("b", 50, (("token", 20), ("wood", 3))),
         resident("c", 50),
     ),
 )

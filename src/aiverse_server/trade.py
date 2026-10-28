@@ -45,6 +45,17 @@ def reserved_coins(world: World, resident_id: str) -> int:
     )
 
 
+def reserved_items(world: World, resident_id: str, kind: str) -> int:
+    """Items of `kind` the resident has set aside in sale offers still waiting for an answer."""
+    return sum(
+        event.payload.quantity
+        for event in world.events.pending
+        if event.sender_id == resident_id
+        and isinstance(event.payload, SaleOffer)
+        and event.payload.kind == kind
+    )
+
+
 @dataclass(frozen=True)
 class _Trade(EventPayload):
     kind: str

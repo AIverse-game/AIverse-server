@@ -6,6 +6,8 @@ it runs out, `end_game` settles every pending event, returning what offers set a
 from then on nothing changes. Residents may leave earlier, of their own accord or because
 the server makes them; the game goes on without them. They stay in the world and in the
 ranking with the coins they had, but lose their items and can no longer act or trade.
+Running out of tokens, the residents' stamina, takes them out the same way, see
+`knock_out_exhausted`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -17,6 +19,8 @@ from typing import Literal
 
 from .events import Event, withdraw_event
 from .inventory import clear_items
+from .mining import cancel_mining
+from .tokens import token_total
 from .trade import reserved_coins
 from .world import World
 
@@ -46,9 +50,11 @@ def check_can_act(world: World, resident_id: str) -> None:
 
 
 def leave_game(world: World, resident_id: str) -> World:
-    """Take the resident out of the game: their pending events are declined, which hands
-    back whatever offers set aside, then their items are cleared. Their coins stay."""
+    """Take the resident out of the game: a mining job stops and its tokens go back to the
+    pool, their pending events are declined, which hands back whatever offers set aside, then
+    their items are cleared. Their coins stay."""
     check_can_act(world, resident_id)
+    world = cancel_mining(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
     world = clear_items(world, resident_id)
     residents = tuple(
@@ -58,10 +64,33 @@ def leave_game(world: World, resident_id: str) -> World:
     return replace(world, residents=residents)
 
 
+def knock_out_exhausted(before: World, after: World) -> World:
+    """Take out of the game, as `leave_game` does, every resident still in it who owned
+    tokens in `before` and owns none in `after`. Tokens set aside in sale offers count, and
+    so do those a running mining job has already dug out, since both come back to them.
+    Comparing the two worlds catches whatever spent the last token: a walk or a sale."""
+    already_out = {resident.id for resident in after.residents if resident.left}
+    for resident in before.residents:
+        if resident.id in already_out or _owned_tokens(before, resident.id) == 0:
+            continue
+        if _owned_tokens(after, resident.id) == 0:
+            after = leave_game(after, resident.id)
+    return after
+
+
+def _owned_tokens(world: World, resident_id: str) -> int:
+    resident = next(resident for resident in world.residents if resident.id == resident_id)
+    mined = resident.mining.amount if resident.mining is not None else 0
+    return token_total(world, resident_id) + mined
+
+
 def end_game(world: World) -> World:
-    """Decline every pending event and freeze the world; ending twice changes nothing."""
+    """Stop every mining job, decline every pending event and freeze the world; ending twice
+    changes nothing."""
     if world.ended:
         return world
+    for resident in world.residents:
+        world = cancel_mining(world, resident.id)
     return replace(_settle(world, lambda event: True), ended=True)
 
 

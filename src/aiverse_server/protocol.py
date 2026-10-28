@@ -18,11 +18,12 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from .actions import Action, ActionRejected, LeaveGame, MoveTo, RejectionCode
+from .actions import Action, ActionRejected, LeaveGame, Mine, MoveTo, RejectionCode
 from .lifecycle import ranks, total_coins
+from .tokens import token_total
 from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 ERROR_MAX_LENGTH = 200
 
@@ -53,7 +54,13 @@ class LeaveGameInput(_Message):
     resident_id: str
 
 
-ActionInput = Annotated[MoveToInput | LeaveGameInput, Field(discriminator="type")]
+class MineInput(_Message):
+    type: Literal["mine"]
+    resident_id: str
+    pool_id: str
+
+
+ActionInput = Annotated[MoveToInput | LeaveGameInput | MineInput, Field(discriminator="type")]
 
 
 class HelloMessage(_Message):
@@ -81,6 +88,14 @@ class PositionView(_Message):
     y: float
 
 
+class MiningView(_Message):
+    pool_id: str
+    amount: int
+    """Tokens paid out when the job ends."""
+    remaining_seconds: float
+    """Time left in the job when this was sent."""
+
+
 class ResidentView(_Message):
     id: str
     name: str
@@ -91,6 +106,17 @@ class ResidentView(_Message):
     left: bool
     rank: int
     """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""
+    tokens: int
+    """Tokens owned, the resident's stamina, including those set aside by pending offers."""
+    mining: MiningView | None = None
+    """Present while the resident is busy mining."""
+
+
+class PoolView(_Message):
+    id: str
+    position: PositionView
+    radius: float
+    reserve: int
 
 
 class MapView(_Message):
@@ -105,6 +131,7 @@ class GameView(_Message):
 
 class WorldView(_Message):
     map: MapView
+    pools: list[PoolView]
     residents: list[ResidentView]
     game: GameView
 
@@ -145,6 +172,15 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
     places = ranks(world)
     return WorldView(
         map=MapView(size=world.map.size),
+        pools=[
+            PoolView(
+                id=pool.id,
+                position=PositionView(x=pool.position.x, y=pool.position.y),
+                radius=pool.radius,
+                reserve=pool.reserve,
+            )
+            for pool in world.pools
+        ],
         residents=[
             ResidentView(
                 id=resident.id,
@@ -154,6 +190,14 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
                 coins=total_coins(world, resident.id),
                 left=resident.left,
                 rank=places[resident.id],
+                tokens=token_total(world, resident.id),
+                mining=None
+                if resident.mining is None
+                else MiningView(
+                    pool_id=resident.mining.pool_id,
+                    amount=resident.mining.amount,
+                    remaining_seconds=max(resident.mining.ends_at - world.time, 0.0),
+                ),
             )
             for resident in world.residents
         ],
@@ -172,6 +216,8 @@ def to_action(message: ActionMessage) -> Action:
             return MoveTo(resident_id=action.resident_id, target=target)
         case LeaveGameInput():
             return LeaveGame(resident_id=action.resident_id)
+        case MineInput():
+            return Mine(resident_id=action.resident_id, pool_id=action.pool_id)
 
 
 def encode(message: ServerMessage) -> str:

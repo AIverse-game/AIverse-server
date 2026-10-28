@@ -6,13 +6,16 @@ import pytest
 from aiverse_server.actions import ActionRejected, MoveTo, RespondToEvent, WithdrawEvent, perform
 from aiverse_server.events import Event, EventPayload, send_event
 from aiverse_server.inventory import item_count, store_item, take_item
-from aiverse_server.world import Position, Resident, World, WorldMap
+from aiverse_server.tokens import TOKEN
+from aiverse_server.world import Inventory, Position, Resident, World, WorldMap
+
+TOKENS = Inventory(((TOKEN, 100),))
 
 WORLD = World(
     map=WorldMap(size=10),
     residents=(
-        Resident(id="a", name="a", color="#ffffff", position=Position(1, 1)),
-        Resident(id="b", name="b", color="#000000", position=Position(9, 9)),
+        Resident(id="a", name="a", color="#ffffff", position=Position(1, 1), inventory=TOKENS),
+        Resident(id="b", name="b", color="#000000", position=Position(9, 9), inventory=TOKENS),
     ),
 )
 

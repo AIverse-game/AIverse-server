@@ -2,8 +2,8 @@
 
 Coordinates: the origin (0, 0) is the north-west (top-left) corner, x grows east
 (right) and y grows south (down), matching screen space. Both axes cover the closed
-range [0, size]. Positions are real numbers, not grid cells: residents, and later
-places and items, can stand anywhere inside the map.
+range [0, size]. Positions are real numbers, not grid cells: residents, token pools and
+later other places can stand anywhere inside the map.
 """
 
 import math
@@ -54,6 +54,17 @@ class Inventory:
 
 
 @dataclass(frozen=True)
+class MiningJob:
+    """A resident mining a pool, see `mining.py`; they can do nothing else until it ends."""
+
+    pool_id: str
+    ends_at: float
+    """Game time when the tokens are paid out, see `World.time`."""
+    amount: int
+    """Tokens taken out of the pool when the job started, paid to the miner when it ends."""
+
+
+@dataclass(frozen=True)
 class Resident:
     id: str
     name: str
@@ -65,6 +76,7 @@ class Resident:
     """Spendable coins; those set aside by pending offers are not included, see `trade.py`."""
     left: bool = False
     """Left the game: stays in the world and the ranking, but can no longer act or trade."""
+    mining: MiningJob | None = None
 
     def __post_init__(self) -> None:
         if not COLOR_PATTERN.fullmatch(self.color):
@@ -74,6 +86,37 @@ class Resident:
             raise ValueError(
                 f"resident {self.id} has {self.coins!r} coins, must be an integer >= 0"
             )
+        if self.mining is not None:
+            if self.left:
+                raise ValueError(f"resident {self.id} left the game but is still mining")
+            if type(self.mining.amount) is not int or self.mining.amount < 1:
+                raise ValueError(f"resident {self.id} is mining {self.mining.amount!r} tokens")
+            if not math.isfinite(self.mining.ends_at):
+                raise ValueError(f"resident {self.id} has a mining job that never ends")
+
+
+@dataclass(frozen=True)
+class Pool:
+    """A token mine on the ground, see `mining.py`. Pools are placed when the game starts and
+    never move or appear later; only their reserve goes down."""
+
+    id: str
+    position: Position
+    radius: float
+    """Residents within this distance of `position` can mine here."""
+    reserve: int
+    """Tokens still in the ground, not counting those miners are digging out right now."""
+
+    def __post_init__(self) -> None:
+        if not (math.isfinite(self.radius) and self.radius > 0):
+            raise ValueError(f"pool {self.id} has radius {self.radius}, must be positive")
+        if type(self.reserve) is not int or self.reserve < 0:
+            raise ValueError(f"pool {self.id} holds {self.reserve!r} tokens, must be >= 0")
+
+    def reaches(self, position: Position) -> bool:
+        return (
+            math.dist((self.position.x, self.position.y), (position.x, position.y)) <= self.radius
+        )
 
 
 @dataclass(frozen=True)
@@ -99,14 +142,31 @@ class World:
     """Requests between residents waiting for an answer, see `events.py`."""
     ended: bool = False
     """The game is over: nothing changes any more, see `lifecycle.py`."""
+    pools: tuple[Pool, ...] = ()
+    """Token pools, fixed for the whole game."""
+    time: float = 0.0
+    """Seconds since the game started, as of the latest change; the server moves it on."""
 
     def __post_init__(self) -> None:
+        if not (math.isfinite(self.time) and self.time >= 0):
+            raise ValueError(f"world time must be a finite number >= 0, got {self.time}")
+        pool_ids = [pool.id for pool in self.pools]
+        if len(set(pool_ids)) != len(pool_ids):
+            raise ValueError("pool ids must be unique")
+        for pool in self.pools:
+            if not self.map.contains(pool.position):
+                raise ValueError(f"pool {pool.id} is outside the map: {pool.position}")
         ids = [resident.id for resident in self.residents]
         if len(set(ids)) != len(ids):
             raise ValueError("resident ids must be unique")
         for resident in self.residents:
             if not self.map.contains(resident.position):
                 raise ValueError(f"resident {resident.id} is outside the map: {resident.position}")
+            if resident.mining is not None:
+                if resident.mining.pool_id not in pool_ids:
+                    raise ValueError(f"resident {resident.id} mines unknown pool")
+                if self.ended:
+                    raise ValueError(f"resident {resident.id} is mining after the game ended")
         for event in self.events.pending:
             for party in (event.sender_id, event.recipient_id):
                 if party not in ids:

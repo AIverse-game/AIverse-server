@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -7,7 +8,9 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from aiverse_server.app import CLOSE_POLICY_VIOLATION, Game, Outbox, create_app
+from aiverse_server.layout import POOL_COUNT, STARTING_TOKENS
 from aiverse_server.lifecycle import GAME_DURATION
+from aiverse_server.mining import MINE_SECONDS, MINE_YIELD
 from aiverse_server.protocol import (
     ERROR_MAX_LENGTH,
     PROTOCOL_VERSION,
@@ -15,16 +18,28 @@ from aiverse_server.protocol import (
     bad_message,
     world_view,
 )
-from aiverse_server.world import Position, Resident, World, WorldMap
+from aiverse_server.tokens import TOKEN
+from aiverse_server.world import (
+    Inventory,
+    MiningJob,
+    Pool,
+    Position,
+    Resident,
+    World,
+    WorldMap,
+)
 
 HELLO = {"type": "hello", "protocolVersion": PROTOCOL_VERSION}
+
+TOKENS = Inventory(((TOKEN, 100),))
 
 SMALL_WORLD = World(
     map=WorldMap(size=50),
     residents=(
-        Resident(id="a", name="甲", color="#112233", position=Position(0, 50)),
-        Resident(id="b", name="乙", color="#AABBCC", position=Position(12.5, 7)),
+        Resident(id="a", name="甲", color="#112233", position=Position(0, 50), inventory=TOKENS),
+        Resident(id="b", name="乙", color="#AABBCC", position=Position(12.5, 7), inventory=TOKENS),
     ),
+    pools=(Pool(id="p1", position=Position(10, 10), radius=4, reserve=40),),
 )
 
 
@@ -56,6 +71,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
             "type": "state",
             "world": {
                 "map": {"size": 50},
+                "pools": [{"id": "p1", "position": {"x": 10, "y": 10}, "radius": 4, "reserve": 40}],
                 "residents": [
                     {
                         "id": "a",
@@ -65,6 +81,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "coins": 0,
                         "left": False,
                         "rank": 1,
+                        "tokens": 100,
                     },
                     {
                         "id": "b",
@@ -74,6 +91,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "coins": 0,
                         "left": False,
                         "rank": 1,
+                        "tokens": 100,
                     },
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
@@ -339,3 +357,148 @@ def test_the_clock_ends_the_game_without_any_action() -> None:
             if not world["game"]["ended"]:
                 world = ws.receive_json()["world"]
     assert world["game"] == {"ended": True, "remainingSeconds": 0}
+
+
+def mine(resident_id: str, pool_id: str) -> str:
+    action = {"type": "mine", "residentId": resident_id, "poolId": pool_id}
+    return json.dumps({"type": "action", "action": action})
+
+
+def resident_view(world: dict[str, Any], resident_id: str) -> dict[str, Any]:
+    return next(r for r in world["residents"] if r["id"] == resident_id)
+
+
+def test_walking_costs_tokens_and_mining_pays_them_back(
+    client: TestClient, clock: FakeClock
+) -> None:
+    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
+        greet(ws)
+        greet(watcher)
+        ws.send_text(move("b", 12.5, 10))
+        assert ws.receive_json()["ok"] is True
+        assert resident_view(ws.receive_json()["world"], "b")["tokens"] == 97
+        watcher.receive_json()
+        clock.now = 2
+        ws.send_text(mine("b", "p1"))
+        assert ws.receive_json()["ok"] is True
+        world = ws.receive_json()["world"]
+        assert world["pools"][0]["reserve"] == 40 - MINE_YIELD
+        assert resident_view(world, "b")["mining"] == {
+            "poolId": "p1",
+            "amount": MINE_YIELD,
+            "remainingSeconds": MINE_SECONDS,
+        }
+        watcher.receive_json()
+        ws.send_text(move("b", 12, 10))
+        assert ws.receive_json()["code"] == "busy"
+        clock.now = 2 + MINE_SECONDS
+        # The first frame after the job ends pays it out and tells everyone, then is handled.
+        ws.send_text(move("b", 12.5, 10))
+        assert ws.receive_json()["ok"] is True
+        for connection in (ws, watcher):
+            b = resident_view(connection.receive_json()["world"], "b")
+            assert b["tokens"] == 97 + MINE_YIELD
+            assert "mining" not in b
+
+
+@pytest.mark.parametrize(
+    ("frame", "code"),
+    [
+        (mine("a", "p1"), "not_at_pool"),
+        (mine("b", "p9"), "unknown_pool"),
+    ],
+)
+def test_token_and_mining_rejections_reach_the_sender(
+    client: TestClient, frame: str, code: str
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(frame)
+        assert ws.receive_json()["code"] == code
+
+
+def test_a_walk_beyond_the_tokens_left_is_refused(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(move("a", 50, 0))
+        assert ws.receive_json()["ok"] is True
+        assert resident_view(ws.receive_json()["world"], "a")["tokens"] == 29
+        ws.send_text(move("a", 0, 50))
+        assert ws.receive_json()["code"] == "not_enough_tokens"
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "mine", "residentId": "a"},
+        {"type": "mine", "poolId": "p1"},
+        {"type": "mine", "residentId": "a", "poolId": 1},
+    ],
+)
+def test_malformed_mine_actions_get_a_bounded_error(
+    client: TestClient, action: dict[str, Any]
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(json.dumps({"type": "action", "action": action}))
+        assert ws.receive_json()["code"] == "bad_message"
+
+
+def test_the_timer_pays_out_mining_without_any_action() -> None:
+    job = MiningJob("p1", ends_at=0.2, amount=5)
+    miner = replace(SMALL_WORLD.residents[1], position=Position(10, 10), mining=job)
+    world = replace(SMALL_WORLD, residents=(SMALL_WORLD.residents[0], miner))
+    with TestClient(create_app(world)) as client, client.websocket_connect("/ws") as ws:
+        b = resident_view(greet(ws), "b")
+        if "mining" in b:
+            b = resident_view(ws.receive_json()["world"], "b")
+    assert b["tokens"] == 105
+    assert "mining" not in b
+
+
+def test_default_world_gives_everyone_tokens_and_scatters_pools() -> None:
+    with TestClient(create_app()).websocket_connect("/ws") as ws:
+        world = greet(ws)
+    assert {r["tokens"] for r in world["residents"]} == {STARTING_TOKENS}
+    assert len(world["pools"]) == POOL_COUNT
+
+
+def test_a_frame_after_the_deadline_pays_jobs_due_before_it_and_voids_the_rest(
+    clock: FakeClock,
+) -> None:
+    early = replace(SMALL_WORLD.residents[0], mining=MiningJob("p1", GAME_DURATION - 1, 5))
+    late = replace(SMALL_WORLD.residents[1], mining=MiningJob("p1", GAME_DURATION + 5, 7))
+    world = replace(SMALL_WORLD, residents=(early, late))
+    client = TestClient(create_app(world, clock=clock))
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        clock.now = GAME_DURATION + 10
+        ws.send_text(move("a", 1, 1))
+        assert ws.receive_json()["code"] == "game_over"
+        final = ws.receive_json()["world"]
+    assert final["game"]["ended"] is True
+    assert resident_view(final, "a")["tokens"] == 105
+    assert resident_view(final, "b")["tokens"] == 100
+    assert final["pools"][0]["reserve"] == 47
+
+
+def test_the_timer_wakes_for_a_job_started_while_it_waits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("aiverse_server.mining.MINE_SECONDS", 0.2)
+    miner = replace(SMALL_WORLD.residents[1], position=Position(10, 10))
+    world = replace(SMALL_WORLD, residents=(SMALL_WORLD.residents[0], miner))
+    # The timer is already asleep until the end of the game when the job starts. The game is
+    # short, so a timer that never wakes for the job fails here rather than hangs.
+    app = create_app(world, duration=3)
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(mine("b", "p1"))
+        assert ws.receive_json()["ok"] is True
+        assert "mining" in resident_view(ws.receive_json()["world"], "b")
+        # No frame follows: only the timer can send this, and it must come before the end.
+        paid = ws.receive_json()["world"]
+    assert paid["game"]["ended"] is False
+    b = resident_view(paid, "b")
+    assert b["tokens"] == 100 + MINE_YIELD
+    assert "mining" not in b

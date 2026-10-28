@@ -15,7 +15,8 @@ from aiverse_server.inventory import (
     take_coins,
     take_item,
 )
-from aiverse_server.layout import create_default_world
+from aiverse_server.layout import STARTING_TOKENS, create_default_world
+from aiverse_server.tokens import TOKEN
 from aiverse_server.world import Inventory, Position, Resident, World, WorldMap
 
 WORLD = World(
@@ -33,10 +34,10 @@ WORLD = World(
 )
 
 
-def test_residents_start_with_empty_inventories() -> None:
+def test_residents_start_with_nothing_but_their_tokens() -> None:
     assert list_items(WORLD, "a") == {}
     world = create_default_world()
-    assert all(list_items(world, r.id) == {} for r in world.residents)
+    assert all(list_items(world, r.id) == {TOKEN: STARTING_TOKENS} for r in world.residents)
 
 
 def test_list_items_is_sorted_by_kind_and_a_copy() -> None:
