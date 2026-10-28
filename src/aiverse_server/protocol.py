@@ -21,9 +21,10 @@ from pydantic.alias_generators import to_camel
 from .actions import Action, ActionRejected, LeaveGame, Mine, MoveTo, RejectionCode
 from .lifecycle import ranks, total_coins
 from .tokens import token_total
+from .walking import position_at
 from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 
 ERROR_MAX_LENGTH = 200
 
@@ -96,11 +97,18 @@ class MiningView(_Message):
     """Time left in the job when this was sent."""
 
 
+class WalkingView(_Message):
+    target: PositionView
+    remaining_seconds: float
+    """Time left until arrival when this was sent."""
+
+
 class ResidentView(_Message):
     id: str
     name: str
     color: str = Field(pattern=f"^{COLOR_PATTERN.pattern}$")
     position: PositionView
+    """Where the resident is when this was sent, on the way while walking."""
     coins: int
     """Total coins, including those set aside by pending offers; public to everyone."""
     left: bool
@@ -110,6 +118,9 @@ class ResidentView(_Message):
     """Tokens owned, the resident's stamina, including those set aside by pending offers."""
     mining: MiningView | None = None
     """Present while the resident is busy mining."""
+    walking: WalkingView | None = None
+    """Present while the resident is walking; they head straight for `target` at a steady
+    pace and arrive after `remaining_seconds`."""
 
 
 class PoolView(_Message):
@@ -175,7 +186,7 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
         pools=[
             PoolView(
                 id=pool.id,
-                position=PositionView(x=pool.position.x, y=pool.position.y),
+                position=_position_view(pool.position),
                 radius=pool.radius,
                 reserve=pool.reserve,
             )
@@ -186,7 +197,7 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
                 id=resident.id,
                 name=resident.name,
                 color=resident.color,
-                position=PositionView(x=resident.position.x, y=resident.position.y),
+                position=_position_view(position_at(resident, world.time)),
                 coins=total_coins(world, resident.id),
                 left=resident.left,
                 rank=places[resident.id],
@@ -198,6 +209,12 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
                     amount=resident.mining.amount,
                     remaining_seconds=max(resident.mining.ends_at - world.time, 0.0),
                 ),
+                walking=None
+                if resident.walking is None
+                else WalkingView(
+                    target=_position_view(resident.walking.target),
+                    remaining_seconds=max(resident.walking.arrives_at - world.time, 0.0),
+                ),
             )
             for resident in world.residents
         ],
@@ -206,6 +223,10 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
             remaining_seconds=0.0 if world.ended else max(remaining_seconds, 0.0),
         ),
     )
+
+
+def _position_view(position: Position) -> PositionView:
+    return PositionView(x=position.x, y=position.y)
 
 
 def to_action(message: ActionMessage) -> Action:

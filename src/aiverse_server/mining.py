@@ -4,7 +4,8 @@ A resident standing within a pool's radius starts a job that lasts `MINE_SECONDS
 time. The tokens, `MINE_YIELD` or whatever the pool has left if less, come out of the pool
 at once, so two miners cannot dig out the same tokens, and reach the miner when the job
 ends. Until then the miner is busy: they can do nothing but leave the game, which puts the
-tokens back into the pool.
+tokens back into the pool. Walkers are busy the same way, see `walking.py`; `check_not_busy`
+covers both.
 
 Game time is `World.time`. The server moves it on as real time passes and calls
 `finish_mining` to pay out the jobs that are due; `next_finish` tells it when to look again.
@@ -37,9 +38,12 @@ class MiningError(Exception):
 
 
 def check_not_busy(world: World, resident_id: str) -> None:
-    """Refuse a resident who is in the middle of a mining job."""
-    if _find(world, resident_id).mining is not None:
+    """Refuse a resident who is in the middle of a mining job or a walk."""
+    resident = _find(world, resident_id)
+    if resident.mining is not None:
         raise MiningError("busy", f"resident {resident_id!r} is mining and cannot do that now")
+    if resident.walking is not None:
+        raise MiningError("busy", f"resident {resident_id!r} is walking and cannot do that now")
 
 
 def start_mining(world: World, resident_id: str, pool_id: str) -> World:

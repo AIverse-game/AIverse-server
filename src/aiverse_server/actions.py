@@ -6,13 +6,13 @@ a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
-leaving, for a resident who is mining. A resident whose last token is spent by a primitive,
-their own or one they agreed to, is out of the game afterwards, see `lifecycle.py`. What a
-primitive changes on the map goes into the activity log for others nearby to notice, see
-`perception.py`.
+leaving, for a resident who is busy mining or walking. A resident whose last token is spent by
+a primitive, their own or one they agreed to, is out of the game afterwards, see
+`lifecycle.py`. What a primitive changes on the map goes into the activity log for others
+nearby to notice, see `perception.py`.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
 
 from .events import (
@@ -29,6 +29,7 @@ from .mining import MiningError, MiningErrorCode, check_not_busy, start_mining
 from .perception import record_activity
 from .tokens import TokenError, TokenErrorCode, pay_for_walk
 from .trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
+from .walking import start_walk
 from .world import Position, World
 
 # Sending or answering an event runs that kind's hooks, which may refuse with their own codes.
@@ -52,12 +53,12 @@ class ActionRejected(Exception):
 
 @dataclass(frozen=True)
 class MoveTo:
-    """Put a resident at `target`, paying for the walk in tokens, see `tokens.py`.
+    """Set a resident walking to `target`, paying for the walk in tokens, see `tokens.py`.
 
-    The move is instant and in a straight line: speed, per-round distance and obstacles
-    are still open design questions, see docs/status.md in the client repository. A walk
-    the resident cannot pay for is refused; one that spends their last token takes them
-    out of the game.
+    The walk is a straight line at a fixed speed, see `walking.py`; the resident is busy
+    until they arrive. Per-round distance and obstacles are still open design questions, see
+    docs/status.md in the client repository. A walk the resident cannot pay for is refused;
+    one that spends their last token takes them out of the game when they arrive.
     """
 
     resident_id: str
@@ -201,8 +202,4 @@ def _move_to(world: World, action: MoveTo) -> World:
         world = pay_for_walk(world, action.resident_id, start, target)
     except TokenError as error:
         raise ActionRejected(error.code, error.message) from error
-    residents = tuple(
-        replace(resident, position=target) if resident.id == action.resident_id else resident
-        for resident in world.residents
-    )
-    return replace(world, residents=residents)
+    return start_walk(world, action.resident_id, target)

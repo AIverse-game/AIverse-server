@@ -66,6 +66,17 @@ class MiningJob:
 
 
 @dataclass(frozen=True)
+class WalkJob:
+    """A resident on their way to `target`, see `walking.py`; they can do nothing else until
+    they arrive. Their `Resident.position` stays where they set off until then."""
+
+    target: Position
+    departs_at: float
+    arrives_at: float
+    """Game times when the walk began and when it ends, see `World.time`."""
+
+
+@dataclass(frozen=True)
 class PoolSighting:
     """A pool as a resident last saw it, see `perception.py`."""
 
@@ -98,7 +109,7 @@ class Memory:
             raise ValueError(f"activity seen must be an integer >= 0, got {self.activity_seen!r}")
 
 
-ActivityKind = Literal["moved", "started_mining", "finished_mining", "left_game"]
+ActivityKind = Literal["started_walking", "moved", "started_mining", "finished_mining", "left_game"]
 
 
 @dataclass(frozen=True)
@@ -111,9 +122,10 @@ class Activity:
     resident_id: str
     kind: ActivityKind
     position: Position
-    """Where it happened; for a move, where the resident arrived."""
+    """Where it happened; for a walk setting off, where it heads; for a move, where the
+    resident got to: the end of the walk, or where it stopped."""
     origin: Position | None = None
-    """Where a move started; None for every other kind."""
+    """Where a walk or move started; None for every other kind."""
     pool_id: str | None = None
     """The pool mined, for the two mining kinds; None otherwise."""
 
@@ -157,6 +169,8 @@ class Resident:
     left: bool = False
     """Left the game: stays in the world and the ranking, but can no longer act or trade."""
     mining: MiningJob | None = None
+    walking: WalkJob | None = None
+    """On the way somewhere: `position` is where they set off, see `walking.position_at`."""
     memory: Memory = Memory()
 
     def __post_init__(self) -> None:
@@ -174,6 +188,18 @@ class Resident:
                 raise ValueError(f"resident {self.id} is mining {self.mining.amount!r} tokens")
             if not math.isfinite(self.mining.ends_at):
                 raise ValueError(f"resident {self.id} has a mining job that never ends")
+        if self.walking is not None:
+            if self.left:
+                raise ValueError(f"resident {self.id} left the game but is still walking")
+            if self.mining is not None:
+                raise ValueError(f"resident {self.id} is walking and mining at once")
+            walk = self.walking
+            if not (
+                math.isfinite(walk.departs_at)
+                and math.isfinite(walk.arrives_at)
+                and walk.departs_at <= walk.arrives_at
+            ):
+                raise ValueError(f"resident {self.id} has a walk that never ends or ends early")
 
 
 @dataclass(frozen=True)
@@ -250,6 +276,11 @@ class World:
                     raise ValueError(f"resident {resident.id} mines unknown pool")
                 if self.ended:
                     raise ValueError(f"resident {resident.id} is mining after the game ended")
+            if resident.walking is not None:
+                if not self.map.contains(resident.walking.target):
+                    raise ValueError(f"resident {resident.id} walks to outside the map")
+                if self.ended:
+                    raise ValueError(f"resident {resident.id} is walking after the game ended")
             for sighting in resident.memory.known_pools:
                 if sighting.pool_id not in pool_ids:
                     raise ValueError(f"resident {resident.id} remembers unknown pool")

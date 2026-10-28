@@ -1,12 +1,14 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
 from aiverse_server.actions import ActionRejected, MoveTo, RespondToEvent, WithdrawEvent, perform
+from aiverse_server.clock import settle_due
 from aiverse_server.events import Event, EventPayload, send_event
 from aiverse_server.inventory import item_count, store_item, take_item
 from aiverse_server.tokens import TOKEN
+from aiverse_server.walking import next_arrival
 from aiverse_server.world import Inventory, Position, Resident, World, WorldMap
 
 TOKENS = Inventory(((TOKEN, 100),))
@@ -20,8 +22,15 @@ WORLD = World(
 )
 
 
+def arrive(world: World) -> World:
+    """Skip ahead until every walk has ended."""
+    while (due := next_arrival(world)) is not None:
+        world = settle_due(replace(world, time=due))
+    return world
+
+
 def test_move_to_puts_only_that_resident_at_the_target() -> None:
-    after = perform(WORLD, MoveTo(resident_id="a", target=Position(3.5, 7)))
+    after = arrive(perform(WORLD, MoveTo(resident_id="a", target=Position(3.5, 7))))
     assert [r.position for r in after.residents] == [Position(3.5, 7), Position(9, 9)]
     assert after.map == WORLD.map
     assert WORLD.residents[0].position == Position(1, 1)
@@ -29,7 +38,7 @@ def test_move_to_puts_only_that_resident_at_the_target() -> None:
 
 @pytest.mark.parametrize(("x", "y"), [(0, 0), (10, 10), (0, 10)])
 def test_move_to_accepts_the_map_edges(x: float, y: float) -> None:
-    after = perform(WORLD, MoveTo(resident_id="b", target=Position(x, y)))
+    after = arrive(perform(WORLD, MoveTo(resident_id="b", target=Position(x, y))))
     assert after.residents[1].position == Position(x, y)
 
 

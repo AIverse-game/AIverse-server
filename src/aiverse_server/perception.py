@@ -1,10 +1,12 @@
 """Perception and discovery: what a resident notices when they start a round of work.
 
-Whoever drives a resident, such as the AI that will, calls `begin_turn` at the start of
-each round before choosing what to do. The resident looks around within `PERCEPTION_RADIUS`
+Whoever drives a resident, such as the AI that will, calls `app.Game.begin_turn` at the
+start of each round before choosing what to do; it brings the game time up to now and then
+calls `begin_turn` here. The resident looks around within `PERCEPTION_RADIUS`
 of where they stand and notices:
 
-- the pools and other residents in range, as they are right now;
+- the pools and other residents in range, as they are right now, walkers where they have got
+  to on their way (see `walking.py`);
 - what others did in range since the resident last looked, from the world's activity log.
 
 Seeing a pool discovers it: the resident remembers where it is, and its reserve as last
@@ -14,7 +16,7 @@ client repository). Range is measured from where the perceiver stands now, not w
 stood when something happened; a move is in range when either end is.
 
 `record_activity` fills the log by comparing the world before and after a change.
-`actions.perform` and the server's clock call it, so every move, mining job and departure is
+`actions.perform` and the server's clock call it, so every walk, mining job and departure is
 logged however it came about. The log keeps the latest `ACTIVITY_LIMIT` entries, so a
 resident who looks rarely may miss the oldest.
 
@@ -26,6 +28,7 @@ import math
 from dataclasses import dataclass, replace
 
 from .lifecycle import check_can_act
+from .walking import position_at
 from .world import (
     ACTIVITY_LIMIT,
     Activity,
@@ -49,6 +52,8 @@ class ResidentSighting:
     position: Position
     mining_pool_id: str | None
     """The pool they are busy mining, or None."""
+    walking_to: Position | None
+    """Where they are walking to, or None."""
     left: bool
 
 
@@ -58,7 +63,7 @@ class Perception:
 
     time: float
     position: Position
-    """Where the resident stood when looking."""
+    """Where the resident was when looking."""
     pools: tuple[PoolSighting, ...]
     """Pools in range right now."""
     residents: tuple[ResidentSighting, ...]
@@ -77,7 +82,7 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
     does not exist or has left, and once the game is over; a busy miner can still look."""
     check_can_act(world, resident_id)
     me = next(resident for resident in world.residents if resident.id == resident_id)
-    here = me.position
+    here = position_at(me, world.time)
     pools = tuple(
         PoolSighting(pool.id, pool.position, pool.radius, pool.reserve, world.time)
         for pool in world.pools
@@ -87,12 +92,13 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         ResidentSighting(
             resident_id=other.id,
             name=other.name,
-            position=other.position,
+            position=there,
             mining_pool_id=other.mining.pool_id if other.mining is not None else None,
+            walking_to=other.walking.target if other.walking is not None else None,
             left=other.left,
         )
         for other in world.residents
-        if other.id != resident_id and _in_range(here, other.position)
+        if other.id != resident_id and _in_range(here, there := position_at(other, world.time))
     )
     activity = tuple(
         entry
@@ -125,9 +131,10 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
 
 
 def record_activity(before: World, after: World) -> World:
-    """Log, at `after.time`, what residents did between the two worlds: moved, started or
-    finished mining, or left the game. Mining that stops because the miner left is logged as
-    leaving only. Returns `after` itself when there is nothing to log."""
+    """Log, at `after.time`, what residents did between the two worlds: set off on a walk,
+    moved (arrived, or stopped on the way), started or finished mining, or left the game.
+    Mining that stops because the miner left is logged as leaving only. Returns `after`
+    itself when there is nothing to log."""
     previous = {resident.id: resident for resident in before.residents}
     # Numbered once all are found; 0 is a placeholder.
     found: list[Activity] = []
@@ -136,6 +143,9 @@ def record_activity(before: World, after: World) -> World:
         if old is None or old.left:
             continue
         now, who, here = after.time, resident.id, resident.position
+        if old.walking is None and resident.walking is not None:
+            target = resident.walking.target
+            found.append(Activity(0, now, who, "started_walking", target, origin=here))
         if here != old.position:
             found.append(Activity(0, now, who, "moved", here, origin=old.position))
         if old.mining is None and resident.mining is not None:

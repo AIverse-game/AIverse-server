@@ -3,7 +3,7 @@
 Every connection greets with `hello` and receives the map. After that it may send operation
 primitives; when one changes the world, every greeted connection receives the new `state`.
 The game ends a fixed time after the app is created; every connection then receives the
-final `state`. Mining jobs finish on the same clock, and their payout is broadcast too.
+final `state`. Mining jobs and walks finish on the same clock, and are broadcast too.
 """
 
 import asyncio
@@ -16,10 +16,10 @@ from dataclasses import dataclass, replace
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .actions import ActionRejected, perform
+from .clock import next_due, settle_due
 from .layout import create_default_world
 from .lifecycle import GAME_DURATION, end_game
-from .mining import finish_mining, next_finish
-from .perception import record_activity
+from .perception import Perception, begin_turn
 from .protocol import (
     PROTOCOL_VERSION,
     ActionResultMessage,
@@ -140,37 +140,46 @@ class Game:
         self._start = clock()
         self._duration = duration
         self._outboxes: set[Outbox] = set()
-        # Set on every broadcast: a new mining job may end before what the timer waits for.
+        # Set on every broadcast: a new job or walk may end before what the timer waits for.
         self._changed = asyncio.Event()
 
     def remaining(self) -> float:
         return max(self._duration - (self._clock() - self._start), 0.0)
 
     def tick(self) -> None:
-        """Bring the world up to now: move its time on, pay out and log the mining jobs that
-        are done, end the game if its time is up, and tell everyone if anything changed. Called
-        by the timer and before each frame, so no action slips in late while the timer waits
-        for its turn."""
+        """Bring the world up to now: move its time on, finish the mining jobs and walks that
+        are done (see `clock.py`), end the game if its time is up, and tell everyone if
+        anything changed. Called by the timer and before each frame, so no action slips in
+        late while the timer waits for its turn."""
         if self.world.ended:
             return
         # One reading decides both, so the deadline cannot pass between paying and ending.
         elapsed = self._clock() - self._start
-        # Capped at the end, so jobs due after the deadline never pay out.
+        # Capped at the end, so jobs and walks due after the deadline never finish.
         timed = replace(self.world, time=max(min(elapsed, self._duration), self.world.time))
-        # Logged before ending, which only stops jobs: nothing after the end is news.
-        after = record_activity(timed, finish_mining(timed))
+        # Settled before ending, which only stops jobs and walks: nothing after the end is news.
+        after = settle_due(timed)
         if elapsed >= self._duration:
             after = end_game(after)
         self.world = after
         if after is not timed:
             self.broadcast_world()
 
+    def begin_turn(self, resident_id: str) -> Perception:
+        """Start a round of work for the resident: bring the world up to now, then look
+        around and keep what they noticed, see `perception.py`. Raises `GameError` for a
+        resident who cannot act. Their memory is not in the protocol, so nothing is sent."""
+        self.tick()
+        self.world, perception = begin_turn(self.world, resident_id)
+        return perception
+
     def _until_next(self) -> float:
-        """Seconds until the game ends or the next mining job does, whichever comes first."""
+        """Seconds until the game ends or the next mining job or walk does, whichever comes
+        first."""
         wait = self.remaining()
-        finish = next_finish(self.world)
-        if finish is not None:
-            wait = min(wait, finish - (self._clock() - self._start))
+        due = next_due(self.world)
+        if due is not None:
+            wait = min(wait, due - (self._clock() - self._start))
         return max(wait, 0.0)
 
     async def run_clock(self) -> None:

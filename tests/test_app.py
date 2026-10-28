@@ -19,6 +19,7 @@ from aiverse_server.protocol import (
     world_view,
 )
 from aiverse_server.tokens import TOKEN
+from aiverse_server.walking import WALK_SPEED
 from aiverse_server.world import (
     Inventory,
     MiningJob,
@@ -181,29 +182,51 @@ def positions(world: dict[str, Any]) -> dict[str, dict[str, float]]:
     return {r["id"]: r["position"] for r in world["residents"]}
 
 
-def test_move_to_is_acknowledged_then_the_new_world_is_sent(client: TestClient) -> None:
+def test_move_to_is_acknowledged_then_the_walk_and_the_arrival_are_sent(
+    client: TestClient, clock: FakeClock
+) -> None:
     with client.websocket_connect("/ws") as ws:
         greet(ws)
-        ws.send_text(move("b", 30, 40.5))
+        ws.send_text(move("b", 32.5, 7))
         assert ws.receive_json() == {"type": "action_result", "ok": True}
         state = ws.receive_json()
-    assert state["type"] == "state"
-    assert positions(state["world"]) == {"a": {"x": 0, "y": 50}, "b": {"x": 30, "y": 40.5}}
+        assert state["type"] == "state"
+        b = resident_view(state["world"], "b")
+        assert b["position"] == {"x": 12.5, "y": 7}
+        assert b["walking"] == {"target": {"x": 32.5, "y": 7}, "remainingSeconds": 20 / WALK_SPEED}
+        # Halfway there, the next state shows b on the way.
+        clock.now = 10 / WALK_SPEED
+        ws.send_text(move("a", 0, 49))
+        assert ws.receive_json()["ok"] is True
+        assert resident_view(ws.receive_json()["world"], "b")["position"] == {"x": 22.5, "y": 7}
+        clock.now = 20 / WALK_SPEED
+        ws.send_text(move("b", 32.5, 7))
+        # The frame first brings b in and tells everyone, then b, no longer busy, may act.
+        assert ws.receive_json()["ok"] is True
+        b = resident_view(ws.receive_json()["world"], "b")
+    assert b["position"] == {"x": 32.5, "y": 7}
+    assert "walking" not in b
 
 
-def test_moves_reach_every_greeted_connection_and_persist(client: TestClient) -> None:
+def test_moves_reach_every_greeted_connection_and_persist(
+    client: TestClient, clock: FakeClock
+) -> None:
+    heading = {"x": 5, "y": 6}
     with client.websocket_connect("/ws") as mover, client.websocket_connect("/ws") as watcher:
         greet(mover)
         greet(watcher)
         with client.websocket_connect("/ws") as stranger:
             mover.send_text(move("a", 5, 6))
             assert mover.receive_json()["ok"] is True
-            assert positions(mover.receive_json()["world"])["a"] == {"x": 5, "y": 6}
-            assert positions(watcher.receive_json()["world"])["a"] == {"x": 5, "y": 6}
+            assert resident_view(mover.receive_json()["world"], "a")["walking"]["target"] == heading
+            assert (
+                resident_view(watcher.receive_json()["world"], "a")["walking"]["target"] == heading
+            )
             # Not greeted, so no broadcast was queued: the welcome comes first.
-            assert positions(greet(stranger))["a"] == {"x": 5, "y": 6}
+            assert resident_view(greet(stranger), "a")["walking"]["target"] == heading
+    clock.now = 100
     with client.websocket_connect("/ws") as later:
-        assert positions(greet(later))["a"] == {"x": 5, "y": 6}
+        assert positions(greet(later))["a"] == heading
 
 
 def test_actions_before_hello_are_refused(client: TestClient) -> None:
@@ -417,12 +440,15 @@ def test_token_and_mining_rejections_reach_the_sender(
         assert ws.receive_json()["code"] == code
 
 
-def test_a_walk_beyond_the_tokens_left_is_refused(client: TestClient) -> None:
+def test_a_walk_beyond_the_tokens_left_is_refused(client: TestClient, clock: FakeClock) -> None:
     with client.websocket_connect("/ws") as ws:
         greet(ws)
         ws.send_text(move("a", 50, 0))
         assert ws.receive_json()["ok"] is True
         assert resident_view(ws.receive_json()["world"], "a")["tokens"] == 29
+        ws.send_text(move("a", 0, 50))
+        assert ws.receive_json()["code"] == "busy"
+        clock.now = 100
         ws.send_text(move("a", 0, 50))
         assert ws.receive_json()["code"] == "not_enough_tokens"
 

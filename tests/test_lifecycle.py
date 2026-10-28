@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from aiverse_server.actions import ActionRejected, LeaveGame, MoveTo, OfferToBuy, perform
+from aiverse_server.clock import settle_due
 from aiverse_server.events import EventError, pending_for, send_event
 from aiverse_server.inventory import coin_balance, list_items
 from aiverse_server.lifecycle import (
@@ -14,6 +15,7 @@ from aiverse_server.lifecycle import (
     total_coins,
 )
 from aiverse_server.trade import PurchaseOffer, SaleOffer
+from aiverse_server.walking import next_arrival
 from aiverse_server.world import Inventory, Position, Resident, World, WorldMap
 
 
@@ -26,6 +28,13 @@ def resident(resident_id: str, coins: int, items: tuple[tuple[str, int], ...] = 
         inventory=Inventory(items),
         coins=coins,
     )
+
+
+def arrive(world: World) -> World:
+    """Skip ahead until every walk has ended."""
+    while (due := next_arrival(world)) is not None:
+        world = settle_due(replace(world, time=due))
+    return world
 
 
 WORLD = World(
@@ -86,7 +95,7 @@ def test_a_resident_who_left_can_neither_act_nor_be_dealt_with() -> None:
 
 def test_the_game_goes_on_after_someone_leaves() -> None:
     world = perform(WORLD, LeaveGame("a"))
-    world = perform(world, MoveTo("b", Position(5, 5)))
+    world = arrive(perform(world, MoveTo("b", Position(5, 5))))
     assert world.residents[1].position == Position(5, 5)
     assert not world.ended
 

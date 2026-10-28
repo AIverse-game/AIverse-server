@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from aiverse_server.actions import (
@@ -9,9 +11,11 @@ from aiverse_server.actions import (
     WithdrawEvent,
     perform,
 )
+from aiverse_server.clock import settle_due
 from aiverse_server.events import pending_from
 from aiverse_server.inventory import coin_balance, item_count, list_items
 from aiverse_server.tokens import TOKEN, token_total, walk_cost
+from aiverse_server.walking import next_arrival
 from aiverse_server.world import Inventory, Position, Resident, World, WorldMap
 
 
@@ -38,6 +42,13 @@ WORLD = World(
 )
 
 
+def arrive(world: World) -> World:
+    """Skip ahead until every walk has ended."""
+    while (due := next_arrival(world)) is not None:
+        world = settle_due(replace(world, time=due))
+    return world
+
+
 @pytest.mark.parametrize(
     ("end", "cost"),
     [(Position(0, 0), 0), (Position(3, 4), 5), (Position(0, 0.01), 1), (Position(2.5, 0), 3)],
@@ -46,8 +57,10 @@ def test_a_walk_costs_its_distance_rounded_up(end: Position, cost: int) -> None:
     assert walk_cost(Position(0, 0), end) == cost
 
 
-def test_walking_spends_tokens() -> None:
+def test_walking_spends_tokens_when_setting_off() -> None:
     world = perform(WORLD, MoveTo("a", Position(3, 4)))
+    assert item_count(world, "a", TOKEN) == 5
+    world = arrive(world)
     assert world.residents[0].position == Position(3, 4)
     assert item_count(world, "a", TOKEN) == 5
 
@@ -63,9 +76,11 @@ def test_standing_still_is_free_even_without_tokens() -> None:
     assert not world.residents[2].left
 
 
-def test_spending_the_last_token_on_a_walk_takes_the_resident_out() -> None:
+def test_spending_the_last_token_on_a_walk_takes_the_resident_out_on_arrival() -> None:
     world = perform(WORLD, OfferToBuy("a", "b", "bread", 1, 5))
     world = perform(world, MoveTo("a", Position(10, 0)))
+    assert not world.residents[0].left
+    world = arrive(world)
     a = world.residents[0]
     assert a.left
     assert a.position == Position(10, 0)
