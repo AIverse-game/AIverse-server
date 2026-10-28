@@ -15,6 +15,9 @@ their positions are public anyway (see the observation rules in the design docum
 client repository). Range is measured from where the perceiver stands now, not where they
 stood when something happened; a move is in range when either end is.
 
+Each look also hands back the notes the resident chose to keep, long and short term, with
+the expired ones cleared first, see `memory.py`.
+
 `record_activity` fills the log by comparing the world before and after a change.
 `actions.perform` and the server's clock call it, so every walk, mining job and departure is
 logged however it came about. The log keeps the latest `ACTIVITY_LIMIT` entries, so a
@@ -28,12 +31,13 @@ import math
 from dataclasses import dataclass, replace
 
 from .lifecycle import check_can_act
+from .memory import forget_expired
 from .walking import position_at
 from .world import (
     ACTIVITY_LIMIT,
     Activity,
     ActivityLog,
-    Memory,
+    Note,
     PoolSighting,
     Position,
     World,
@@ -74,6 +78,10 @@ class Perception:
     """Ids of the pools seen for the first time this round."""
     known_pools: tuple[PoolSighting, ...]
     """Every pool discovered so far, including this round's, at its latest sighting."""
+    long_term: tuple[Note, ...]
+    """The notes the resident keeps for the whole game, oldest first, see `memory.py`."""
+    short_term: tuple[Note, ...]
+    """The short-term notes not yet expired, oldest first."""
 
 
 def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
@@ -113,7 +121,11 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
     known = {sighting.pool_id: sighting for sighting in me.memory.known_pools}
     discovered = tuple(sighting.pool_id for sighting in pools if sighting.pool_id not in known)
     known.update((sighting.pool_id, sighting) for sighting in pools)
-    memory = Memory(known_pools=tuple(known.values()), activity_seen=world.activity.next_seq - 1)
+    memory = replace(
+        forget_expired(me.memory, world.time),
+        known_pools=tuple(known.values()),
+        activity_seen=world.activity.next_seq - 1,
+    )
     residents_after = tuple(
         replace(resident, memory=memory) if resident.id == resident_id else resident
         for resident in world.residents
@@ -126,6 +138,8 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         activity=activity,
         discovered=discovered,
         known_pools=memory.known_pools,
+        long_term=memory.long_term,
+        short_term=memory.short_term,
     )
     return replace(world, residents=residents_after), perception
 

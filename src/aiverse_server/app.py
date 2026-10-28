@@ -19,6 +19,7 @@ from .actions import ActionRejected, perform
 from .clock import next_due, settle_due
 from .layout import create_default_world
 from .lifecycle import GAME_DURATION, end_game
+from .memory import forget, remember
 from .perception import Perception, begin_turn
 from .protocol import (
     PROTOCOL_VERSION,
@@ -35,7 +36,7 @@ from .protocol import (
     to_action,
     world_view,
 )
-from .world import World
+from .world import Note, NoteTerm, World
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,20 @@ class Game:
         self.tick()
         self.world, perception = begin_turn(self.world, resident_id)
         return perception
+
+    def remember(self, resident_id: str, text: str, term: NoteTerm) -> Note:
+        """Keep a note in the resident's memory for the whole game or for a short while, as
+        they choose, timed from now, see `memory.py`. Raises `GameError` or `NoteError`.
+        Like perception, nothing is sent."""
+        self.tick()
+        self.world, note = remember(self.world, resident_id, text, term)
+        return note
+
+    def forget(self, resident_id: str, note_id: int) -> None:
+        """Remove one of the resident's notes, see `memory.py`. Raises `GameError` or
+        `NoteError`; nothing is sent."""
+        self.tick()
+        self.world = forget(self.world, resident_id, note_id)
 
     def _until_next(self) -> float:
         """Seconds until the game ends or the next mining job or walk does, whichever comes

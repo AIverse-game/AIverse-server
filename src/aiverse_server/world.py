@@ -89,14 +89,45 @@ class PoolSighting:
     """Game time of the sighting, see `World.time`."""
 
 
+NoteTerm = Literal["long_term", "short_term"]
+"""How long a note lasts: the whole game, or `memory.SHORT_TERM_SECONDS`."""
+
+NOTE_LENGTH_LIMIT = 300
+"""Characters a note may hold, so a resident's notes stay small enough to read every round."""
+
+NOTE_LIMITS: dict[NoteTerm, int] = {"long_term": 30, "short_term": 20}
+"""Notes a resident may keep of each term at once; one must be forgotten to write another."""
+
+
+@dataclass(frozen=True)
+class Note:
+    """Something a resident chose to remember, see `memory.py`."""
+
+    id: int
+    """Unique among the resident's notes for the whole game, counting up from 1."""
+    text: str
+    written_at: float
+    """Game time when it was written, see `World.time`."""
+    expires_at: float | None
+    """Game time when a short-term note is cleared; None for a long-term one."""
+
+
 @dataclass(frozen=True)
 class Memory:
-    """What a resident has noticed so far, see `perception.py`. Empty when the game starts."""
+    """What a resident has noticed so far, see `perception.py`, and the notes they chose to
+    keep, see `memory.py`. Empty when the game starts."""
 
     known_pools: tuple[PoolSighting, ...] = ()
     """Every pool the resident has discovered, at its latest sighting, ordered by pool id."""
     activity_seen: int = 0
     """Sequence number of the last activity entry already looked at; 0 before the first look."""
+    long_term: tuple[Note, ...] = ()
+    """Notes kept for the rest of the game, oldest first."""
+    short_term: tuple[Note, ...] = ()
+    """Notes cleared once they expire, oldest first; expired ones may linger until the memory
+    is next used, see `memory.forget_expired`."""
+    next_note_id: int = 1
+    """Id the next note gets; it only counts up, so ids are never reused within a game."""
 
     def __post_init__(self) -> None:
         ids = [sighting.pool_id for sighting in self.known_pools]
@@ -107,6 +138,36 @@ class Memory:
         )
         if type(self.activity_seen) is not int or self.activity_seen < 0:
             raise ValueError(f"activity seen must be an integer >= 0, got {self.activity_seen!r}")
+        if type(self.next_note_id) is not int or self.next_note_id < 1:
+            raise ValueError(f"next note id must be an integer >= 1, got {self.next_note_id!r}")
+        note_ids: set[int] = set()
+        terms: tuple[tuple[NoteTerm, tuple[Note, ...]], ...] = (
+            ("long_term", self.long_term),
+            ("short_term", self.short_term),
+        )
+        for term, notes in terms:
+            if len(notes) > NOTE_LIMITS[term]:
+                raise ValueError(f"memory holds {len(notes)} {term} notes, over the limit")
+            for note in notes:
+                if type(note.id) is not int or not 1 <= note.id < self.next_note_id:
+                    raise ValueError(
+                        f"note id {note.id!r} must be an integer from 1 to {self.next_note_id - 1}"
+                    )
+                if note.id in note_ids:
+                    raise ValueError(f"note id {note.id} is used twice")
+                note_ids.add(note.id)
+                if not note.text.strip() or len(note.text) > NOTE_LENGTH_LIMIT:
+                    raise ValueError(f"note {note.id} is empty or too long")
+                if not math.isfinite(note.written_at):
+                    raise ValueError(f"note {note.id} has no time it was written")
+                lasting = note.expires_at is None
+                if lasting != (term == "long_term"):
+                    raise ValueError(f"note {note.id} expiry does not match its term {term}")
+                if note.expires_at is not None and not (
+                    math.isfinite(note.expires_at) and note.expires_at > note.written_at
+                ):
+                    raise ValueError(f"note {note.id} never expires or expires before written")
+            object.__setattr__(self, term, tuple(sorted(notes, key=lambda note: note.id)))
 
 
 ActivityKind = Literal["started_walking", "moved", "started_mining", "finished_mining", "left_game"]
