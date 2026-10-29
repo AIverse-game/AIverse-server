@@ -6,10 +6,10 @@ a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
-leaving, for a resident who is busy mining or walking. A resident whose last token is spent by
-a primitive, their own or one they agreed to, is out of the game afterwards, see
-`lifecycle.py`. What a primitive changes on the map goes into the activity log for others
-nearby to notice, see `perception.py`.
+leaving and speaking, for a resident who is busy mining or walking. A resident whose last
+token is spent by a primitive, their own or one they agreed to, is out of the game
+afterwards, see `lifecycle.py`. What a primitive changes on the map goes into the activity
+log for others nearby to notice, see `perception.py`.
 """
 
 from dataclasses import dataclass
@@ -29,6 +29,7 @@ from .lifecycle import GameError, GameErrorCode, check_can_act, knock_out_exhaus
 from .market import MarketError, MarketErrorCode, sell_tokens
 from .mining import MiningError, MiningErrorCode, check_not_busy, start_mining
 from .perception import record_activity
+from .speech import SpeechError, SpeechErrorCode, say
 from .tokens import TokenError, TokenErrorCode, pay_for_walk
 from .trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from .walking import start_walk
@@ -45,6 +46,7 @@ RejectionCode = (
     | MiningErrorCode
     | MarketErrorCode
     | ChipErrorCode
+    | SpeechErrorCode
 )
 
 
@@ -156,6 +158,16 @@ class BuyChip:
     model: str
 
 
+@dataclass(frozen=True)
+class Say:
+    """Say `text` aloud to everyone within earshot, or, given `to`, to that one resident
+    wherever they are, see `speech.py`. Costs nothing and works while walking or mining."""
+
+    resident_id: str
+    text: str
+    to: str | None = None
+
+
 Action = (
     MoveTo
     | RespondToEvent
@@ -166,13 +178,14 @@ Action = (
     | Mine
     | SellTokens
     | BuyChip
+    | Say
 )
 
 
 def perform(world: World, action: Action) -> World:
     try:
         check_can_act(world, action.resident_id)
-        if not isinstance(action, LeaveGame):
+        if not isinstance(action, LeaveGame | Say):
             check_not_busy(world, action.resident_id)
     except (GameError, MiningError) as error:
         raise ActionRejected(error.code, error.message) from error
@@ -203,6 +216,11 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return buy_chip(world, action.resident_id, action.model)
             except (ChipError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case Say():
+            try:
+                return say(world, action.resident_id, action.text, action.to)
+            except SpeechError as error:
                 raise ActionRejected(error.code, error.message) from error
 
 

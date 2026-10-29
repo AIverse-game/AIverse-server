@@ -131,6 +131,8 @@ class Memory:
     is next used, see `memory.forget_expired`."""
     next_note_id: int = 1
     """Id the next note gets; it only counts up, so ids are never reused within a game."""
+    speech_seen: int = 0
+    """Sequence number of the last line of speech already looked at; 0 before the first look."""
 
     def __post_init__(self) -> None:
         ids = [sighting.pool_id for sighting in self.known_pools]
@@ -141,6 +143,8 @@ class Memory:
         )
         if type(self.activity_seen) is not int or self.activity_seen < 0:
             raise ValueError(f"activity seen must be an integer >= 0, got {self.activity_seen!r}")
+        if type(self.speech_seen) is not int or self.speech_seen < 0:
+            raise ValueError(f"speech seen must be an integer >= 0, got {self.speech_seen!r}")
         if type(self.next_note_id) is not int or self.next_note_id < 1:
             raise ValueError(f"next note id must be an integer >= 1, got {self.next_note_id!r}")
         note_ids: set[int] = set()
@@ -218,6 +222,63 @@ class ActivityLog:
                     f"and below {self.next_seq}"
                 )
             previous = entry.seq
+
+
+SPEECH_LENGTH_LIMIT = 100
+"""Characters one line of speech may hold, as the design document's `say`."""
+
+SPEECH_LIMIT = 200
+"""Lines of speech the world keeps; older ones are dropped, so the record stays small."""
+
+
+@dataclass(frozen=True)
+class Speech:
+    """Something a resident said, aloud or to one resident, see `speech.py`."""
+
+    seq: int
+    """Unique within a world, counting up from 1 in the order things were said."""
+    time: float
+    speaker_id: str
+    text: str
+    position: Position
+    """Where the speaker stood, on the way if walking."""
+    to: str | None
+    """The one resident spoken to; None when spoken aloud."""
+    listeners: tuple[str, ...]
+    """Who heard it, not counting the speaker: `to` alone, or everyone in earshot then."""
+
+
+@dataclass(frozen=True)
+class SpeechLog:
+    """Recent speech, oldest first, and the sequence number the next line will get."""
+
+    entries: tuple[Speech, ...] = ()
+    next_seq: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.next_seq) is not int or self.next_seq < 1:
+            raise ValueError(f"next speech seq must be an integer >= 1, got {self.next_seq!r}")
+        if len(self.entries) > SPEECH_LIMIT:
+            raise ValueError(f"speech log holds {len(self.entries)} lines, over the limit")
+        previous = 0
+        for line in self.entries:
+            if type(line.seq) is not int or not previous < line.seq < self.next_seq:
+                raise ValueError(
+                    f"speech seq {line.seq!r} must be an integer above {previous} "
+                    f"and below {self.next_seq}"
+                )
+            previous = line.seq
+            if not line.text.strip() or len(line.text) > SPEECH_LENGTH_LIMIT:
+                raise ValueError(f"speech {line.seq} is empty or too long")
+            # Every state carries speech out, so a line that cannot be encoded would stop them all.
+            try:
+                line.text.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError(f"speech {line.seq} cannot be encoded as UTF-8") from None
+            if line.speaker_id in line.listeners or len(set(line.listeners)) != len(line.listeners):
+                raise ValueError(f"speech {line.seq} lists its speaker or a listener twice")
+            if line.to is not None and line.listeners != (line.to,):
+                raise ValueError(f"speech {line.seq} to one resident was heard by others")
 
 
 @dataclass(frozen=True)
@@ -350,6 +411,8 @@ class World:
     """What residents have done where, for others nearby to notice, see `perception.py`."""
     market: Market | None = None
     """Where tokens sell for coins, see `market.py`; None on a map without one."""
+    speech: SpeechLog = SpeechLog()
+    """What residents have said and who heard it, see `speech.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -386,11 +449,16 @@ class World:
                     raise ValueError(f"resident {resident.id} remembers unknown pool")
             if resident.memory.activity_seen >= self.activity.next_seq:
                 raise ValueError(f"resident {resident.id} has seen activity not yet logged")
+            if resident.memory.speech_seen >= self.speech.next_seq:
+                raise ValueError(f"resident {resident.id} has heard speech not yet said")
         for entry in self.activity.entries:
             if entry.resident_id not in ids:
                 raise ValueError(f"activity {entry.seq} involves unknown resident")
             if entry.pool_id is not None and entry.pool_id not in pool_ids:
                 raise ValueError(f"activity {entry.seq} involves unknown pool")
+        for line in self.speech.entries:
+            if {line.speaker_id, *line.listeners} - set(ids):
+                raise ValueError(f"speech {line.seq} involves unknown resident")
         for event in self.events.pending:
             for party in (event.sender_id, event.recipient_id):
                 if party not in ids:

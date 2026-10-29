@@ -5,8 +5,8 @@ time. They need a chip and use the best one they carry, see `chips.py`. The
 tokens, as many as that model digs per job or whatever the pool has left if less, come out
 of the pool at once, so two miners cannot dig out the same tokens, and reach the miner when
 the job ends. Until then the miner is busy and stays with the chip: they can do nothing
-but leave the game, which puts the tokens back into the pool. Walkers are busy the same way,
-see `walking.py`; `check_not_busy` covers both.
+but talk, or leave the game, which puts the tokens back into the pool. Walkers are busy the
+same way, see `walking.py`; `check_not_busy` covers both.
 
 Game time is `World.time`. The server moves it on as real time passes and calls
 `finish_mining` to pay out the jobs that are due; `next_finish` tells it when to look again.

@@ -26,6 +26,7 @@ from .actions import (
     Mine,
     MoveTo,
     RejectionCode,
+    Say,
     SellTokens,
 )
 from .chips import CHIP_MODELS
@@ -36,9 +37,12 @@ from .trade import reserved_items
 from .walking import position_at
 from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 
 ERROR_MAX_LENGTH = 200
+
+SPEECH_VIEW_LIMIT = 50
+"""Latest lines of speech each state carries, so a long game does not grow every state."""
 
 
 class _Message(BaseModel):
@@ -85,8 +89,16 @@ class BuyChipInput(_Message):
     model: str
 
 
+class SayInput(_Message):
+    type: Literal["say"]
+    resident_id: str
+    text: str
+    to: str | None = None
+    """The one resident spoken to; left out to speak aloud to everyone within earshot."""
+
+
 ActionInput = Annotated[
-    MoveToInput | LeaveGameInput | MineInput | SellTokensInput | BuyChipInput,
+    MoveToInput | LeaveGameInput | MineInput | SellTokensInput | BuyChipInput | SayInput,
     Field(discriminator="type"),
 ]
 
@@ -187,6 +199,21 @@ class MarketView(_Message):
     """Chips on sale here at fixed prices, worst first."""
 
 
+class SpeechView(_Message):
+    """A line of speech. Pages watch the whole game, so they see whispers too; residents
+    hear only what reached them, see `speech.py`."""
+
+    seq: int
+    time: float
+    """Game seconds since the start when it was said."""
+    speaker_id: str
+    text: str
+    to: str | None = None
+    """The one resident spoken to; left out when spoken aloud."""
+    listeners: list[str]
+    """Who heard it, not counting the speaker."""
+
+
 class MapView(_Message):
     size: float
 
@@ -204,6 +231,8 @@ class WorldView(_Message):
     game: GameView
     market: MarketView | None = None
     """Left out on a map without a market."""
+    speech: list[SpeechView]
+    """The latest `SPEECH_VIEW_LIMIT` lines, oldest first."""
 
 
 class WelcomeMessage(_Message):
@@ -299,6 +328,17 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
                 for model in CHIP_MODELS
             ],
         ),
+        speech=[
+            SpeechView(
+                seq=line.seq,
+                time=line.time,
+                speaker_id=line.speaker_id,
+                text=line.text,
+                to=line.to,
+                listeners=list(line.listeners),
+            )
+            for line in world.speech.entries[-SPEECH_VIEW_LIMIT:]
+        ],
     )
 
 
@@ -330,6 +370,8 @@ def to_action(message: ActionMessage) -> Action:
             return SellTokens(resident_id=action.resident_id, quantity=action.quantity)
         case BuyChipInput():
             return BuyChip(resident_id=action.resident_id, model=action.model)
+        case SayInput():
+            return Say(resident_id=action.resident_id, text=action.text, to=action.to)
 
 
 def encode(message: ServerMessage) -> str:

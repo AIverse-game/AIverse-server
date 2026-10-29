@@ -17,6 +17,7 @@ from aiverse_server.mining import MINE_SECONDS
 from aiverse_server.protocol import (
     ERROR_MAX_LENGTH,
     PROTOCOL_VERSION,
+    SPEECH_VIEW_LIMIT,
     StateMessage,
     bad_message,
     world_view,
@@ -105,6 +106,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                     },
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
+                "speech": [],
             },
         }
 
@@ -706,3 +708,94 @@ def test_malformed_buy_actions_get_a_bounded_error(
         greet(ws)
         ws.send_text(json.dumps({"type": "action", "action": action}))
         assert ws.receive_json()["code"] == "bad_message"
+
+
+def say(resident_id: str, text: object, to: object = None) -> str:
+    action: dict[str, object] = {"type": "say", "residentId": resident_id, "text": text}
+    if to is not None:
+        action["to"] = to
+    return json.dumps({"type": "action", "action": action})
+
+
+def test_speech_shows_on_every_page_whispers_included(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
+        greet(ws)
+        greet(watcher)
+        # a stands far from b: nobody hears a aloud, but a whisper reaches b anyway.
+        ws.send_text(say("a", "  有人吗？ "))
+        assert ws.receive_json() == {"type": "action_result", "ok": True}
+        for connection in (ws, watcher):
+            assert connection.receive_json()["world"]["speech"] == [
+                {"seq": 1, "time": 0.0, "speakerId": "a", "text": "有人吗？", "listeners": []}
+            ]
+        ws.send_text(say("a", "卖你 token", to="b"))
+        assert ws.receive_json()["ok"] is True
+        speech = watcher.receive_json()["world"]["speech"]
+        assert speech[-1] == {
+            "seq": 2,
+            "time": 0.0,
+            "speakerId": "a",
+            "text": "卖你 token",
+            "to": "b",
+            "listeners": ["b"],
+        }
+
+
+def test_states_carry_only_the_latest_speech(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        for i in range(SPEECH_VIEW_LIMIT + 3):
+            ws.send_text(say("a", str(i)))
+            assert ws.receive_json()["ok"] is True
+            speech = ws.receive_json()["world"]["speech"]
+        assert len(speech) == SPEECH_VIEW_LIMIT
+        assert speech[0]["seq"] == 4
+        assert speech[-1]["text"] == str(SPEECH_VIEW_LIMIT + 2)
+
+
+@pytest.mark.parametrize(
+    ("frame", "code"),
+    [
+        (say("a", "   "), "empty_speech"),
+        (say("a", "字" * 101), "speech_too_long"),
+        (say("a", "hi", to="a"), "unknown_listener"),
+        (say("a", "hi", to="nobody"), "unknown_listener"),
+        (say("nobody", "hi"), "unknown_resident"),
+    ],
+)
+def test_speech_rejections_reach_the_sender(client: TestClient, frame: str, code: str) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(frame)
+        assert ws.receive_json()["code"] == code
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "say", "residentId": "a"},
+        {"type": "say", "text": "hi"},
+        {"type": "say", "residentId": "a", "text": 1},
+        {"type": "say", "residentId": "a", "text": "hi", "to": 2},
+    ],
+)
+def test_malformed_say_actions_get_a_bounded_error(
+    client: TestClient, action: dict[str, Any]
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(json.dumps({"type": "action", "action": action}))
+        assert ws.receive_json()["code"] == "bad_message"
+
+
+def test_a_lone_surrogate_is_refused_and_states_still_go_out(client: TestClient) -> None:
+    # JSON can carry a lone surrogate as an escape; kept, it would make every later state
+    # impossible to encode.
+    frame = '{"type": "action", "action": {"type": "say", "residentId": "a", "text": "hi \\ud800"}}'
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(frame)
+        assert ws.receive_json()["code"] == "invalid_speech"
+        ws.send_text(say("a", "still here"))
+        assert ws.receive_json()["ok"] is True
+        assert ws.receive_json()["world"]["speech"][-1]["text"] == "still here"
