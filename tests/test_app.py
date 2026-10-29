@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from aiverse_server.actions import OfferToSell, perform
+from aiverse_server.actions import OfferToSell, Say, perform
 from aiverse_server.app import CLOSE_POLICY_VIOLATION, Game, Outbox, create_app
 from aiverse_server.chips import CHIP_MODELS
 from aiverse_server.layout import POOL_COUNT, STARTING_TOKENS
@@ -18,7 +18,6 @@ from aiverse_server.protocol import (
     ERROR_MAX_LENGTH,
     PROTOCOL_VERSION,
     SPEECH_VIEW_LIMIT,
-    StateMessage,
     bad_message,
     world_view,
 )
@@ -327,7 +326,7 @@ def test_a_burst_of_moves_does_not_overflow_other_connections() -> None:
     watcher = Outbox(limit=2)
     game.watch(watcher)
     for _ in range(1000):
-        game.broadcast(StateMessage(world=world_view(game.world, game.remaining())))
+        game.broadcast_world()
     assert not watcher.overflowed.is_set()
     assert not watcher.replies
     assert watcher.state is not None
@@ -717,21 +716,41 @@ def say(resident_id: str, text: object, to: object = None) -> str:
     return json.dumps({"type": "action", "action": action})
 
 
-def test_speech_shows_on_every_page_whispers_included(client: TestClient) -> None:
-    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
-        greet(ws)
-        greet(watcher)
-        # a stands far from b: nobody hears a aloud, but a whisper reaches b anyway.
+# c joins a and b, so a whisper between a and b has someone to be kept from.
+SPEECH_WORLD = replace(
+    SMALL_WORLD,
+    residents=(
+        *SMALL_WORLD.residents,
+        Resident(id="c", name="丙", color="#445566", position=Position(25, 25), inventory=TOKENS),
+    ),
+)
+
+
+def view_as(resident_id: str | None) -> str:
+    return json.dumps({"type": "view_as", "residentId": resident_id})
+
+
+def test_whispers_reach_only_pages_viewing_as_a_party(clock: FakeClock) -> None:
+    client = TestClient(create_app(SPEECH_WORLD, clock=clock))
+    with (
+        client.websocket_connect("/ws") as ws,
+        client.websocket_connect("/ws") as as_b,
+        client.websocket_connect("/ws") as as_c,
+    ):
+        for connection in (ws, as_b, as_c):
+            greet(connection)
+        for connection, viewer in ((as_b, "b"), (as_c, "c")):
+            connection.send_text(view_as(viewer))
+            assert connection.receive_json()["type"] == "state"
+        # a stands far from everyone: nobody hears a aloud, yet every page shows the line.
         ws.send_text(say("a", "  有人吗？ "))
         assert ws.receive_json() == {"type": "action_result", "ok": True}
-        for connection in (ws, watcher):
-            assert connection.receive_json()["world"]["speech"] == [
-                {"seq": 1, "time": 0.0, "speakerId": "a", "text": "有人吗？", "listeners": []}
-            ]
+        aloud = {"seq": 1, "time": 0.0, "speakerId": "a", "text": "有人吗？", "listeners": []}
+        for connection in (ws, as_b, as_c):
+            assert connection.receive_json()["world"]["speech"] == [aloud]
         ws.send_text(say("a", "卖你 token", to="b"))
         assert ws.receive_json()["ok"] is True
-        speech = watcher.receive_json()["world"]["speech"]
-        assert speech[-1] == {
+        whisper = {
             "seq": 2,
             "time": 0.0,
             "speakerId": "a",
@@ -739,18 +758,69 @@ def test_speech_shows_on_every_page_whispers_included(client: TestClient) -> Non
             "to": "b",
             "listeners": ["b"],
         }
+        assert as_b.receive_json()["world"]["speech"] == [aloud, whisper]
+        assert as_c.receive_json()["world"]["speech"] == [aloud]
+        # Viewing as nobody, even the page that sent it does not see the whisper.
+        world = ws.receive_json()["world"]
+        assert world["speech"] == [aloud]
+        # Aloud costs 2 tokens, a whisper 1.
+        assert resident_view(world, "a")["tokens"] == 100 - 2 - 1
+        ws.send_text(view_as("a"))
+        assert ws.receive_json()["world"]["speech"] == [aloud, whisper]
+        ws.send_text(view_as(None))
+        assert ws.receive_json()["world"]["speech"] == [aloud]
+
+
+def test_viewing_as_a_resident_needs_hello_and_a_resident(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(view_as("a"))
+        assert ws.receive_json()["code"] == "bad_message"
+        greet(ws)
+        ws.send_text(view_as("nobody"))
+        assert ws.receive_json()["code"] == "bad_message"
+        # Refused, so the page still views as nobody.
+        ws.send_text(say("a", "secret", to="b"))
+        assert ws.receive_json()["ok"] is True
+        assert ws.receive_json()["world"]["speech"] == []
+
+
+@pytest.mark.parametrize(
+    "message",
+    [{"type": "view_as"}, {"type": "view_as", "residentId": 1}],
+)
+def test_malformed_view_as_gets_a_bounded_error(
+    client: TestClient, message: dict[str, Any]
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(json.dumps(message))
+        assert ws.receive_json()["code"] == "bad_message"
 
 
 def test_states_carry_only_the_latest_speech(client: TestClient) -> None:
     with client.websocket_connect("/ws") as ws:
         greet(ws)
+        ws.send_text(view_as("a"))
+        ws.receive_json()
+        # Whispers, at a token each, so a's 100 tokens last.
         for i in range(SPEECH_VIEW_LIMIT + 3):
-            ws.send_text(say("a", str(i)))
+            ws.send_text(say("a", str(i), to="b"))
             assert ws.receive_json()["ok"] is True
             speech = ws.receive_json()["world"]["speech"]
         assert len(speech) == SPEECH_VIEW_LIMIT
         assert speech[0]["seq"] == 4
         assert speech[-1]["text"] == str(SPEECH_VIEW_LIMIT + 2)
+
+
+def test_the_latest_lines_are_counted_among_those_the_viewer_may_see() -> None:
+    world = SPEECH_WORLD
+    world = perform(world, Say("a", "aloud"))
+    for i in range(SPEECH_VIEW_LIMIT):
+        world = perform(world, Say("b", str(i), to="c"))
+    # a sees no whisper here, so the line aloud is still among a's latest.
+    seen = world_view(world, 1, "a").speech
+    assert [line.text for line in seen] == ["aloud"]
+    assert len(world_view(world, 1, "c").speech) == SPEECH_VIEW_LIMIT
 
 
 @pytest.mark.parametrize(

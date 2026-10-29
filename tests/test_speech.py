@@ -2,10 +2,18 @@ from dataclasses import replace
 
 import pytest
 
-from aiverse_server.actions import ActionRejected, LeaveGame, Mine, MoveTo, Say, perform
+from aiverse_server.actions import (
+    ActionRejected,
+    LeaveGame,
+    Mine,
+    MoveTo,
+    OfferToSell,
+    Say,
+    perform,
+)
 from aiverse_server.lifecycle import end_game
 from aiverse_server.perception import begin_turn
-from aiverse_server.speech import HEARING_RADIUS, SpeechError, say
+from aiverse_server.speech import HEARING_RADIUS, SPEECH_COSTS, SpeechError, say
 from aiverse_server.tokens import TOKEN
 from aiverse_server.world import (
     SPEECH_LENGTH_LIMIT,
@@ -184,10 +192,49 @@ def test_the_log_keeps_only_the_latest_lines_and_numbering_goes_on() -> None:
     assert len(lines) == SPEECH_LIMIT
 
 
-def test_speaking_changes_nothing_on_the_map() -> None:
+def tokens(world: World, resident_id: str) -> int:
+    return next(r for r in world.residents if r.id == resident_id).inventory.count(TOKEN)
+
+
+def with_tokens(world: World, resident_id: str, count: int) -> World:
+    items = Inventory(((TOKEN, count),)) if count else Inventory()
+    residents = tuple(
+        replace(r, inventory=items) if r.id == resident_id else r for r in world.residents
+    )
+    return replace(world, residents=residents)
+
+
+def test_speaking_aloud_costs_more_than_a_whisper() -> None:
+    aloud = perform(WORLD, Say("a", "hello all"))
+    whisper = perform(WORLD, Say("a", "hello b", to="b"))
+    assert tokens(aloud, "a") == 1000 - SPEECH_COSTS["aloud"]
+    assert tokens(whisper, "a") == 1000 - SPEECH_COSTS["to_one"]
+    assert SPEECH_COSTS == {"aloud": 2, "to_one": 1}
+
+
+def test_speaking_moves_nothing_on_the_map() -> None:
     world = perform(WORLD, Say("a", "just talking"))
-    assert world.residents == WORLD.residents
+    assert [r.position for r in world.residents] == [r.position for r in WORLD.residents]
     assert world.activity == WORLD.activity
+
+
+def test_too_few_tokens_to_speak_is_refused_and_changes_nothing() -> None:
+    world = with_tokens(WORLD, "a", 1)
+    with pytest.raises(ActionRejected) as refused:
+        perform(world, Say("a", "hello all"))
+    assert refused.value.code == "not_enough_tokens"
+    # One token is enough to whisper, and spending it takes a out of the game.
+    after = perform(world, Say("a", "goodbye", to="b"))
+    assert next(r for r in after.residents if r.id == "a").left
+    assert after.speech.entries[-1].text == "goodbye"
+
+
+def test_tokens_set_aside_in_an_offer_do_not_pay_for_speech() -> None:
+    world = with_tokens(WORLD, "a", 2)
+    world = perform(world, OfferToSell("a", "b", TOKEN, 1, 10))
+    with pytest.raises(ActionRejected) as refused:
+        perform(world, Say("a", "hello all"))
+    assert refused.value.code == "not_enough_tokens"
 
 
 def test_a_world_rejects_speech_it_cannot_account_for() -> None:

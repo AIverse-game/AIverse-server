@@ -10,9 +10,14 @@ Who hears is settled the moment the words are spoken and kept with them, so a re
 walks up afterwards has missed them. Each listener, and the speaker, gets the words in their
 next perception, see `perception.begin_turn`, which is how the AI will hear them.
 
-Speaking goes through the primitive `actions.Say`, which works while walking or mining and
-costs no tokens. The world keeps the latest `SPEECH_LIMIT` lines, so a resident who looks
-rarely may miss the oldest. Pages see every line, whispers included, see `protocol.py`.
+Each line costs tokens from those the speaker carries, `SPEECH_COSTS`: more aloud, since more
+can hear it, than to one resident. A line that spends the last token takes the speaker out of
+the game like any other spending, see `lifecycle.knock_out_exhausted`.
+
+Speaking goes through the primitive `actions.Say`, which works while walking or mining. The
+world keeps the latest `SPEECH_LIMIT` lines, so a resident who looks
+rarely may miss the oldest. Pages see every line spoken aloud, and only the whispers to or
+from the resident they view as, see `protocol.world_view`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -24,11 +29,15 @@ from typing import Literal
 
 from .lifecycle import check_can_act
 from .perception import PERCEPTION_RADIUS
+from .tokens import pay_tokens
 from .walking import position_at
 from .world import SPEECH_LENGTH_LIMIT, SPEECH_LIMIT, Position, Speech, SpeechLog, World
 
 HEARING_RADIUS = PERCEPTION_RADIUS
 """How far, in map units, words spoken aloud carry: as far as a resident notices things."""
+
+SPEECH_COSTS = {"aloud": 2, "to_one": 1}
+"""Tokens one line costs, spoken aloud or to one resident."""
 
 SpeechErrorCode = Literal["empty_speech", "speech_too_long", "invalid_speech", "unknown_listener"]
 
@@ -41,8 +50,10 @@ class SpeechError(Exception):
 
 
 def say(world: World, resident_id: str, text: str, to: str | None = None) -> World:
-    """Speak `text` aloud, or to the resident `to` alone. Surrounding whitespace is trimmed.
-    Refused with `GameError` for a speaker who cannot act, and with `SpeechError` for empty or
+    """Speak `text` aloud, or to the resident `to` alone, paying `SPEECH_COSTS` from the
+    tokens the speaker carries. Surrounding whitespace is trimmed. Refused with `GameError`
+    for a speaker who cannot act, `TokenError` for one who carries too few tokens, and with
+    `SpeechError` for empty or
     over-long words, words that cannot be sent as UTF-8, or a listener who does not exist, has
     left or is the speaker. Text that is not a string is the caller's mistake and raises
     `ValueError`."""
@@ -78,6 +89,8 @@ def say(world: World, resident_id: str, text: str, to: str | None = None) -> Wor
             and not other.left
             and _within_earshot(here, position_at(other, world.time))
         )
+    cost = SPEECH_COSTS["aloud" if to is None else "to_one"]
+    world = pay_tokens(world, resident_id, cost, "saying that")
     log = world.speech
     line = Speech(log.next_seq, world.time, resident_id, text, here, to, listeners)
     entries = (*log.entries, line)[-SPEECH_LIMIT:]

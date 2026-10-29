@@ -161,7 +161,8 @@ class BuyChip:
 @dataclass(frozen=True)
 class Say:
     """Say `text` aloud to everyone within earshot, or, given `to`, to that one resident
-    wherever they are, see `speech.py`. Costs nothing and works while walking or mining."""
+    wherever they are, see `speech.py`. Costs a few carried tokens, more aloud than to one
+    resident, and works while walking or mining."""
 
     resident_id: str
     text: str
@@ -220,7 +221,7 @@ def _carry_out(world: World, action: Action) -> World:
         case Say():
             try:
                 return say(world, action.resident_id, action.text, action.to)
-            except SpeechError as error:
+            except (SpeechError, TokenError) as error:
                 raise ActionRejected(error.code, error.message) from error
 
 

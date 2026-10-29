@@ -2,8 +2,9 @@
 
 Tokens are an item kind, `TOKEN`, so residents carry them in their inventory and trade them
 like any other item through the offers in `trade.py`. Walking costs tokens by distance, see
-`walk_cost`; pools pay them back for time spent mining, see `mining.py`. A resident whose
-tokens run out is out of the game, see `lifecycle.knock_out_exhausted`.
+`walk_cost`, and speaking costs a few per line, see `speech.py`; pools pay them back for
+time spent mining, see `mining.py`. A resident whose tokens run out is out of the game, see
+`lifecycle.knock_out_exhausted`.
 
 Like inventories, these are server-side building blocks: every function returns a new world
 and leaves its argument untouched; on error nothing changes.
@@ -46,7 +47,12 @@ def walk_cost(start: Position, end: Position) -> int:
 
 def pay_for_walk(world: World, resident_id: str, start: Position, end: Position) -> World:
     """Take the walk's cost out of the resident's carried tokens; all or nothing."""
-    cost = walk_cost(start, end)
+    return pay_tokens(world, resident_id, walk_cost(start, end), "the walk")
+
+
+def pay_tokens(world: World, resident_id: str, cost: int, what: str) -> World:
+    """Take `cost` tokens out of the resident's carried tokens, those set aside in offers not
+    counting; all or nothing. `what` names what is paid for, in the refusal."""
     if cost == 0:
         return world
     try:
@@ -57,5 +63,5 @@ def pay_for_walk(world: World, resident_id: str, start: Position, end: Position)
         held = item_count(world, resident_id, TOKEN)
         raise TokenError(
             "not_enough_tokens",
-            f"resident {resident_id!r} carries {held} tokens, the walk costs {cost}",
+            f"resident {resident_id!r} carries {held} tokens, {what} costs {cost}",
         ) from error

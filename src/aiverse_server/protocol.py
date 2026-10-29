@@ -37,7 +37,7 @@ from .trade import reserved_items
 from .walking import position_at
 from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 9
+PROTOCOL_VERSION = 10
 
 ERROR_MAX_LENGTH = 200
 
@@ -108,6 +108,15 @@ class HelloMessage(_Message):
     protocol_version: StrictInt
 
 
+class ViewAsMessage(_Message):
+    """Choose whose whispers this connection sees: the resident's, or none for None. Pages
+    send it when the player picks a resident; there is no ownership yet, so any resident
+    may be chosen."""
+
+    type: Literal["view_as"]
+    resident_id: str | None
+
+
 class ActionMessage(_Message):
     type: Literal["action"]
     # Only the primitives clients can use so far; answering events and trading come with a
@@ -115,7 +124,7 @@ class ActionMessage(_Message):
     action: ActionInput
 
 
-ClientMessage = Annotated[HelloMessage | ActionMessage, Field(discriminator="type")]
+ClientMessage = Annotated[HelloMessage | ViewAsMessage | ActionMessage, Field(discriminator="type")]
 
 _client_message: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
 
@@ -200,8 +209,8 @@ class MarketView(_Message):
 
 
 class SpeechView(_Message):
-    """A line of speech. Pages watch the whole game, so they see whispers too; residents
-    hear only what reached them, see `speech.py`."""
+    """A line of speech: one spoken aloud, or a whisper to or from the resident the
+    connection views as. Residents themselves hear only what reached them, see `speech.py`."""
 
     seq: int
     time: float
@@ -232,7 +241,8 @@ class WorldView(_Message):
     market: MarketView | None = None
     """Left out on a map without a market."""
     speech: list[SpeechView]
-    """The latest `SPEECH_VIEW_LIMIT` lines, oldest first."""
+    """The latest `SPEECH_VIEW_LIMIT` lines the connection may see, oldest first: every line
+    spoken aloud, and the whispers to or from the resident it views as."""
 
 
 class WelcomeMessage(_Message):
@@ -267,8 +277,15 @@ class ErrorMessage(_Message):
 ServerMessage = WelcomeMessage | StateMessage | ActionResultMessage | ErrorMessage
 
 
-def world_view(world: World, remaining_seconds: float) -> WorldView:
+def world_view(world: World, remaining_seconds: float, viewer: str | None = None) -> WorldView:
+    """The world as a connection viewing as resident `viewer`, or as nobody, sees it: the
+    same for everyone except the whispers, of which it sees only the viewer's."""
     places = ranks(world)
+    visible = [
+        line
+        for line in world.speech.entries
+        if line.to is None or (viewer is not None and viewer in (line.speaker_id, line.to))
+    ]
     return WorldView(
         map=MapView(size=world.map.size),
         pools=[
@@ -337,7 +354,7 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
                 to=line.to,
                 listeners=list(line.listeners),
             )
-            for line in world.speech.entries[-SPEECH_VIEW_LIMIT:]
+            for line in visible[-SPEECH_VIEW_LIMIT:]
         ],
     )
 
@@ -394,7 +411,9 @@ def action_rejected(rejection: ActionRejected) -> ActionResultMessage:
     return ActionResultMessage(ok=False, code=rejection.code, message=_truncate(rejection.message))
 
 
-def parse_client_message(text: str) -> HelloMessage | ActionMessage | ErrorMessage:
+def parse_client_message(
+    text: str,
+) -> HelloMessage | ViewAsMessage | ActionMessage | ErrorMessage:
     try:
         data = json.loads(text)
     except (ValueError, RecursionError):

@@ -2,6 +2,8 @@
 
 Every connection greets with `hello` and receives the map. After that it may send operation
 primitives; when one changes the world, every greeted connection receives the new `state`.
+A connection may choose a resident to view as with `view_as`; its states then carry that
+resident's whispers, and no one else's.
 The game ends a fixed time after the app is created; every connection then receives the
 final `state`. Mining jobs and walks finish on the same clock, and are broadcast too.
 """
@@ -28,6 +30,7 @@ from .protocol import (
     HelloMessage,
     ServerMessage,
     StateMessage,
+    ViewAsMessage,
     WelcomeMessage,
     action_rejected,
     bad_message,
@@ -49,29 +52,45 @@ class Outcome:
     """The world afterwards; a different object only when an action changed it."""
     greeted: bool
     """Whether the sender has completed the handshake and may act."""
+    viewer: str | None
+    """The resident the sender views as, whose whispers its states carry; None for nobody.
+    No default: every outcome must carry it on, or the connection's choice would be lost."""
 
 
-def handle_text(text: str, world: World, greeted: bool, remaining_seconds: float) -> Outcome:
+def handle_text(
+    text: str,
+    world: World,
+    greeted: bool,
+    remaining_seconds: float,
+    viewer: str | None = None,
+) -> Outcome:
     """Handles one client frame. Errors leave the connection open and the world unchanged.
-    `remaining_seconds` is the game time left, for the state that answers `hello`."""
+    `remaining_seconds` is the game time left, and `viewer` the resident the sender views as,
+    for the states that answer `hello` and `view_as`."""
     message = parse_client_message(text)
     if isinstance(message, ErrorMessage):
-        return Outcome([message], world, greeted)
+        return Outcome([message], world, greeted, viewer)
     if isinstance(message, HelloMessage):
         if message.protocol_version != PROTOCOL_VERSION:
             mismatch = ErrorMessage(
                 code="protocol_mismatch", message=f"server speaks protocol {PROTOCOL_VERSION}"
             )
-            return Outcome([mismatch], world, greeted)
-        state = StateMessage(world=world_view(world, remaining_seconds))
-        return Outcome([WelcomeMessage(), state], world, True)
+            return Outcome([mismatch], world, greeted, viewer)
+        state = StateMessage(world=world_view(world, remaining_seconds, viewer))
+        return Outcome([WelcomeMessage(), state], world, True, viewer)
     if not greeted:
-        return Outcome([bad_message("send hello before any action")], world, greeted)
+        return Outcome([bad_message("send hello before anything else")], world, greeted, viewer)
+    if isinstance(message, ViewAsMessage):
+        chosen = message.resident_id
+        if chosen is not None and all(resident.id != chosen for resident in world.residents):
+            return Outcome([bad_message(f"no resident with id {chosen!r}")], world, greeted, viewer)
+        state = StateMessage(world=world_view(world, remaining_seconds, chosen))
+        return Outcome([state], world, greeted, chosen)
     try:
         after = perform(world, to_action(message))
     except ActionRejected as rejection:
-        return Outcome([action_rejected(rejection)], world, greeted)
-    return Outcome([ActionResultMessage(ok=True)], after, greeted)
+        return Outcome([action_rejected(rejection)], world, greeted, viewer)
+    return Outcome([ActionResultMessage(ok=True)], after, greeted, viewer)
 
 
 # A connection is closed once this many replies are waiting for it: it sends faster than it
@@ -92,9 +111,12 @@ class Outbox:
     Replies to the connection's own frames queue up in order, up to `limit`. A world
     snapshot is complete, so only the latest one waits, and it goes out after the queued
     replies. Moves by other connections, however many, therefore never grow this outbox.
+    `viewer` is the resident the connection views as, which decides the whispers in its
+    snapshots.
     """
 
     def __init__(self, limit: int = OUTBOX_LIMIT) -> None:
+        self.viewer: str | None = None
         self.replies: deque[str] = deque()
         self.state: str | None = None
         self.limit = limit
@@ -210,14 +232,17 @@ class Game:
     def unwatch(self, outbox: Outbox) -> None:
         self._outboxes.discard(outbox)
 
-    def broadcast(self, message: StateMessage) -> None:
-        text = encode(message)
-        for outbox in self._outboxes:
-            outbox.put_state(text)
-        self._changed.set()
-
     def broadcast_world(self) -> None:
-        self.broadcast(StateMessage(world=world_view(self.world, self.remaining())))
+        """Send the world to every greeted connection as its viewer sees it; one encoding
+        per viewer, since only the whispers differ."""
+        remaining = self.remaining()
+        texts: dict[str | None, str] = {}
+        for outbox in self._outboxes:
+            if outbox.viewer not in texts:
+                view = world_view(self.world, remaining, outbox.viewer)
+                texts[outbox.viewer] = encode(StateMessage(world=view))
+            outbox.put_state(texts[outbox.viewer])
+        self._changed.set()
 
 
 async def _send_all(websocket: WebSocket, outbox: Outbox) -> None:
@@ -243,9 +268,10 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
             # No await from here to the broadcast, so each frame sees and commits the
             # latest world without interleaving with other connections.
             game.tick()
-            outcome = handle_text(text, game.world, greeted, game.remaining())
+            outcome = handle_text(text, game.world, greeted, game.remaining(), outbox.viewer)
             changed = outcome.world is not game.world
             game.world = outcome.world
+            outbox.viewer = outcome.viewer
             if outcome.greeted and not greeted:
                 game.watch(outbox)
             greeted = outcome.greeted
