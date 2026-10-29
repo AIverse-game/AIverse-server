@@ -4,9 +4,10 @@ import pytest
 
 from aiverse_server.actions import LeaveGame, Mine, MoveTo, OfferToBuy, RespondToEvent, perform
 from aiverse_server.app import Game
+from aiverse_server.chips import CHIP_MODELS
 from aiverse_server.clock import settle_due
 from aiverse_server.lifecycle import GameError, end_game
-from aiverse_server.mining import MINE_SECONDS, MINE_YIELD
+from aiverse_server.mining import MINE_SECONDS
 from aiverse_server.perception import PERCEPTION_RADIUS, begin_turn, record_activity
 from aiverse_server.tokens import TOKEN
 from aiverse_server.walking import WALK_SPEED, next_arrival
@@ -24,6 +25,9 @@ from aiverse_server.world import (
     WorldMap,
 )
 
+MINE_YIELD = CHIP_MODELS[0].tokens_per_job
+"""What a job pays with MK1, the chip every resident here carries."""
+
 
 def resident(resident_id: str, x: float, y: float, tokens: int = 1000) -> Resident:
     return Resident(
@@ -31,7 +35,7 @@ def resident(resident_id: str, x: float, y: float, tokens: int = 1000) -> Reside
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((TOKEN, tokens),)),
+        inventory=Inventory(((TOKEN, tokens), ("MK1", 1))),
         coins=100,
     )
 

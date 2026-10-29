@@ -15,6 +15,7 @@ nearby to notice, see `perception.py`.
 from dataclasses import dataclass
 from typing import Literal
 
+from .chips import ChipError, ChipErrorCode, buy_chip
 from .events import (
     EventError,
     EventErrorCode,
@@ -43,6 +44,7 @@ RejectionCode = (
     | TokenErrorCode
     | MiningErrorCode
     | MarketErrorCode
+    | ChipErrorCode
 )
 
 
@@ -128,8 +130,9 @@ class LeaveGame:
 
 @dataclass(frozen=True)
 class Mine:
-    """Spend time at a token pool the resident stands next to, see `mining.py`: the tokens
-    arrive when the job ends, and until then the resident can do nothing but leave."""
+    """Spend time at a token pool the resident stands next to with the best chip
+    they carry, see `mining.py`: the tokens arrive when the job ends, and until then the
+    resident stays with the chip and can do nothing but leave."""
 
     resident_id: str
     pool_id: str
@@ -144,6 +147,15 @@ class SellTokens:
     quantity: int
 
 
+@dataclass(frozen=True)
+class BuyChip:
+    """Buy one chip of `model` at the market the resident stands at, for its fixed
+    price in coins, see `chips.py`."""
+
+    resident_id: str
+    model: str
+
+
 Action = (
     MoveTo
     | RespondToEvent
@@ -153,6 +165,7 @@ Action = (
     | LeaveGame
     | Mine
     | SellTokens
+    | BuyChip
 )
 
 
@@ -185,6 +198,11 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return sell_tokens(world, action.resident_id, action.quantity)
             except (MarketError, TokenError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuyChip():
+            try:
+                return buy_chip(world, action.resident_id, action.model)
+            except (ChipError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
 
 

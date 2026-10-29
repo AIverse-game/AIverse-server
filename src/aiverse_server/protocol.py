@@ -18,14 +18,25 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from .actions import Action, ActionRejected, LeaveGame, Mine, MoveTo, RejectionCode, SellTokens
+from .actions import (
+    Action,
+    ActionRejected,
+    BuyChip,
+    LeaveGame,
+    Mine,
+    MoveTo,
+    RejectionCode,
+    SellTokens,
+)
+from .chips import CHIP_MODELS
 from .lifecycle import ranks, total_coins
 from .market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, pressure_at
 from .tokens import token_total
+from .trade import reserved_items
 from .walking import position_at
 from .world import COLOR_PATTERN, Position, World
 
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 8
 
 ERROR_MAX_LENGTH = 200
 
@@ -68,8 +79,15 @@ class SellTokensInput(_Message):
     quantity: StrictInt
 
 
+class BuyChipInput(_Message):
+    type: Literal["buy_chip"]
+    resident_id: str
+    model: str
+
+
 ActionInput = Annotated[
-    MoveToInput | LeaveGameInput | MineInput | SellTokensInput, Field(discriminator="type")
+    MoveToInput | LeaveGameInput | MineInput | SellTokensInput | BuyChipInput,
+    Field(discriminator="type"),
 ]
 
 
@@ -102,6 +120,8 @@ class MiningView(_Message):
     pool_id: str
     amount: int
     """Tokens paid out when the job ends."""
+    chip: str
+    """Model of the chip doing the work."""
     remaining_seconds: float
     """Time left in the job when this was sent."""
 
@@ -125,6 +145,9 @@ class ResidentView(_Message):
     """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""
     tokens: int
     """Tokens owned, the resident's stamina, including those set aside by pending offers."""
+    chips: dict[str, int]
+    """Chips owned, model to count, including those set aside by pending offers;
+    models with none are left out."""
     mining: MiningView | None = None
     """Present while the resident is busy mining."""
     walking: WalkingView | None = None
@@ -137,6 +160,14 @@ class PoolView(_Message):
     position: PositionView
     radius: float
     reserve: int
+
+
+class ChipModelView(_Message):
+    model: str
+    price: int
+    """Coins one chip costs at the market."""
+    tokens_per_job: int
+    """Tokens one mining job digs out while the pool has that many left."""
 
 
 class MarketView(_Message):
@@ -152,6 +183,8 @@ class MarketView(_Message):
     half_life_seconds: float
     pressure: float
     """Recent sales in tokens when this was sent."""
+    chips: list[ChipModelView]
+    """Chips on sale here at fixed prices, worst first."""
 
 
 class MapView(_Message):
@@ -228,11 +261,13 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
                 left=resident.left,
                 rank=places[resident.id],
                 tokens=token_total(world, resident.id),
+                chips=_chips_owned(world, resident.id),
                 mining=None
                 if resident.mining is None
                 else MiningView(
                     pool_id=resident.mining.pool_id,
                     amount=resident.mining.amount,
+                    chip=resident.mining.chip,
                     remaining_seconds=max(resident.mining.ends_at - world.time, 0.0),
                 ),
                 walking=None
@@ -257,8 +292,24 @@ def world_view(world: World, remaining_seconds: float) -> WorldView:
             depth=MARKET_DEPTH,
             half_life_seconds=MARKET_HALF_LIFE,
             pressure=pressure_at(world.market, world.time),
+            chips=[
+                ChipModelView(
+                    model=model.model, price=model.price, tokens_per_job=model.tokens_per_job
+                )
+                for model in CHIP_MODELS
+            ],
         ),
     )
+
+
+def _chips_owned(world: World, resident_id: str) -> dict[str, int]:
+    resident = next(resident for resident in world.residents if resident.id == resident_id)
+    owned = {
+        model.model: resident.inventory.count(model.model)
+        + reserved_items(world, resident_id, model.model)
+        for model in CHIP_MODELS
+    }
+    return {model: count for model, count in owned.items() if count > 0}
 
 
 def _position_view(position: Position) -> PositionView:
@@ -277,6 +328,8 @@ def to_action(message: ActionMessage) -> Action:
             return Mine(resident_id=action.resident_id, pool_id=action.pool_id)
         case SellTokensInput():
             return SellTokens(resident_id=action.resident_id, quantity=action.quantity)
+        case BuyChipInput():
+            return BuyChip(resident_id=action.resident_id, model=action.model)
 
 
 def encode(message: ServerMessage) -> str:

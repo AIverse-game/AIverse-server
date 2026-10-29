@@ -14,6 +14,7 @@ from aiverse_server.actions import (
     WithdrawEvent,
     perform,
 )
+from aiverse_server.chips import CHIP_MODELS
 from aiverse_server.inventory import add_coins, item_count
 from aiverse_server.layout import (
     POOL_COUNT,
@@ -24,18 +25,23 @@ from aiverse_server.layout import (
     scatter_pools,
 )
 from aiverse_server.lifecycle import end_game
-from aiverse_server.mining import MINE_SECONDS, MINE_YIELD, finish_mining, next_finish
+from aiverse_server.mining import MINE_SECONDS, finish_mining, next_finish
 from aiverse_server.tokens import TOKEN
 from aiverse_server.world import Inventory, MiningJob, Pool, Position, Resident, World, WorldMap
 
+MK1, MK2, MK3 = CHIP_MODELS
+MINE_YIELD = MK1.tokens_per_job
 
-def resident(resident_id: str, x: float, y: float) -> Resident:
+
+def resident(resident_id: str, x: float, y: float, *chips: str) -> Resident:
+    """Carries 50 tokens and one chip of each model given, MK1 if none is."""
+    held = tuple((model, 1) for model in chips or ("MK1",))
     return Resident(
         id=resident_id,
         name=resident_id,
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((TOKEN, 50),)),
+        inventory=Inventory(((TOKEN, 50), *held)),
     )
 
 
@@ -62,7 +68,7 @@ def at(world: World, time: float) -> World:
 
 def test_mining_takes_the_tokens_out_of_the_pool_and_pays_them_when_done() -> None:
     world = perform(WORLD, Mine("a", "rich"))
-    assert world.residents[0].mining == MiningJob("rich", 7 + MINE_SECONDS, MINE_YIELD)
+    assert world.residents[0].mining == MiningJob("rich", 7 + MINE_SECONDS, MINE_YIELD, "MK1")
     assert world.pools[0].reserve == 100 - MINE_YIELD
     assert next_finish(world) == 7 + MINE_SECONDS
     early = replace(world, time=7 + MINE_SECONDS - 0.1)
@@ -71,6 +77,56 @@ def test_mining_takes_the_tokens_out_of_the_pool_and_pays_them_when_done() -> No
     assert done.residents[0].mining is None
     assert item_count(done, "a", TOKEN) == 50 + MINE_YIELD
     assert next_finish(done) is None
+
+
+def test_better_chips_dig_more_in_the_same_time() -> None:
+    assert MK1.tokens_per_job < MK2.tokens_per_job < MK3.tokens_per_job
+    for model in CHIP_MODELS:
+        world = replace(WORLD, residents=(resident("a", 10, 10, model.model),))
+        job = perform(world, Mine("a", "rich")).residents[0].mining
+        assert job == MiningJob("rich", 7 + MINE_SECONDS, model.tokens_per_job, model.model)
+
+
+def test_a_miner_owning_several_chips_uses_the_best() -> None:
+    world = replace(WORLD, residents=(resident("a", 10, 10, "MK3", "MK1", "MK2"),))
+    job = perform(world, Mine("a", "rich")).residents[0].mining
+    assert job is not None
+    assert (job.chip, job.amount) == ("MK3", 100)
+
+
+def test_mining_without_a_chip_is_refused() -> None:
+    bare = replace(WORLD.residents[0], inventory=Inventory(((TOKEN, 50),)))
+    world = replace(WORLD, residents=(bare, *WORLD.residents[1:]))
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, Mine("a", "rich"))
+    assert raised.value.code == "no_chip"
+    assert world.pools[0].reserve == 100
+
+
+def test_a_chip_set_aside_in_a_sale_offer_cannot_mine() -> None:
+    world = perform(WORLD, OfferToSell("a", "b", "MK1", 1, 100))
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, Mine("a", "rich"))
+    assert raised.value.code == "no_chip"
+
+
+def test_a_miner_cannot_part_with_the_chip_until_the_job_ends() -> None:
+    world = perform(WORLD, Mine("a", "rich"))
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, OfferToSell("a", "b", "MK1", 1, 100))
+    assert raised.value.code == "busy"
+    # Nor can a buyer's offer go through: accepting it is the miner's own primitive.
+    world = perform(add_coins(world, "b", 100), OfferToBuy("b", "a", "MK1", 1, 100))
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, RespondToEvent("a", 1, accept=True))
+    assert raised.value.code == "busy"
+    # Once paid, the chip is free to go and the next job needs another.
+    world = perform(at(world, 100), RespondToEvent("a", 1, accept=True))
+    assert item_count(world, "a", "MK1") == 0
+    assert item_count(world, "b", "MK1") == 2
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, Mine("a", "rich"))
+    assert raised.value.code == "no_chip"
 
 
 def test_the_edge_of_the_radius_is_within_reach() -> None:
@@ -192,8 +248,11 @@ def test_the_world_refuses_impossible_pools_and_jobs() -> None:
         replace(WORLD, pools=(Pool("out", Position(101, 1), 1, 1),))
     with pytest.raises(ValueError):
         Pool("negative", Position(1, 1), 1, -1)
-    job = MiningJob("nowhere", 10, 1)
+    job = MiningJob("nowhere", 10, 1, "MK1")
     with pytest.raises(ValueError):
         replace(WORLD, residents=(replace(WORLD.residents[0], mining=job),))
+    # A miner must hold the chip doing the work.
+    with pytest.raises(ValueError, match="without carrying its chip"):
+        replace(WORLD.residents[0], mining=MiningJob("rich", 10, 1, "MK2"))
     with pytest.raises(ValueError):
         replace(WORLD, time=math.nan)

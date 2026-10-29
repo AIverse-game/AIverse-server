@@ -7,11 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from aiverse_server.actions import OfferToSell, perform
 from aiverse_server.app import CLOSE_POLICY_VIOLATION, Game, Outbox, create_app
+from aiverse_server.chips import CHIP_MODELS
 from aiverse_server.layout import POOL_COUNT, STARTING_TOKENS
 from aiverse_server.lifecycle import GAME_DURATION
 from aiverse_server.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE
-from aiverse_server.mining import MINE_SECONDS, MINE_YIELD
+from aiverse_server.mining import MINE_SECONDS
 from aiverse_server.protocol import (
     ERROR_MAX_LENGTH,
     PROTOCOL_VERSION,
@@ -34,7 +36,10 @@ from aiverse_server.world import (
 
 HELLO = {"type": "hello", "protocolVersion": PROTOCOL_VERSION}
 
-TOKENS = Inventory(((TOKEN, 100),))
+TOKENS = Inventory(((TOKEN, 100), ("MK1", 1)))
+
+MINE_YIELD = CHIP_MODELS[0].tokens_per_job
+"""What a job pays with MK1, the chip both residents carry."""
 
 SMALL_WORLD = World(
     map=WorldMap(size=50),
@@ -85,6 +90,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "left": False,
                         "rank": 1,
                         "tokens": 100,
+                        "chips": {"MK1": 1},
                     },
                     {
                         "id": "b",
@@ -95,6 +101,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "left": False,
                         "rank": 1,
                         "tokens": 100,
+                        "chips": {"MK1": 1},
                     },
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
@@ -411,6 +418,7 @@ def test_walking_costs_tokens_and_mining_pays_them_back(
         assert resident_view(world, "b")["mining"] == {
             "poolId": "p1",
             "amount": MINE_YIELD,
+            "chip": "MK1",
             "remainingSeconds": MINE_SECONDS,
         }
         watcher.receive_json()
@@ -473,7 +481,7 @@ def test_malformed_mine_actions_get_a_bounded_error(
 
 
 def test_the_timer_pays_out_mining_without_any_action() -> None:
-    job = MiningJob("p1", ends_at=0.2, amount=5)
+    job = MiningJob("p1", ends_at=0.2, amount=5, chip="MK1")
     miner = replace(SMALL_WORLD.residents[1], position=Position(10, 10), mining=job)
     world = replace(SMALL_WORLD, residents=(SMALL_WORLD.residents[0], miner))
     with TestClient(create_app(world)) as client, client.websocket_connect("/ws") as ws:
@@ -494,8 +502,8 @@ def test_default_world_gives_everyone_tokens_and_scatters_pools() -> None:
 def test_a_frame_after_the_deadline_pays_jobs_due_before_it_and_voids_the_rest(
     clock: FakeClock,
 ) -> None:
-    early = replace(SMALL_WORLD.residents[0], mining=MiningJob("p1", GAME_DURATION - 1, 5))
-    late = replace(SMALL_WORLD.residents[1], mining=MiningJob("p1", GAME_DURATION + 5, 7))
+    early = replace(SMALL_WORLD.residents[0], mining=MiningJob("p1", GAME_DURATION - 1, 5, "MK1"))
+    late = replace(SMALL_WORLD.residents[1], mining=MiningJob("p1", GAME_DURATION + 5, 7, "MK1"))
     world = replace(SMALL_WORLD, residents=(early, late))
     client = TestClient(create_app(world, clock=clock))
     with client.websocket_connect("/ws") as ws:
@@ -552,6 +560,11 @@ def test_selling_tokens_pays_coins_and_lowers_the_price_for_everyone(clock: Fake
             "depth": MARKET_DEPTH,
             "halfLifeSeconds": MARKET_HALF_LIFE,
             "pressure": 0,
+            "chips": [
+                {"model": "MK1", "price": 300, "tokensPerJob": 30},
+                {"model": "MK2", "price": 1200, "tokensPerJob": 60},
+                {"model": "MK3", "price": 3000, "tokensPerJob": 100},
+            ],
         }
         clock.now = 3
         ws.send_text(sell("b", 30))
@@ -622,3 +635,74 @@ def test_default_world_has_a_market_in_the_middle() -> None:
         world = greet(ws)
     assert world["market"]["position"] == {"x": 50, "y": 50}
     assert world["market"]["pressure"] == 0
+
+
+def buy(resident_id: str, model: object) -> str:
+    action = {"type": "buy_chip", "residentId": resident_id, "model": model}
+    return json.dumps({"type": "action", "action": action})
+
+
+# b stands at both the market and the pool, with coins for MK1 but not MK2, and no chip.
+SHOP_WORLD = replace(
+    MARKET_WORLD,
+    residents=(
+        MARKET_WORLD.residents[0],
+        replace(MARKET_WORLD.residents[1], coins=1_000, inventory=Inventory(((TOKEN, 100),))),
+    ),
+)
+
+
+def test_a_chip_bought_shows_on_every_page_and_mines(clock: FakeClock) -> None:
+    client = TestClient(create_app(SHOP_WORLD, clock=clock))
+    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
+        world = greet(ws)
+        greet(watcher)
+        assert resident_view(world, "b")["chips"] == {}
+        ws.send_text(mine("b", "p1"))
+        assert ws.receive_json()["code"] == "no_chip"
+        ws.send_text(buy("b", "MK2"))
+        assert ws.receive_json()["code"] == "not_enough_coins"
+        ws.send_text(buy("b", "MK1"))
+        assert ws.receive_json()["ok"] is True
+        for connection in (ws, watcher):
+            b = resident_view(connection.receive_json()["world"], "b")
+            assert (b["coins"], b["chips"]) == (700, {"MK1": 1})
+        ws.send_text(mine("b", "p1"))
+        assert ws.receive_json()["ok"] is True
+        b = resident_view(ws.receive_json()["world"], "b")
+        assert b["mining"]["chip"] == "MK1"
+        assert b["mining"]["amount"] == 30
+
+
+def test_a_chip_set_aside_in_an_offer_still_shows_as_owned() -> None:
+    world = perform(SMALL_WORLD, OfferToSell("a", "b", "MK1", 1, 1))
+    assert resident_view(world_view(world, 1).model_dump(by_alias=True), "a")["chips"] == {"MK1": 1}
+
+
+@pytest.mark.parametrize(
+    ("frame", "code"),
+    [(buy("b", "MK9"), "unknown_chip"), (buy("a", "MK1"), "not_at_market")],
+)
+def test_purchase_rejections_reach_the_sender(clock: FakeClock, frame: str, code: str) -> None:
+    client = TestClient(create_app(SHOP_WORLD, clock=clock))
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(frame)
+        assert ws.receive_json()["code"] == code
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "buy_chip", "residentId": "b"},
+        {"type": "buy_chip", "model": "MK1"},
+        {"type": "buy_chip", "residentId": "b", "model": 1},
+    ],
+)
+def test_malformed_buy_actions_get_a_bounded_error(
+    client: TestClient, action: dict[str, Any]
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+        ws.send_text(json.dumps({"type": "action", "action": action}))
+        assert ws.receive_json()["code"] == "bad_message"

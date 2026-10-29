@@ -63,6 +63,9 @@ class MiningJob:
     """Game time when the tokens are paid out, see `World.time`."""
     amount: int
     """Tokens taken out of the pool when the job started, paid to the miner when it ends."""
+    chip: str
+    """Model of the chip doing the work, see `chips.py`; the miner holds it until the job
+    ends."""
 
 
 @dataclass(frozen=True)
@@ -249,6 +252,8 @@ class Resident:
                 raise ValueError(f"resident {self.id} is mining {self.mining.amount!r} tokens")
             if not math.isfinite(self.mining.ends_at):
                 raise ValueError(f"resident {self.id} has a mining job that never ends")
+            if self.inventory.count(self.mining.chip) < 1:
+                raise ValueError(f"resident {self.id} is mining without carrying its chip")
         if self.walking is not None:
             if self.left:
                 raise ValueError(f"resident {self.id} left the game but is still walking")

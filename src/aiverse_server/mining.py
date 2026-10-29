@@ -1,11 +1,12 @@
 """Mining: residents spend time at a token pool to earn tokens.
 
 A resident standing within a pool's radius starts a job that lasts `MINE_SECONDS` of game
-time. The tokens, `MINE_YIELD` or whatever the pool has left if less, come out of the pool
-at once, so two miners cannot dig out the same tokens, and reach the miner when the job
-ends. Until then the miner is busy: they can do nothing but leave the game, which puts the
-tokens back into the pool. Walkers are busy the same way, see `walking.py`; `check_not_busy`
-covers both.
+time. They need a chip and use the best one they carry, see `chips.py`. The
+tokens, as many as that model digs per job or whatever the pool has left if less, come out
+of the pool at once, so two miners cannot dig out the same tokens, and reach the miner when
+the job ends. Until then the miner is busy and stays with the chip: they can do nothing
+but leave the game, which puts the tokens back into the pool. Walkers are busy the same way,
+see `walking.py`; `check_not_busy` covers both.
 
 Game time is `World.time`. The server moves it on as real time passes and calls
 `finish_mining` to pay out the jobs that are due; `next_finish` tells it when to look again.
@@ -17,6 +18,7 @@ untouched; on error nothing changes.
 from dataclasses import replace
 from typing import Literal
 
+from .chips import best_chip
 from .inventory import store_item
 from .tokens import TOKEN
 from .world import MiningJob, Pool, Resident, World
@@ -24,10 +26,9 @@ from .world import MiningJob, Pool, Resident, World
 MINE_SECONDS = 10.0
 """Game seconds one mining job takes."""
 
-MINE_YIELD = 30
-"""Tokens one mining job earns while the pool has that many left."""
-
-MiningErrorCode = Literal["unknown_resident", "unknown_pool", "not_at_pool", "pool_empty", "busy"]
+MiningErrorCode = Literal[
+    "unknown_resident", "unknown_pool", "not_at_pool", "pool_empty", "busy", "no_chip"
+]
 
 
 class MiningError(Exception):
@@ -47,9 +48,13 @@ def check_not_busy(world: World, resident_id: str) -> None:
 
 
 def start_mining(world: World, resident_id: str, pool_id: str) -> World:
-    """Start a job at the pool; the resident must stand within its radius and not be busy."""
+    """Start a job at the pool with the best chip the resident carries; they must stand
+    within its radius and not be busy."""
     check_not_busy(world, resident_id)
     resident = _find(world, resident_id)
+    chip = best_chip(world, resident_id)
+    if chip is None:
+        raise MiningError("no_chip", f"resident {resident_id!r} has no chip")
     pool = next((pool for pool in world.pools if pool.id == pool_id), None)
     if pool is None:
         raise MiningError("unknown_pool", f"no pool with id {pool_id!r}")
@@ -59,8 +64,10 @@ def start_mining(world: World, resident_id: str, pool_id: str) -> World:
         )
     if pool.reserve == 0:
         raise MiningError("pool_empty", f"pool {pool_id!r} has no tokens left")
-    amount = min(MINE_YIELD, pool.reserve)
-    job = MiningJob(pool_id=pool_id, ends_at=world.time + MINE_SECONDS, amount=amount)
+    amount = min(chip.tokens_per_job, pool.reserve)
+    job = MiningJob(
+        pool_id=pool_id, ends_at=world.time + MINE_SECONDS, amount=amount, chip=chip.model
+    )
     world = _with_reserve(world, pool, pool.reserve - amount)
     return _with_job(world, resident_id, job)
 

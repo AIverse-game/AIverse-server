@@ -36,7 +36,7 @@ def resident(resident_id: str, x: float, y: float, tokens: int = 100) -> Residen
         name=resident_id,
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((TOKEN, tokens),) if tokens else ()),
+        inventory=Inventory(((TOKEN, tokens), ("MK1", 1)) if tokens else ()),
         coins=100,
     )
 
@@ -170,7 +170,7 @@ def test_beginning_a_turn_through_the_game_brings_the_world_up_to_now_first() ->
     ("change", "message"),
     [
         ({"left": True}, "left the game but is still walking"),
-        ({"mining": MiningJob("p", 9.0, 1)}, "walking and mining at once"),
+        ({"mining": MiningJob("p", 9.0, 1, "MK1")}, "walking and mining at once"),
         ({"walking": WalkJob(Position(1, 1), 5.0, 4.0)}, "ends early"),
     ],
 )

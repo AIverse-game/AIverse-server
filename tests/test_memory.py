@@ -30,7 +30,7 @@ def resident(resident_id: str, x: float, y: float) -> Resident:
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((TOKEN, 1000),)),
+        inventory=Inventory(((TOKEN, 1000), ("MK1", 1))),
     )
 
 

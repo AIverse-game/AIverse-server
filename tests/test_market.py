@@ -159,7 +159,16 @@ def test_tokens_set_aside_in_an_offer_cannot_be_sold() -> None:
 
 
 def test_a_busy_resident_cannot_sell() -> None:
-    world = replace(WORLD, residents=(replace(WORLD.residents[0], mining=MiningJob("p1", 20, 5)),))
+    world = replace(
+        WORLD,
+        residents=(
+            replace(
+                WORLD.residents[0],
+                mining=MiningJob("p1", 20, 5, "MK1"),
+                inventory=Inventory(((TOKEN, 500), ("MK1", 1))),
+            ),
+        ),
+    )
     with pytest.raises(ActionRejected) as raised:
         perform(world, SellTokens("a", 1))
     assert raised.value.code == "busy"
