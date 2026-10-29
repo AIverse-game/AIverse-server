@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
-from ..actions import (
+from ..core.world import Position
+from ..economy.tokens import TOKEN
+from ..game.actions import (
     ActionRejected,
     BuyChip,
     Mine,
@@ -35,13 +37,11 @@ from ..actions import (
     SellTokens,
     WithdrawEvent,
 )
-from ..lifecycle import GameError
-from ..memory import NoteError
-from ..tokens import TOKEN
-from ..world import Position
+from ..game.lifecycle import GameError
+from ..residents.memory import NoteError
 
 if TYPE_CHECKING:
-    from ..app import Game
+    from ..server.app import Game
 
 # What a failed call reports: a rejection code from the game, or one of these.
 CALL_ERRORS = ("unknown_tool", "invalid_arguments")

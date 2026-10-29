@@ -18,9 +18,9 @@ import uvicorn
 from .agents.openrouter import DEFAULT_MODEL, OpenRouterBrain
 from .agents.runner import Brain, TurnRecord, record_to_json, summarize
 from .agents.scripted import ScriptedBrain
-from .app import create_app
-from .layout import create_default_world
-from .lifecycle import GAME_DURATION
+from .game.layout import create_default_world
+from .game.lifecycle import GAME_DURATION
+from .server.app import create_app
 
 API_KEY_VARIABLE = "OPENROUTER_API_KEY"
 

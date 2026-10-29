@@ -27,12 +27,12 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Protocol
 
-from ..lifecycle import GameError
+from ..game.lifecycle import GameError
 from .observation import Observation, observe, to_json
 from .tools import ResidentTools, ToolCall
 
 if TYPE_CHECKING:
-    from ..app import Game
+    from ..server.app import Game
 
 logger = logging.getLogger(__name__)
 

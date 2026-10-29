@@ -4,16 +4,16 @@ Every number comes from the constant that sets it, so the prompt follows when a 
 tuned. English, which models follow most reliably; residents may still talk in any language.
 """
 
-from ..chips import CHIP_MODELS
-from ..layout import MAP_SIZE, POOL_RADIUS
-from ..market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, MARKET_RADIUS
-from ..memory import SHORT_TERM_SECONDS
-from ..mining import MINE_SECONDS
-from ..perception import PERCEPTION_RADIUS
-from ..speech import HEARING_RADIUS, SPEECH_COSTS
-from ..tokens import TOKENS_PER_UNIT
-from ..walking import WALK_SPEED
-from ..world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
+from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
+from ..economy.chips import CHIP_MODELS
+from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, MARKET_RADIUS
+from ..economy.mining import MINE_SECONDS
+from ..economy.tokens import TOKENS_PER_UNIT
+from ..game.layout import MAP_SIZE, POOL_RADIUS
+from ..residents.memory import SHORT_TERM_SECONDS
+from ..residents.perception import PERCEPTION_RADIUS
+from ..residents.speech import HEARING_RADIUS, SPEECH_COSTS
+from ..residents.walking import WALK_SPEED
 
 
 def system_prompt(name: str, resident_id: str, strategy: str | None = None) -> str:

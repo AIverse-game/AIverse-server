@@ -13,14 +13,14 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
-from ..chips import CHIP_MODELS
-from ..events import Event, pending_for, pending_from
-from ..lifecycle import ranks, total_coins
-from ..perception import Perception
-from ..tokens import TOKEN, walk_cost
-from ..trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
-from ..walking import walk_seconds
-from ..world import Position, World
+from ..core.events import Event, pending_for, pending_from
+from ..core.world import Position, World
+from ..economy.chips import CHIP_MODELS
+from ..economy.tokens import TOKEN, walk_cost
+from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
+from ..game.lifecycle import ranks, total_coins
+from ..residents.perception import Perception
+from ..residents.walking import walk_seconds
 
 
 @dataclass(frozen=True)
