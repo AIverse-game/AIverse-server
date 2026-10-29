@@ -11,13 +11,14 @@ final `state`. Mining jobs and walks finish on the same clock, and are broadcast
 import asyncio
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, replace
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from .actions import ActionRejected, perform
+from .actions import Action, ActionRejected, perform
+from .agents.runner import DEFAULT_PACE, AgentRunner, Brain, Pace, TurnRecord
 from .clock import next_due, settle_due
 from .layout import create_default_world
 from .lifecycle import GAME_DURATION, end_game
@@ -165,6 +166,8 @@ class Game:
         self._outboxes: set[Outbox] = set()
         # Set on every broadcast: a new job or walk may end before what the timer waits for.
         self._changed = asyncio.Event()
+        # One per agent waiting for something to happen, see `agents/runner.py`.
+        self._subscribers: set[asyncio.Event] = set()
 
     def remaining(self) -> float:
         return max(self._duration - (self._clock() - self._start), 0.0)
@@ -187,6 +190,30 @@ class Game:
         self.world = after
         if after is not timed:
             self.broadcast_world()
+
+    def act(self, action: Action) -> None:
+        """Carry out a primitive for an agent: bring the world up to now, perform it, keep the
+        result and tell everyone. Raises `ActionRejected`, leaving the world as it was."""
+        self.tick()
+        self.commit(perform(self.world, action))
+
+    def commit(self, world: World) -> None:
+        """Keep `world` as the shared one and, if it differs, send it to everyone. The one
+        place where agents and connections alike change the world."""
+        if world is self.world:
+            return
+        self.world = world
+        self.broadcast_world()
+
+    def subscribe(self) -> asyncio.Event:
+        """An event set on every broadcast, for an agent waiting for the world to change;
+        clear it before looking at the world, then wait on it."""
+        changed = asyncio.Event()
+        self._subscribers.add(changed)
+        return changed
+
+    def unsubscribe(self, changed: asyncio.Event) -> None:
+        self._subscribers.discard(changed)
 
     def begin_turn(self, resident_id: str) -> Perception:
         """Start a round of work for the resident: bring the world up to now, then look
@@ -243,6 +270,8 @@ class Game:
                 texts[outbox.viewer] = encode(StateMessage(world=view))
             outbox.put_state(texts[outbox.viewer])
         self._changed.set()
+        for changed in self._subscribers:
+            changed.set()
 
 
 async def _send_all(websocket: WebSocket, outbox: Outbox) -> None:
@@ -269,8 +298,6 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
             # latest world without interleaving with other connections.
             game.tick()
             outcome = handle_text(text, game.world, greeted, game.remaining(), outbox.viewer)
-            changed = outcome.world is not game.world
-            game.world = outcome.world
             outbox.viewer = outcome.viewer
             if outcome.greeted and not greeted:
                 game.watch(outbox)
@@ -281,8 +308,7 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                     outbox.put_state(encode(reply))
                 else:
                     outbox.put(encode(reply))
-            if changed:
-                game.broadcast_world()
+            game.commit(outcome.world)
     except WebSocketDisconnect:
         # The client left mid-receive; nothing else to clean up.
         return
@@ -293,17 +319,32 @@ def create_app(
     outbox_limit: int = OUTBOX_LIMIT,
     duration: float = GAME_DURATION,
     clock: Callable[[], float] = time.monotonic,
+    agents: Mapping[str, Brain] | None = None,
+    pace: Pace = DEFAULT_PACE,
+    record: Callable[[TurnRecord], None] | None = None,
 ) -> FastAPI:
-    """The game starts now, when its world is created, and ends `duration` seconds later."""
+    """The game starts now, when its world is created, and ends `duration` seconds later.
+    `agents` maps resident ids to the brains that drive them while the app runs, see
+    `agents/runner.py`; `record` receives every round they take. Other residents are left to
+    the pages."""
     game = Game(world if world is not None else create_default_world(), duration, clock)
+    unknown = set(agents or {}) - {resident.id for resident in game.world.residents}
+    if unknown:
+        raise ValueError(f"agents for unknown residents: {', '.join(sorted(unknown))}")
+    runners = [
+        AgentRunner(game, resident_id, brain, pace, record)
+        for resident_id, brain in (agents or {}).items()
+    ]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        timer = asyncio.create_task(game.run_clock())
+        tasks = [asyncio.create_task(game.run_clock())]
+        tasks += [asyncio.create_task(runner.run()) for runner in runners]
         try:
             yield
         finally:
-            timer.cancel()
+            for task in tasks:
+                task.cancel()
 
     app = FastAPI(title="AIverse server", lifespan=lifespan)
 

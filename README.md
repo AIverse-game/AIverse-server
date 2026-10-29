@@ -2,7 +2,7 @@
 
 AIverse 的权威游戏服务端。游戏状态只在这里计算，网页客户端（同级目录 `aiverse-client`）只接收并渲染。设计、规则与协作约定都在客户端仓库的文档中，先读那边的 `AGENTS.md` 与 `docs/architecture.md`。
 
-当前功能：生成一张固定布局的正方形地图（边长 100）和 4 名居民，每人开局 10000 金币，客户端经 WebSocket 读取；通过操作原语改变世界，客户端可用的有“走到坐标”（`move_to`，按固定速度走过去，`walking.py`）、“退出游戏”（`leave_game`）、“采矿”（`mine`）、“卖 token”（`sell_tokens`）、“买芯片”（`buy_chip`）和“说话”（`say`）。一局 20 分钟（可配置），到点自动结束并给出按金币的最终排名（`lifecycle.py`）；居民可以中途出局，游戏照常进行。居民可以持有物品，服务端内部有存入、移出、计数、列出和清空的接口（`inventory.py`），尚未开放给客户端或 AI。居民之间需要对方同意的请求（如购买）作为事件排进世界中的队列，由收件人同意或拒绝、发件人撤回（`events.py`）；第一批事件是交易（`trade.py`）：买方或卖方任一方用原语 `OfferToBuy`、`OfferToSell` 发起报价，自己的金币或物品立即预留，对方同意后互换，拒绝或撤回后退回；金币是居民的独立余额。这些原语和答复原语 `RespondToEvent`、`WithdrawEvent` 都还没有进入协议。居民的体力是 token（`tokens.py`）：开局每人 200，是物品种类 `"token"`，可以用上述报价买卖；走路按直线距离消耗，每秒走 2.5 单位，途中不能做别的；token 由正变零的居民出局。开局时随机放置 6 个矿池，整局固定，居民站在矿池范围内、手上有芯片时可以花 10 秒采一次 token（`mining.py`）。芯片（`chips.py`）开局谁都没有，要在收购点用金币按定价买：MK1 300 金币、每次采 30 token，MK2 1200 金币、60 token，MK3 3000 金币、100 token；有几块时用最好的一块，采矿期间守着芯片，不能走开或卖掉。芯片是以型号命名的物品，可以用报价转手，出局时清空。地图中心有一个收购点（`market.py`），代表镇外的买家，是除开局资金外金币唯一的新来源：居民站在收购点范围内可以卖出携带的 token 换金币、买芯片，token 单价随近期卖出量下跌、随时间回升，所有人共用一个价格；矿池离收购点至少 20 单位。居民有感知与发现（`perception.py`）：每轮工作开始时调用 `begin_turn`，居民注意到周围 20 单位内的矿池、其他居民，无论站在哪里都能看到收购点及其现价和芯片价目，以及自上次查看以来别人在附近的出发、到达、开始或完成采矿、出局；见过的矿池记在居民的记忆里，走远后仍记得位置和当时的储量。这些动态来自世界中的活动日志，由原语和对局时钟自动记录。居民还有由 Agent 自己决定的记忆（`memory.py`）：`remember` 写下一条文字笔记并选择长期（整局保留）或短期（120 秒游戏时间后清除），`forget` 忘掉任意一条；每条最多 300 字符，长期最多 30 条、短期最多 20 条，满了要先忘掉一条，每轮感知时一并交回。居民可以对话（`speech.py`）：当众说的话由说话那一刻 20 单位内的在局居民听到，私聊不论远近只有对方听到，每句最多 100 字符；当众说每句 2 token、私聊 1 token，行走、采矿中也能说，每轮感知时交回自上次查看以来自己说的和听到的话。页面上显示所有当众说的话，私聊只发给选中了说话人或对象的页面（`view_as`）。AI 接入后调用 `Game.begin_turn`，它先推进游戏时间再感知；记笔记用 `Game.remember`、`Game.forget`。感知和记忆都不在协议中。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
+当前功能：生成一张固定布局的正方形地图（边长 100）和 4 名居民，每人开局 10000 金币，客户端经 WebSocket 读取；通过操作原语改变世界，客户端可用的有“走到坐标”（`move_to`，按固定速度走过去，`walking.py`）、“退出游戏”（`leave_game`）、“采矿”（`mine`）、“卖 token”（`sell_tokens`）、“买芯片”（`buy_chip`）和“说话”（`say`）。一局 20 分钟（可配置），到点自动结束并给出按金币的最终排名（`lifecycle.py`）；居民可以中途出局，游戏照常进行。居民可以持有物品，服务端内部有存入、移出、计数、列出和清空的接口（`inventory.py`），尚未开放给客户端或 AI。居民之间需要对方同意的请求（如购买）作为事件排进世界中的队列，由收件人同意或拒绝、发件人撤回（`events.py`）；第一批事件是交易（`trade.py`）：买方或卖方任一方用原语 `OfferToBuy`、`OfferToSell` 发起报价，自己的金币或物品立即预留，对方同意后互换，拒绝或撤回后退回；金币是居民的独立余额。这些原语和答复原语 `RespondToEvent`、`WithdrawEvent` 都还没有进入协议。居民的体力是 token（`tokens.py`）：开局每人 200，是物品种类 `"token"`，可以用上述报价买卖；走路按直线距离消耗，每秒走 2.5 单位，途中不能做别的；token 由正变零的居民出局。开局时随机放置 6 个矿池，整局固定，居民站在矿池范围内、手上有芯片时可以花 10 秒采一次 token（`mining.py`）。芯片（`chips.py`）开局谁都没有，要在收购点用金币按定价买：MK1 300 金币、每次采 30 token，MK2 1200 金币、60 token，MK3 3000 金币、100 token；有几块时用最好的一块，采矿期间守着芯片，不能走开或卖掉。芯片是以型号命名的物品，可以用报价转手，出局时清空。地图中心有一个收购点（`market.py`），代表镇外的买家，是除开局资金外金币唯一的新来源：居民站在收购点范围内可以卖出携带的 token 换金币、买芯片，token 单价随近期卖出量下跌、随时间回升，所有人共用一个价格；矿池离收购点至少 20 单位。居民有感知与发现（`perception.py`）：每轮工作开始时调用 `begin_turn`，居民注意到周围 20 单位内的矿池、其他居民，无论站在哪里都能看到收购点及其现价和芯片价目，以及自上次查看以来别人在附近的出发、到达、开始或完成采矿、出局；见过的矿池记在居民的记忆里，走远后仍记得位置和当时的储量。这些动态来自世界中的活动日志，由原语和对局时钟自动记录。居民还有由 Agent 自己决定的记忆（`memory.py`）：`remember` 写下一条文字笔记并选择长期（整局保留）或短期（120 秒游戏时间后清除），`forget` 忘掉任意一条；每条最多 300 字符，长期最多 30 条、短期最多 20 条，满了要先忘掉一条，每轮感知时一并交回。居民可以对话（`speech.py`）：当众说的话由说话那一刻 20 单位内的在局居民听到，私聊不论远近只有对方听到，每句最多 100 字符；当众说每句 2 token、私聊 1 token，行走、采矿中也能说，每轮感知时交回自上次查看以来自己说的和听到的话。页面上显示所有当众说的话，私聊只发给选中了说话人或对象的页面（`view_as`）。居民可以由服务端里的 Agent 驱动（`agents/`，见下文“AI 居民”）：每轮调用 `Game.begin_turn`，它先推进游戏时间再感知；原语经 `Game.act` 执行，与网页的操作走同一条路径并广播；记笔记用 `Game.remember`、`Game.forget`。感知和记忆都不在协议中。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
 
 ## 坐标系
 
@@ -20,6 +20,7 @@ uv run aiverse-server                 # 监听 127.0.0.1:8000
 uv run aiverse-server --port 9000     # 换端口，网页端需同时改代理端口，见下
 uv run aiverse-server --duration 120  # 一局的秒数，默认 1200（20 分钟）
 uv run aiverse-server --seed 7        # 固定矿池布局；不给则每局随机（收购点总在地图中心）
+uv run aiverse-server --agent r1=scripted --agent r2=openrouter   # r1、r2 由 Agent 驱动，见下
 make verify                           # ruff、ruff format --check、mypy strict、pytest
 ```
 
@@ -28,6 +29,25 @@ make verify                           # ruff、ruff format --check、mypy strict
 网页端开发与预览服务器默认把 `/ws` 代理到 `127.0.0.1:8000`。服务端换端口时，客户端用同一端口启动：`AIVERSE_SERVER_PORT=9000 npm run dev`。
 
 尚无身份认证、Origin 检查和消息大小限制，任何连接都能操作任何居民，不要监听公网地址。每个连接只保留最新一份待发的 `state`，对自己操作的回复最多积压 256 条，超过就以 1008 关闭。
+
+## AI 居民
+
+启动时用 `--agent 居民=大脑` 指定由 Agent 驱动的居民，可重复；未指定的居民仍可在页面上手动操作。调度与选型见客户端 `docs/decisions/0003-event-driven-agents-and-openrouter.md`。
+
+```sh
+uv run aiverse-server --agent r1=scripted                    # 固定策略的脚本机器人，不花钱
+export OPENROUTER_API_KEY=...                                # 只从环境变量读取，不要写进仓库
+uv run aiverse-server --agent r2=openrouter                  # 默认模型 nvidia/nemotron-3.5-lightning
+uv run aiverse-server --agent r2=openrouter:nvidia/nemotron-3-super-120b-a12b
+uv run aiverse-server --agent r1=scripted --agent-log game.jsonl   # 每轮决策追加一行 JSON
+```
+
+- 每名居民一个异步循环（`agents/runner.py`）：感知 → 大脑决策一轮并调用工具 → 等待唤醒。唤醒条件：行走或采矿结束、空闲时收到报价、听到别人说话（忙碌时也唤醒）、空闲 20 秒无事。两轮开始至少相隔 3 秒，大脑出错后 10 秒。居民出局或游戏结束时停止。
+- 工具（`agents/tools.py`）绑定到一名居民，参数里没有“谁来做”：`move_to`、`mine`、`sell_tokens`、`buy_chip`、`say`、`offer_to_buy`、`offer_to_sell`、`respond_to_offer`、`withdraw_offer`、`remember`、`forget`。不提供退出游戏。参数错误、未知工具、原语被拒绝都作为失败结果交回，世界不变。
+- 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价，到收购点和已知矿池的距离与走路花费。
+- 脚本机器人（`agents/scripted.py`）：买得起的最好芯片 → 最近的有储量矿池（找不到就到固定点探索）→ 采到 260 个 token 回收购点卖到剩 60 → 快结束时卖到剩 1。
+- OpenRouter 大脑（`agents/openrouter.py`）：系统提示是规则说明（`agents/rules.py`，数值取自代码常量），用户消息是观察和上一轮的行动结果；模型每轮最多请求 8 次，每局最多 400 次，每次最多写 2048 token。请求失败时由循环记录，10 秒后再问。
+- 控制台每轮打印一行摘要；`--agent-log` 另外把完整记录（观察、工具调用与结果、模型的话、错误）写成 JSONL。
 
 ## 协议
 
@@ -132,6 +152,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/trade.py` | 交易事件：购买报价 `PurchaseOffer` 与出售报价 `SaleOffer`，条款校验、预留与互换 |
 | `src/aiverse_server/lifecycle.py` | 对局生命周期：能否行动的检查、出局（含 token 耗尽，行走者到达后出局；出局和结束时停下行走）、结束、按金币总额排名，默认时长 |
 | `src/aiverse_server/protocol.py` | 消息模型、客户端消息解析、消息到原语与世界到视图的转换 |
-| `src/aiverse_server/app.py` | FastAPI 应用与 WebSocket `/ws`：共享世界、对局计时（到点的事见 `clock.py`）、每轮开始的 `begin_turn`、写入与忘掉笔记、握手、执行原语、广播状态 |
-| `src/aiverse_server/__main__.py` | 启动入口 |
-| `tests/` | 世界模型、操作原语、物品栏与金币、事件、交易、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话与 WebSocket 接口测试 |
+| `src/aiverse_server/app.py` | FastAPI 应用与 WebSocket `/ws`：共享世界、对局计时（到点的事见 `clock.py`）、每轮开始的 `begin_turn`、写入与忘掉笔记、Agent 与网页共用的执行入口 `act`/`commit`、世界变化时唤醒 Agent 的 `subscribe`、握手、执行原语、广播状态，随应用启停 Agent |
+| `src/aiverse_server/agents/` | AI 居民：`runner.py` 事件驱动的循环与唤醒规则，`observation.py` 每轮的观察，`tools.py` 绑定居民的工具，`scripted.py` 脚本机器人，`openrouter.py` OpenRouter 模型大脑，`rules.py` 给模型的规则说明 |
+| `src/aiverse_server/__main__.py` | 启动入口，`--agent` 指定由 Agent 驱动的居民，`--agent-log` 写每轮记录 |
+| `tests/` | 世界模型、操作原语、物品栏与金币、事件、交易、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民（工具、观察、唤醒、脚本机器人的快进对局、模拟 HTTP 的 OpenRouter 大脑）与 WebSocket 接口测试 |
