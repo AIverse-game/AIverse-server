@@ -2,7 +2,8 @@
 the resident knows of themselves and what is public.
 
 `observe` adds to the perception (`perception.py`) the resident's own coins, tokens, chips
-and what they are busy with; the offers waiting for them and those they sent; and every
+and what they are busy with; the offers and contract proposals waiting for them and those
+they sent, and the contracts they are party to; and every
 resident's name, coins and place, which the page shows anyway and which an agent needs to
 whisper or trade. Other residents' positions stay limited to those in sight. Distances and
 walking costs are worked out from where the resident stands, so a model need not do the
@@ -14,8 +15,9 @@ import math
 from dataclasses import asdict, dataclass
 
 from ..core.events import Event, pending_for, pending_from
-from ..core.world import Position, World
+from ..core.world import Contract, Position, World
 from ..economy.chips import CHIP_MODELS
+from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.tokens import TOKEN, walk_cost
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
 from ..game.lifecycle import ranks, total_coins
@@ -35,6 +37,8 @@ class Me:
     tokens: int
     """Tokens carried, which walking and speaking spend."""
     tokens_in_offers: int
+    coins_in_contracts: int
+    """Coins set aside as a buyer, in contracts in force and in proposals not yet answered."""
     chips: dict[str, int]
     """Chips carried, model to count."""
     walking_to: Position | None
@@ -117,6 +121,38 @@ class OfferView:
 
 
 @dataclass(frozen=True)
+class ProposalView:
+    event_id: int
+    from_id: str
+    to_id: str
+    supplier_id: str
+    buyer_id: str
+    kind: str
+    quantity: int
+    """Items in each delivery."""
+    price: int
+    """Coins for each delivery."""
+    deliveries: int
+    duration_seconds: int
+    """How long the contract runs once accepted."""
+
+
+@dataclass(frozen=True)
+class ContractView:
+    contract_id: int
+    my_role: str
+    """`"supplier"` or `"buyer"`."""
+    partner_id: str
+    kind: str
+    quantity: int
+    price: int
+    deliveries_left: int
+    expires_in: float
+    escrow: int
+    """The buyer's coins set aside for the deliveries left."""
+
+
+@dataclass(frozen=True)
 class Line:
     time: float
     speaker_id: str
@@ -157,6 +193,9 @@ class Observation:
     residents: tuple[Standing, ...]
     offers_to_me: tuple[OfferView, ...]
     my_offers: tuple[OfferView, ...]
+    contract_proposals_to_me: tuple[ProposalView, ...]
+    my_contract_proposals: tuple[ProposalView, ...]
+    my_contracts: tuple[ContractView, ...]
     speech: tuple[Line, ...]
     """What was said in the resident's hearing since they last looked, their own words too."""
     activity: tuple[Happening, ...]
@@ -209,6 +248,7 @@ def observe(
             coins_in_offers=reserved_coins(world, resident_id),
             tokens=me.inventory.count(TOKEN),
             tokens_in_offers=reserved_items(world, resident_id, TOKEN),
+            coins_in_contracts=contract_coins(world, resident_id),
             chips={
                 kind: count for kind, count in me.inventory.counts().items() if kind in chip_models
             },
@@ -257,6 +297,12 @@ def observe(
         ),
         offers_to_me=_offers(pending_for(world, resident_id)),
         my_offers=_offers(pending_from(world, resident_id)),
+        contract_proposals_to_me=_proposals(pending_for(world, resident_id)),
+        my_contract_proposals=_proposals(pending_from(world, resident_id)),
+        my_contracts=tuple(
+            _contract(contract, resident_id, world.time)
+            for contract in contracts_of(world, resident_id)
+        ),
         speech=tuple(
             Line(line.time, line.speaker_id, line.text, line.to) for line in perception.speech
         ),
@@ -282,7 +328,7 @@ def to_json(observation: Observation) -> str:
 
 
 def _offers(events: tuple[Event, ...]) -> tuple[OfferView, ...]:
-    """The trade offers among `events`; trades are the only kind of event so far."""
+    """The trade offers among `events`."""
     return tuple(
         OfferView(
             event_id=event.id,
@@ -295,6 +341,46 @@ def _offers(events: tuple[Event, ...]) -> tuple[OfferView, ...]:
         )
         for event in events
         if isinstance(event.payload, PurchaseOffer | SaleOffer)
+    )
+
+
+def _proposals(events: tuple[Event, ...]) -> tuple[ProposalView, ...]:
+    """The contract proposals among `events`."""
+    views = []
+    for event in events:
+        proposal = event.payload
+        if not isinstance(proposal, ContractProposal):
+            continue
+        supplier_id, buyer_id = proposal.parties(event)
+        views.append(
+            ProposalView(
+                event_id=event.id,
+                from_id=event.sender_id,
+                to_id=event.recipient_id,
+                supplier_id=supplier_id,
+                buyer_id=buyer_id,
+                kind=proposal.kind,
+                quantity=proposal.quantity,
+                price=proposal.price,
+                deliveries=proposal.deliveries,
+                duration_seconds=proposal.duration,
+            )
+        )
+    return tuple(views)
+
+
+def _contract(contract: Contract, resident_id: str, now: float) -> ContractView:
+    supplies = contract.supplier_id == resident_id
+    return ContractView(
+        contract_id=contract.id,
+        my_role="supplier" if supplies else "buyer",
+        partner_id=contract.buyer_id if supplies else contract.supplier_id,
+        kind=contract.kind,
+        quantity=contract.quantity,
+        price=contract.price,
+        deliveries_left=contract.deliveries_left,
+        expires_in=max(contract.expires_at - now, 0.0),
+        escrow=contract.escrow,
     )
 
 

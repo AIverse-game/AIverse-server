@@ -6,6 +6,7 @@ tuned. English, which models follow most reliably; residents may still talk in a
 
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
 from ..economy.chips import CHIP_MODELS
+from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, MARKET_RADIUS
 from ..economy.mining import MINE_SECONDS
 from ..economy.tokens import TOKENS_PER_UNIT
@@ -49,6 +50,18 @@ busy.
 - You can trade with other residents: offer to buy or sell items ("token" or a chip model) \
 for coins, for the whole lot. What you offer is set aside until they accept or reject, or \
 you withdraw. Offers to you appear in offers_to_me.
+- Contracts settle future deals: "each time the supplier delivers N of an item, the buyer \
+pays P coins", for up to {MAX_DELIVERIES} deliveries (1 for a one-off) within a time you \
+choose, at most {MAX_CONTRACT_SECONDS} seconds. \
+Either side proposes with propose_contract; it starts when the other accepts with \
+respond_to_offer. The buyer's coins for every delivery are set aside on signing, so each \
+`deliver` pays the supplier at once and the buyer cannot refuse. The supplier delivers when \
+they choose, though not while walking or mining, and may cancel the rest; nothing forces \
+them to deliver. Unspent coins return to \
+the buyer when the contract ends: after the last delivery, when its time runs out, when the \
+supplier cancels, when either side leaves, or at the end of the game. Use them, for example, \
+to pay another resident for every batch of tokens they mine for you. Proposals to you appear \
+in contract_proposals_to_me, contracts in force in my_contracts.
 
 How you play
 - Each round you get an observation as JSON: your state, the market, pools you know, \

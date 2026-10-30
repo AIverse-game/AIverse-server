@@ -24,14 +24,18 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
 from ..core.world import Position
+from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.tokens import TOKEN
 from ..game.actions import (
     ActionRejected,
     BuyChip,
+    CancelContract,
+    Deliver,
     Mine,
     MoveTo,
     OfferToBuy,
     OfferToSell,
+    ProposeContract,
     RespondToEvent,
     Say,
     SellTokens,
@@ -96,12 +100,45 @@ class OfferToSellArgs(_Args):
 
 
 class RespondToOfferArgs(_Args):
-    event_id: StrictInt = Field(description="event_id of an offer in offers_to_me.")
-    accept: StrictBool = Field(description="true to accept and trade, false to reject.")
+    event_id: StrictInt = Field(
+        description="event_id of an offer in offers_to_me or a proposal in "
+        "contract_proposals_to_me."
+    )
+    accept: StrictBool = Field(description="true to accept, false to reject.")
 
 
 class WithdrawOfferArgs(_Args):
-    event_id: StrictInt = Field(description="event_id of an offer in my_offers.")
+    event_id: StrictInt = Field(
+        description="event_id of an offer in my_offers or a proposal in my_contract_proposals."
+    )
+
+
+class ProposeContractArgs(_Args):
+    partner_id: str = Field(description="Resident id you propose the contract to.")
+    my_role: Literal["supplier", "buyer"] = Field(
+        description="supplier: you deliver the items and get paid; buyer: you pay for each "
+        "delivery, and all your payments are set aside now."
+    )
+    kind: str = Field(description='Item kind delivered, such as "token" or "MK1".')
+    quantity: StrictInt = Field(description="Items in each delivery.")
+    price: StrictInt = Field(description="Coins the buyer pays for each delivery.")
+    deliveries: StrictInt = Field(
+        description=f"How many deliveries at most, 1 to {MAX_DELIVERIES}; 1 for a one-off."
+    )
+    duration_seconds: StrictInt = Field(
+        description=f"Seconds the contract stays in force once accepted, 1 to "
+        f"{MAX_CONTRACT_SECONDS}."
+    )
+
+
+class DeliverArgs(_Args):
+    contract_id: StrictInt = Field(
+        description="contract_id of a contract in my_contracts where you are the supplier."
+    )
+
+
+class CancelContractArgs(DeliverArgs):
+    pass
 
 
 class RememberArgs(_Args):
@@ -200,9 +237,34 @@ TOOLS = (
         "answer or you withdraw.",
         OfferToSellArgs,
     ),
-    ToolSpec("respond_to_offer", "Accept or reject an offer sent to you.", RespondToOfferArgs),
     ToolSpec(
-        "withdraw_offer", "Take back an offer you sent that is not answered.", WithdrawOfferArgs
+        "respond_to_offer",
+        "Accept or reject an offer or contract proposal sent to you.",
+        RespondToOfferArgs,
+    ),
+    ToolSpec(
+        "withdraw_offer",
+        "Take back an offer or contract proposal you sent that is not answered.",
+        WithdrawOfferArgs,
+    ),
+    ToolSpec(
+        "propose_contract",
+        "Propose a standing deal: each time the supplier delivers the items, the buyer is "
+        "paid for automatically from coins set aside when the contract is signed. Comes into "
+        "force when the partner accepts.",
+        ProposeContractArgs,
+    ),
+    ToolSpec(
+        "deliver",
+        "As a contract's supplier, hand the buyer one delivery from what you carry and be "
+        "paid its price at once.",
+        DeliverArgs,
+    ),
+    ToolSpec(
+        "cancel_contract",
+        "As a contract's supplier, call off its remaining deliveries; the buyer gets their "
+        "set-aside coins back.",
+        CancelContractArgs,
     ),
     ToolSpec(
         "remember",
@@ -258,6 +320,32 @@ class ResidentTools:
     def say(self, text: str, to: str | None = None) -> ToolResult:
         return self.call("say", {"text": text} if to is None else {"text": text, "to": to})
 
+    def propose_contract(
+        self,
+        partner_id: str,
+        my_role: Literal["supplier", "buyer"],
+        kind: str,
+        quantity: int,
+        price: int,
+        deliveries: int,
+        duration_seconds: int,
+    ) -> ToolResult:
+        return self.call(
+            "propose_contract",
+            {
+                "partner_id": partner_id,
+                "my_role": my_role,
+                "kind": kind,
+                "quantity": quantity,
+                "price": price,
+                "deliveries": deliveries,
+                "duration_seconds": duration_seconds,
+            },
+        )
+
+    def deliver(self, contract_id: int) -> ToolResult:
+        return self.call("deliver", {"contract_id": contract_id})
+
     def _dispatch(self, name: str, arguments: Mapping[str, Any]) -> ToolResult:
         spec = next((spec for spec in TOOLS if spec.name == name), None)
         if spec is None:
@@ -300,6 +388,24 @@ class ResidentTools:
                 act(RespondToEvent(me, args.event_id, args.accept))
             case WithdrawOfferArgs():
                 act(WithdrawEvent(me, args.event_id))
+            case ProposeContractArgs():
+                act(
+                    ProposeContract(
+                        me,
+                        args.partner_id,
+                        args.my_role == "supplier",
+                        args.kind,
+                        args.quantity,
+                        args.price,
+                        args.deliveries,
+                        args.duration_seconds,
+                    )
+                )
+            # The subclass first: a cancellation would match the delivery's arguments too.
+            case CancelContractArgs():
+                act(CancelContract(me, args.contract_id))
+            case DeliverArgs():
+                act(Deliver(me, args.contract_id))
             case RememberArgs():
                 self.game.remember(me, args.text, args.term)
             case ForgetArgs():

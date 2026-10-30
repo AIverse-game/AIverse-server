@@ -25,7 +25,7 @@ uv run aiverse-server --agent r1=scripted --agent r2=llm:模型名   # r1、r2 �
 make verify                           # ruff、ruff format --check、mypy strict、pytest
 ```
 
-一局游戏从服务端创建世界（即启动）时开始计时，到点后自动结束：停止所有采矿、撤销所有待处理报价、退回预留，世界冻结。要开新的一局，重启服务端。矿池在创建世界时放好，之后只有储量变化。
+一局游戏从服务端创建世界（即启动）时开始计时，到点后自动结束：停止所有采矿、撤销所有待处理报价、终止所有合约、退回预留，世界冻结。要开新的一局，重启服务端。矿池在创建世界时放好，之后只有储量变化。
 
 网页端开发与预览服务器默认把 `/ws` 代理到 `127.0.0.1:8000`。服务端换端口时，客户端用同一端口启动：`AIVERSE_SERVER_PORT=9000 npm run dev`。
 
@@ -63,11 +63,21 @@ llm:
 key 只放在服务端内存里，用来调用接口，不写进状态、控制台、`--agent-log` 或错误信息；服务商在错误信息里回显的 key 替换为 `***`。httpx 的请求日志调到 WARNING，不打印请求地址。
 
 - 每名居民一个异步循环（`agents/runner.py`）：感知 → 大脑决策一轮并调用工具 → 等待唤醒。唤醒条件：行走或采矿结束、空闲时收到报价、听到别人说话（忙碌时也唤醒）、空闲 20 秒无事。两轮开始至少相隔 3 秒，大脑出错后 10 秒。居民出局或游戏结束时停止。
-- 工具（`agents/tools.py`）绑定到一名居民，参数里没有“谁来做”：`move_to`、`mine`、`sell_tokens`、`buy_chip`、`say`、`offer_to_buy`、`offer_to_sell`、`respond_to_offer`、`withdraw_offer`、`remember`、`forget`。不提供退出游戏。参数错误、未知工具、原语被拒绝都作为失败结果交回，世界不变。
-- 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价，到收购点和已知矿池的距离与走路花费。
+- 工具（`agents/tools.py`）绑定到一名居民，参数里没有“谁来做”：`move_to`、`mine`、`sell_tokens`、`buy_chip`、`say`、`offer_to_buy`、`offer_to_sell`、`respond_to_offer`、`withdraw_offer`、`propose_contract`、`deliver`、`cancel_contract`、`remember`、`forget`。`respond_to_offer` 与 `withdraw_offer` 也用来答复和撤回合约提议。不提供退出游戏。参数错误、未知工具、原语被拒绝都作为失败结果交回，世界不变。
+- 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价与合约提议，自己参与的合约，到收购点和已知矿池的距离与走路花费。
 - 脚本机器人（`agents/scripted_brain.py`）：买得起的最好芯片 → 最近的有储量矿池（找不到就到固定点探索）→ 采到 260 个 token 回收购点卖到剩 60 → 快结束时卖到剩 1。
 - 大模型大脑（`agents/llm_brain.py`）：系统提示是规则说明（`agents/system_prompt.py`，数值取自代码常量），用户消息是观察和上一轮的行动结果；模型每轮最多请求 8 次，每局每名居民最多 400 次（停止或更换 Agent 不重置），每次最多写 2048 token。请求失败时由循环记录，10 秒后再问。停止或更换 Agent 时关闭它的 HTTP 客户端。
 - 控制台每轮打印一行摘要；`--agent-log` 另外把完整记录（观察、工具调用与结果、模型的话、错误）写成 JSONL。
+
+## 合约
+
+合约规定两名居民之间未来的交付与付款（`economy/contracts.py`，设计见客户端 `docs/design/contracts.md`）：供货方每交付一批 `quantity` 个 `kind`，买方付 `price` 金币，最多 `deliveries` 次（1 即一次性），签订后 `duration` 秒到期。
+
+- 任一方用原语 `ProposeContract` 发出提议（事件 `ContractProposal`），对方用 `RespondToEvent` 同意即签订，发件人可撤回。买方提议时立即预留全部货款（`price × deliveries`）；供货方提议时，买方同意时扣款，不够则拒绝且提议仍待处理。
+- 生效后货款留在合约里。供货方用 `Deliver` 交出一批物品，立即从预留中得到这一批的价款，买方不能拒付；最后一批交付后合约结束。
+- 只有供货方能 `CancelContract`，买方不能单方面取消。到期（`settle_due`）、任一方出局、游戏结束时合约终止。终止时余款退回买方。
+- 预留的货款计入买方的金币总额和排名。交付与普通原语一样，在行走或采矿中不能进行。
+- 合约只在服务端和 Agent 工具中，尚未进入协议，页面看不到。
 
 ## 协议
 
@@ -146,7 +156,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 }
 ```
 
-- `coins` 是金币总额，含待处理报价中预留的金币，对所有人公开。`rank` 按总额排名，1 为最多，金额相同名次并列（1、1、3）；游戏结束后即为最终排名。
+- `coins` 是金币总额，含待处理报价和合约（见上文“合约”）中预留的金币，对所有人公开。`rank` 按总额排名，1 为最多，金额相同名次并列（1、1、3）；游戏结束后即为最终排名。
 - `position` 是发送时所在的位置，行走中即途中的位置。`walking` 只在行走期间出现：居民从 `position` 沿直线匀速走向 `target`，`remainingSeconds` 后到达，客户端据此本地播放走路动画。
 - `agent` 只在居民由 Agent 驱动时出现，`model` 是所用的模型，脚本机器人没有这一项。居民出局、游戏结束或 Agent 被停止后消失。
 - `tokens` 是拥有的 token：携带的加出售报价中预留的。`chips` 是拥有的芯片，型号到块数，同样含出售报价中预留的，没有的型号省略。`mining` 只在采矿期间出现，`chip` 是干活的芯片型号，`remainingSeconds` 是发送时该次采矿的剩余秒数。`pools` 的位置和半径整局不变，`reserve` 是剩余储量。
@@ -163,7 +173,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | 子包 | 内容 |
 | --- | --- |
 | `core/` | 世界模型与各玩法共用的机制：居民、坐标、物品栏与金币、事件队列；只依赖 `core/` 内的模块 |
-| `economy/` | 经济：token 体力、芯片、矿池采矿、收购点、交易报价 |
+| `economy/` | 经济：token 体力、芯片、矿池采矿、收购点、交易报价、合约 |
 | `residents/` | 居民的行动与认知：行走、感知、记忆、对话 |
 | `game/` | 一局的规则与调度：操作原语、生命周期、到点结算、开局布局 |
 | `server/` | 对外接口：FastAPI 应用与 WebSocket、协议 |
@@ -173,7 +183,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 | 文件 | 用途 |
 | --- | --- |
-| `src/aiverse_server/core/world.py` | 坐标、居民（含金币、是否出局、采矿与行走任务、记忆与笔记）、物品栏、事件队列、矿池、收购点、活动日志、发言记录、地图与世界模型（含是否结束、游戏时间），越界、重复 id 与事件、采矿、行走、记忆和日志一致性校验 |
+| `src/aiverse_server/core/world.py` | 坐标、居民（含金币、是否出局、采矿与行走任务、记忆与笔记）、物品栏、事件队列、生效的合约（`Contract`、`ContractBook`）、矿池、收购点、活动日志、发言记录、地图与世界模型（含是否结束、游戏时间），越界、重复 id 与事件、采矿、行走、记忆和日志一致性校验 |
 | `src/aiverse_server/core/inventory.py` | 居民物品的存入、移出、计数、列出与清空，金币的收付；服务端内部接口，不是原语 |
 | `src/aiverse_server/core/events.py` | 事件队列：可扩展的事件种类（`EventPayload` 及其发送、同意、拒绝钩子），发送、答复、撤回与收件箱查询 |
 | `src/aiverse_server/economy/tokens.py` | token 体力：物品种类、拥有量、走路消耗 |
@@ -181,13 +191,14 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/economy/mining.py` | 矿池采矿：需要芯片、按最好的一块定产量，开始、按游戏时间发放、取消、忙碌检查（含行走） |
 | `src/aiverse_server/economy/market.py` | 收购点：随卖出下跌、随时间回升的市场价，卖出 token 换金币 |
 | `src/aiverse_server/economy/trade.py` | 交易事件：购买报价 `PurchaseOffer` 与出售报价 `SaleOffer`，条款校验、预留与互换 |
+| `src/aiverse_server/economy/contracts.py` | 合约：提议事件 `ContractProposal`，签订时预留买方全部货款，交付 `deliver` 自动付款，供货方取消、到期、出局与结束时退回余款 |
 | `src/aiverse_server/residents/walking.py` | 行走：速度、所需时间、途中位置、出发、到达、中途停下、下一次到达时刻 |
 | `src/aiverse_server/residents/perception.py` | 感知与发现：每轮开始时 `begin_turn` 返回范围内的矿池、居民和新的活动、收购点与现价、芯片价目，并更新居民记住的矿池；`record_activity` 比较前后世界记录活动 |
 | `src/aiverse_server/residents/memory.py` | 居民自选的记忆：写入长期或短期笔记、忘掉笔记、清除过期的短期笔记 |
 | `src/aiverse_server/residents/speech.py` | 对话：听力半径、每句的 token 消耗、当众说或私聊 `say`，听到的人在说话时定下 |
-| `src/aiverse_server/game/actions.py` | 操作原语：玩家与 AI 改变世界的唯一入口，校验并执行；含答复事件、发起购买与出售、退出游戏、采矿、卖 token 给收购点、买芯片的原语，执行后处理 token 耗尽并记录活动 |
+| `src/aiverse_server/game/actions.py` | 操作原语：玩家与 AI 改变世界的唯一入口，校验并执行；含答复事件、发起购买与出售、提议合约、交付与取消合约、退出游戏、采矿、卖 token 给收购点、买芯片的原语，执行后处理 token 耗尽并记录活动 |
 | `src/aiverse_server/game/lifecycle.py` | 对局生命周期：能否行动的检查、出局（含 token 耗尽，行走者到达后出局；出局和结束时停下行走）、结束、按金币总额排名，默认时长 |
-| `src/aiverse_server/game/clock.py` | 游戏时间到点的事：发放采矿、行走到达（及到达时 token 耗尽出局）并记录活动，下一个到点时刻 |
+| `src/aiverse_server/game/clock.py` | 游戏时间到点的事：发放采矿、行走到达（及到达时 token 耗尽出局）并记录活动，合约到期，下一个到点时刻 |
 | `src/aiverse_server/game/layout.py` | 固定的初始地图与居民（含初始金币与 token）、地图中心的收购点，按种子随机放置的矿池 |
 | `src/aiverse_server/server/protocol.py` | 消息模型、客户端消息解析（错误信息不回显输入）、消息到原语与世界到视图（含谁由 Agent 驱动）的转换，`start_agent` 的设置 |
 | `src/aiverse_server/server/config.py` | YAML 配置文件：`llm.override` 覆盖模型的地址、key、模型，拒绝未知的键，错误信息不含设置的值 |
@@ -195,4 +206,4 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/agents/` | AI 居民：`runner.py` 事件驱动的循环与唤醒规则，`observation.py` 每轮的观察，`tools.py` 绑定居民的工具，`scripted_brain.py` 脚本机器人，`llm_brain.py` OpenAI 兼容接口的大模型大脑与设置的合并、校验，`system_prompt.py` 给模型的系统提示（规则说明） |
 | `src/aiverse_server/__main__.py` | 启动入口，`--config` 读配置文件，`--agent` 指定由 Agent 驱动的居民，`--agent-log` 写每轮记录 |
 | `aiverse.example.yml` | 配置文件示例；本地的 `aiverse.yml` 被 Git 忽略 |
-| `tests/` | 世界模型、操作原语、物品栏与金币、事件、交易、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民（工具、观察、唤醒、脚本机器人的快进对局、模拟 HTTP 的大模型大脑、设置的合并与校验）、配置文件、从页面启动与停止 Agent 与 WebSocket 接口测试 |
+| `tests/` | 世界模型、操作原语、物品栏与金币、事件、交易、合约、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民（工具、观察、唤醒、脚本机器人的快进对局、模拟 HTTP 的大模型大脑、设置的合并与校验）、配置文件、从页面启动与停止 Agent 与 WebSocket 接口测试 |

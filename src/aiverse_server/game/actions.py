@@ -26,6 +26,13 @@ from ..core.events import (
 from ..core.inventory import InventoryError, InventoryErrorCode
 from ..core.world import Position, World
 from ..economy.chips import ChipError, ChipErrorCode, buy_chip
+from ..economy.contracts import (
+    ContractError,
+    ContractErrorCode,
+    ContractProposal,
+    cancel_contract,
+    deliver,
+)
 from ..economy.market import MarketError, MarketErrorCode, sell_tokens
 from ..economy.mining import MiningError, MiningErrorCode, check_not_busy, start_mining
 from ..economy.tokens import TokenError, TokenErrorCode, pay_for_walk
@@ -47,6 +54,7 @@ RejectionCode = (
     | MarketErrorCode
     | ChipErrorCode
     | SpeechErrorCode
+    | ContractErrorCode
 )
 
 
@@ -123,6 +131,41 @@ class OfferToSell:
 
 
 @dataclass(frozen=True)
+class ProposeContract:
+    """Propose a contract to `partner_id`, see `contracts.py`: each time the supplier delivers
+    `quantity` items of `kind`, the buyer pays `price` coins, up to `deliveries` times within
+    `duration` seconds of the partner accepting. The resident supplies if `supplies`, and
+    otherwise buys, their coins for every delivery set aside at once."""
+
+    resident_id: str
+    partner_id: str
+    supplies: bool
+    kind: str
+    quantity: int
+    price: int
+    """Coins for one delivery."""
+    deliveries: int
+    duration: int
+
+
+@dataclass(frozen=True)
+class Deliver:
+    """As the supplier, hand the buyer one delivery under a contract and be paid for it from
+    the coins they set aside, see `contracts.py`."""
+
+    resident_id: str
+    contract_id: int
+
+
+@dataclass(frozen=True)
+class CancelContract:
+    """As the supplier, call off a contract's remaining deliveries, see `contracts.py`."""
+
+    resident_id: str
+    contract_id: int
+
+
+@dataclass(frozen=True)
 class LeaveGame:
     """Leave the game for good, see `lifecycle.py`: pending offers are called off, items are
     lost and coins are kept for the ranking. The game goes on for everyone else."""
@@ -175,6 +218,9 @@ Action = (
     | WithdrawEvent
     | OfferToBuy
     | OfferToSell
+    | ProposeContract
+    | Deliver
+    | CancelContract
     | LeaveGame
     | Mine
     | SellTokens
@@ -201,6 +247,25 @@ def _carry_out(world: World, action: Action) -> World:
             return _answer(world, action)
         case OfferToBuy() | OfferToSell():
             return _offer(world, action)
+        case ProposeContract():
+            payload = ContractProposal(
+                action.supplies,
+                action.kind,
+                action.quantity,
+                action.price,
+                action.deliveries,
+                action.duration,
+            )
+            try:
+                return send_event(world, action.resident_id, action.partner_id, payload)[0]
+            except (EventError, InventoryError, ContractError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case Deliver() | CancelContract():
+            carry_out = deliver if isinstance(action, Deliver) else cancel_contract
+            try:
+                return carry_out(world, action.resident_id, action.contract_id)
+            except (ContractError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
         case LeaveGame():
             return leave_game(world, action.resident_id)
         case Mine():
@@ -232,7 +297,7 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
         if action.accept:
             return accept_event(world, action.resident_id, action.event_id)
         return reject_event(world, action.resident_id, action.event_id)
-    except (EventError, InventoryError, TradeError) as error:
+    except (EventError, InventoryError, TradeError, ContractError) as error:
         raise ActionRejected(error.code, error.message) from error
 
 

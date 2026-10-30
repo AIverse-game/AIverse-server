@@ -282,6 +282,63 @@ class SpeechLog:
 
 
 @dataclass(frozen=True)
+class Contract:
+    """A standing deal between two residents, see `contracts.py`: each time the supplier
+    delivers `quantity` of `kind` to the buyer, the buyer pays `price` coins, up to
+    `deliveries_left` more times, until `expires_at`."""
+
+    id: int
+    """Unique within a world and never reused, counting up from 1."""
+    supplier_id: str
+    buyer_id: str
+    kind: str
+    quantity: int
+    price: int
+    """Coins for one delivery."""
+    deliveries_left: int
+    """The buyer's coins for all of them wait set aside, `price` times this many."""
+    signed_at: float
+    expires_at: float
+    """Game times when the contract was agreed and when it lapses, see `World.time`."""
+
+    @property
+    def escrow(self) -> int:
+        """Coins set aside from the buyer for the deliveries still to come."""
+        return self.price * self.deliveries_left
+
+
+@dataclass(frozen=True)
+class ContractBook:
+    """Contracts in force, oldest first, and the id the next one will get."""
+
+    active: tuple[Contract, ...] = ()
+    next_id: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.next_id) is not int or self.next_id < 1:
+            raise ValueError(f"next contract id must be an integer >= 1, got {self.next_id!r}")
+        previous = 0
+        for contract in self.active:
+            if type(contract.id) is not int or not previous < contract.id < self.next_id:
+                raise ValueError(
+                    f"contract id {contract.id!r} must be an integer above {previous} "
+                    f"and below {self.next_id}"
+                )
+            previous = contract.id
+            for amount in (contract.quantity, contract.price, contract.deliveries_left):
+                if type(amount) is not int or amount < 1:
+                    raise ValueError(f"contract {contract.id} has {amount!r}, must be >= 1")
+            if not contract.kind:
+                raise ValueError(f"contract {contract.id} has no item kind")
+            if not (
+                math.isfinite(contract.signed_at)
+                and math.isfinite(contract.expires_at)
+                and contract.signed_at < contract.expires_at
+            ):
+                raise ValueError(f"contract {contract.id} never lapses or lapses before signed")
+
+
+@dataclass(frozen=True)
 class Resident:
     id: str
     name: str
@@ -290,7 +347,8 @@ class Resident:
     position: Position
     inventory: Inventory = Inventory()
     coins: int = 0
-    """Spendable coins; those set aside by pending offers are not included, see `trade.py`."""
+    """Spendable coins; those set aside by pending offers and contracts are not included, see
+    `trade.py` and `contracts.py`."""
     left: bool = False
     """Left the game: stays in the world and the ranking, but can no longer act or trade."""
     mining: MiningJob | None = None
@@ -413,6 +471,8 @@ class World:
     """Where tokens sell for coins, see `market.py`; None on a map without one."""
     speech: SpeechLog = SpeechLog()
     """What residents have said and who heard it, see `speech.py`."""
+    contracts: ContractBook = ContractBook()
+    """Standing deals between residents, see `contracts.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -470,3 +530,10 @@ class World:
         for event in self.events.pending:
             if self.ended or {event.sender_id, event.recipient_id} & left:
                 raise ValueError(f"event {event.id} is pending after its game or resident ended")
+        # Likewise every contract ends first.
+        for contract in self.contracts.active:
+            parties = {contract.supplier_id, contract.buyer_id}
+            if parties - set(ids) or len(parties) != 2:
+                raise ValueError(f"contract {contract.id} needs two known residents")
+            if self.ended or parties & left:
+                raise ValueError(f"contract {contract.id} outlives its game or a party")

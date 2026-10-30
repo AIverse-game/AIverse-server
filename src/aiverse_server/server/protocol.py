@@ -206,7 +206,8 @@ class ResidentView(_Message):
     position: PositionView
     """Where the resident is when this was sent, on the way while walking."""
     coins: int
-    """Total coins, including those set aside by pending offers; public to everyone."""
+    """Total coins, including those set aside by pending offers and contracts; public to
+    everyone."""
     left: bool
     rank: int
     """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""

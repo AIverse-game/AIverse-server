@@ -54,7 +54,9 @@ def make_game(world: World = WORLD, duration: float = 600) -> tuple[Game, FakeCl
 
 
 def look(game: Game, resident_id: str) -> Observation:
-    return observe(game.world, resident_id, game.begin_turn(resident_id), game.remaining())
+    # The turn first: it brings the world up to now.
+    perception = game.begin_turn(resident_id)
+    return observe(game.world, resident_id, perception, game.remaining())
 
 
 def me(game: Game, resident_id: str) -> Resident:
@@ -154,6 +156,31 @@ def test_trading_tools_send_and_answer_offers() -> None:
     )
     assert me(game, "a").coins == 5150
     assert me(game, "b").inventory.count(TOKEN) == 110
+
+
+def test_contract_tools_propose_sign_deliver_and_cancel() -> None:
+    game, clock = make_game()
+    buyer, supplier = ResidentTools(game, "a"), ResidentTools(game, "b")
+    assert buyer.propose_contract("b", "buyer", TOKEN, 20, 300, 2, 120).ok
+    proposal = look(game, "b").contract_proposals_to_me[0]
+    assert (proposal.supplier_id, proposal.buyer_id, proposal.deliveries) == ("b", "a", 2)
+    assert look(game, "a").me.coins_in_contracts == 600
+    assert supplier.call("respond_to_offer", {"event_id": proposal.event_id, "accept": True}).ok
+    clock.now = 30
+    (mine,) = look(game, "b").my_contracts
+    assert (mine.my_role, mine.partner_id, mine.escrow, mine.expires_in) == (
+        "supplier",
+        "a",
+        600,
+        90,
+    )
+    refused = buyer.deliver(mine.contract_id)
+    assert not refused.ok and refused.code == "not_supplier"
+    assert supplier.deliver(mine.contract_id).ok
+    assert me(game, "b").coins == 5300 and me(game, "a").inventory.count(TOKEN) == 120
+    assert supplier.call("cancel_contract", {"contract_id": mine.contract_id}).ok
+    assert me(game, "a").coins == 4700
+    assert look(game, "a").my_contracts == ()
 
 
 def test_tool_specs_are_function_schemas() -> None:

@@ -2,12 +2,12 @@
 
 A game runs for a fixed time after the server creates its world, `GAME_DURATION` unless the
 server is started with another; the clock itself lives with the server, see `app.py`. When
-it runs out, `end_game` settles every pending event, returning what offers set aside, and
-from then on nothing changes. Residents may leave earlier, of their own accord or because
-the server makes them; the game goes on without them. They stay in the world and in the
-ranking with the coins they had, but lose their items and can no longer act or trade.
-Running out of tokens, the residents' stamina, takes them out the same way, see
-`knock_out_exhausted` and `knock_out_arrivals`.
+it runs out, `end_game` settles every pending event and ends every contract, returning what
+offers and contracts set aside, and from then on nothing changes. Residents may leave
+earlier, of their own accord or because the server makes them; the game goes on without
+them. They stay in the world and in the ranking with the coins they had, but lose their
+items and can no longer act or trade. Running out of tokens, the residents' stamina, takes
+them out the same way, see `knock_out_exhausted` and `knock_out_arrivals`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -20,6 +20,7 @@ from typing import Literal
 from ..core.events import Event, withdraw_event
 from ..core.inventory import clear_items
 from ..core.world import World
+from ..economy.contracts import contract_coins, end_contracts
 from ..economy.mining import cancel_mining
 from ..economy.tokens import token_total
 from ..economy.trade import reserved_coins
@@ -52,12 +53,16 @@ def check_can_act(world: World, resident_id: str) -> None:
 
 def leave_game(world: World, resident_id: str) -> World:
     """Take the resident out of the game: a mining job stops and its tokens go back to the
-    pool, a walk stops where they are, their pending events are declined, which hands back
-    whatever offers set aside, then their items are cleared. Their coins stay."""
+    pool, a walk stops where they are, their pending events are declined and their contracts
+    end, which hands back whatever offers and contracts set aside, then their items are
+    cleared. Their coins stay."""
     check_can_act(world, resident_id)
     world = cancel_mining(world, resident_id)
     world = stop_walking(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
+    world = end_contracts(
+        world, lambda contract: resident_id in (contract.supplier_id, contract.buyer_id)
+    )
     world = clear_items(world, resident_id)
     residents = tuple(
         replace(resident, left=True) if resident.id == resident_id else resident
@@ -103,20 +108,22 @@ def _owned_tokens(world: World, resident_id: str) -> int:
 
 
 def end_game(world: World) -> World:
-    """Stop every mining job and walk, decline every pending event and freeze the world;
-    ending twice changes nothing."""
+    """Stop every mining job and walk, decline every pending event, end every contract and
+    freeze the world; ending twice changes nothing."""
     if world.ended:
         return world
     for resident in world.residents:
         world = cancel_mining(world, resident.id)
         world = stop_walking(world, resident.id)
-    return replace(_settle(world, lambda event: True), ended=True)
+    world = end_contracts(_settle(world, lambda event: True), lambda contract: True)
+    return replace(world, ended=True)
 
 
 def total_coins(world: World, resident_id: str) -> int:
-    """Spendable coins plus those set aside by pending offers: what the ranking counts."""
+    """Spendable coins plus those set aside by pending offers and contracts: what the ranking
+    counts."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
-    return resident.coins + reserved_coins(world, resident_id)
+    return resident.coins + reserved_coins(world, resident_id) + contract_coins(world, resident_id)
 
 
 def ranks(world: World) -> dict[str, int]:
