@@ -77,16 +77,16 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 - 生效后货款留在合约里。供货方用 `Deliver` 交出一批物品，立即从预留中得到这一批的价款，买方不能拒付；最后一批交付后合约结束。
 - 只有供货方能 `CancelContract`，买方不能单方面取消。到期（`settle_due`）、任一方出局、游戏结束时合约终止。终止时余款退回买方。
 - 预留的货款计入买方的金币总额和排名。交付与普通原语一样，在行走或采矿中不能进行。
-- 合约只在服务端和 Agent 工具中，尚未进入协议，页面看不到。
+- 页面可以在状态中看到所选居民参与的合约与提议（见下文“协议”），但还不能发起、答复、交付或取消。
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 11。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 12。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 11}` | 连接后发送；多余字段忽略 |
-| 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 12}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价与合约，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
@@ -144,6 +144,17 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
     { "seq": 1, "time": 12.5, "speakerId": "r1", "text": "有人卖 token 吗？", "listeners": ["r3"] },
     { "seq": 2, "time": 15.0, "speakerId": "r1", "text": "我出高价", "to": "r4", "listeners": ["r4"] }
   ],
+  "offers": [
+    { "eventId": 1, "side": "sell", "fromId": "r2", "toId": "r1", "item": "token", "quantity": 5, "price": 80 }
+  ],
+  "contractProposals": [
+    { "eventId": 3, "fromId": "r3", "toId": "r1", "supplierId": "r3", "buyerId": "r1", "item": "token",
+      "quantity": 20, "price": 300, "deliveries": 1, "durationSeconds": 120 }
+  ],
+  "contracts": [
+    { "id": 1, "supplierId": "r2", "buyerId": "r1", "item": "token", "quantity": 30, "price": 500,
+      "deliveriesLeft": 3, "escrow": 1500, "remainingSeconds": 549.5 }
+  ],
   "market": {
     "position": { "x": 50.0, "y": 50.0 }, "radius": 5.0,
     "basePrice": 20.0, "depth": 100.0, "halfLifeSeconds": 60.0, "pressure": 30.0,
@@ -162,6 +173,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 - `tokens` 是拥有的 token：携带的加出售报价中预留的。`chips` 是拥有的芯片，型号到块数，同样含出售报价中预留的，没有的型号省略。`mining` 只在采矿期间出现，`chip` 是干活的芯片型号，`remainingSeconds` 是发送时该次采矿的剩余秒数。`pools` 的位置和半径整局不变，`reserve` 是剩余储量。
 - `market` 是收购点；没有收购点的地图省略它。`basePrice`、`depth`、`halfLifeSeconds` 是定价参数，`pressure` 是发送时的近期卖出压力。`chips` 是出售的芯片型号，按从差到好排列，`price` 是固定价格，`tokensPerJob` 是每次采矿的产量。客户端可以按收到时刻起经过的时间推算当前单价，只用于显示，成交以服务端为准。
 - `speech` 是这个连接可见的最近 50 句，按先后排列：所有当众说的话，加上 `view_as` 所选居民发出或收到的私聊；没选居民时没有私聊。`time` 是开局以来的游戏秒数，`to` 只在私聊时出现，`listeners` 是听到的居民（不含说话人）。居民本人只从感知中拿到自己听到的。
+- `offers`、`contractProposals`、`contracts` 是 `view_as` 所选居民参与的待答复报价、待答复合约提议和生效的合约，按先后排列；和私聊一样，没选居民时为空，别人的交易不发给这个连接。报价的 `side` 为 `sell` 时发件人卖、为 `buy` 时发件人买，`price` 是整批总价；合约的 `price` 是每次交付的价款，`escrow` 是托管的余款（`price × deliveriesLeft`），`remainingSeconds` 是发送时距到期的秒数。页面还不能发起或答复它们。
 - `remainingSeconds` 是发送时的剩余秒数，结束后为 0。状态只在变化时推送，客户端应以收到时刻为起点本地倒计时，到点后以服务端的 `ended` 为准。
 
 协议在客户端 `packages/protocol` 中还有一份 TypeScript 定义。改动时两边同时修改并更新测试；不兼容的改动同时提升两边的 `PROTOCOL_VERSION`。

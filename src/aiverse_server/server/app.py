@@ -3,9 +3,9 @@
 Every connection greets with `hello` and receives the map. After that it may send operation
 primitives; when one changes the world, every greeted connection receives the new `state`.
 A connection may choose a resident to view as with `view_as`; its states then carry that
-resident's whispers, and no one else's. It may also hand a resident to a language model with
-`start_agent`, or take them back with `stop_agent`; the server's config file may override the
-model settings pages send, see `config.py`.
+resident's whispers, offers and contracts, and no one else's. It may also hand a resident to a
+language model with `start_agent`, or take them back with `stop_agent`; the server's config
+file may override the model settings pages send, see `config.py`.
 The game ends a fixed time after the app is created; every connection then receives the
 final `state`. Mining jobs and walks finish on the same clock, and are broadcast too.
 """
@@ -74,7 +74,8 @@ class Outcome:
     greeted: bool
     """Whether the sender has completed the handshake and may act."""
     viewer: str | None
-    """The resident the sender views as, whose whispers its states carry; None for nobody.
+    """The resident the sender views as, whose whispers and deals its states carry; None
+    for nobody.
     No default: every outcome must carry it on, or the connection's choice would be lost."""
     request: StartAgentMessage | StopAgentMessage | None = None
     """A request about agents, for the game to carry out and answer; see `answer_request`."""
@@ -140,8 +141,8 @@ class Outbox:
     Replies to the connection's own frames queue up in order, up to `limit`. A world
     snapshot is complete, so only the latest one waits, and it goes out after the queued
     replies. Moves by other connections, however many, therefore never grow this outbox.
-    `viewer` is the resident the connection views as, which decides the whispers in its
-    snapshots.
+    `viewer` is the resident the connection views as, which decides the whispers, offers
+    and contracts in its snapshots.
     """
 
     def __init__(self, limit: int = OUTBOX_LIMIT) -> None:
@@ -396,7 +397,7 @@ class Game:
 
     def broadcast_world(self) -> None:
         """Send the world to every greeted connection as its viewer sees it; one encoding
-        per viewer, since only the whispers differ."""
+        per viewer, since only the whispers and deals differ."""
         remaining = self.remaining()
         agents = self.agents()
         texts: dict[str | None, str] = {}

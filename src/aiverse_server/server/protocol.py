@@ -21,11 +21,13 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from ..agents.llm_brain import LLMSetting, LLMSettings
+from ..core.events import Event
 from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.chips import CHIP_MODELS
+from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, pressure_at
 from ..economy.tokens import token_total
-from ..economy.trade import reserved_items
+from ..economy.trade import PurchaseOffer, SaleOffer, reserved_items
 from ..game.actions import (
     Action,
     ActionRejected,
@@ -40,7 +42,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 11
+PROTOCOL_VERSION = 12
 
 ERROR_MAX_LENGTH = 200
 
@@ -112,9 +114,9 @@ class HelloMessage(_Message):
 
 
 class ViewAsMessage(_Message):
-    """Choose whose whispers this connection sees: the resident's, or none for None. Pages
-    send it when the player picks a resident; there is no ownership yet, so any resident
-    may be chosen."""
+    """Choose whose whispers, offers and contracts this connection sees: the resident's, or
+    none for None. Pages send it when the player picks a resident; there is no ownership yet,
+    so any resident may be chosen."""
 
     type: Literal["view_as"]
     resident_id: str | None
@@ -122,8 +124,8 @@ class ViewAsMessage(_Message):
 
 class ActionMessage(_Message):
     type: Literal["action"]
-    # Only the primitives clients can use so far; answering events and trading come with a
-    # way to show them.
+    # Only the primitives clients can use so far; pages see offers and contracts now, but
+    # making and answering them is still left to agents.
     action: ActionInput
 
 
@@ -272,6 +274,54 @@ class SpeechView(_Message):
     """Who heard it, not counting the speaker."""
 
 
+class OfferView(_Message):
+    """A trade offer waiting for an answer, see `trade.py`."""
+
+    event_id: int
+    side: Literal["buy", "sell"]
+    """`buy` when the sender offers to buy, `sell` when the sender offers to sell."""
+    from_id: str
+    to_id: str
+    item: str
+    quantity: int
+    price: int
+    """Coins for the whole lot."""
+
+
+class ContractProposalView(_Message):
+    """A contract proposal waiting for an answer, see `contracts.py`."""
+
+    event_id: int
+    from_id: str
+    to_id: str
+    supplier_id: str
+    buyer_id: str
+    item: str
+    quantity: int
+    """Items in each delivery."""
+    price: int
+    """Coins for each delivery."""
+    deliveries: int
+    duration_seconds: int
+    """How long the contract runs once accepted."""
+
+
+class ContractView(_Message):
+    """A contract in force, see `contracts.py`."""
+
+    id: int
+    supplier_id: str
+    buyer_id: str
+    item: str
+    quantity: int
+    price: int
+    deliveries_left: int
+    escrow: int
+    """The buyer's coins set aside for the deliveries left."""
+    remaining_seconds: float
+    """Time until it lapses when this was sent."""
+
+
 class MapView(_Message):
     size: float
 
@@ -292,6 +342,13 @@ class WorldView(_Message):
     speech: list[SpeechView]
     """The latest `SPEECH_VIEW_LIMIT` lines the connection may see, oldest first: every line
     spoken aloud, and the whispers to or from the resident it views as."""
+    offers: list[OfferView]
+    """Trade offers to or from the resident the connection views as, oldest first; none
+    when it views as nobody. Others' deals are private, like whispers."""
+    contract_proposals: list[ContractProposalView]
+    """Contract proposals to or from the viewed resident, oldest first."""
+    contracts: list[ContractView]
+    """Contracts in force the viewed resident is a party to, oldest first."""
 
 
 LLMSettingName = Literal["baseUrl", "apiKey", "model"]
@@ -362,10 +419,16 @@ def world_view(
     agents: Mapping[str, str | None] | None = None,
 ) -> WorldView:
     """The world as a connection viewing as resident `viewer`, or as nobody, sees it: the
-    same for everyone except the whispers, of which it sees only the viewer's. `agents` maps
+    same for everyone except whispers, offers and contracts, of which it sees only the
+    viewer's. `agents` maps
     the residents agents drive to the model each asks, None for a scripted brain."""
     driven = agents or {}
     places = ranks(world)
+    deals = [
+        event
+        for event in world.events.pending
+        if viewer is not None and viewer in (event.sender_id, event.recipient_id)
+    ]
     visible = [
         line
         for line in world.speech.entries
@@ -442,6 +505,58 @@ def world_view(
             )
             for line in visible[-SPEECH_VIEW_LIMIT:]
         ],
+        offers=[
+            _offer_view(event, event.payload)
+            for event in deals
+            if isinstance(event.payload, PurchaseOffer | SaleOffer)
+        ],
+        contract_proposals=[
+            _proposal_view(event, event.payload)
+            for event in deals
+            if isinstance(event.payload, ContractProposal)
+        ],
+        contracts=[
+            ContractView(
+                id=contract.id,
+                supplier_id=contract.supplier_id,
+                buyer_id=contract.buyer_id,
+                item=contract.kind,
+                quantity=contract.quantity,
+                price=contract.price,
+                deliveries_left=contract.deliveries_left,
+                escrow=contract.escrow,
+                remaining_seconds=max(contract.expires_at - world.time, 0.0),
+            )
+            for contract in (contracts_of(world, viewer) if viewer is not None else ())
+        ],
+    )
+
+
+def _offer_view(event: Event, offer: PurchaseOffer | SaleOffer) -> OfferView:
+    return OfferView(
+        event_id=event.id,
+        side="buy" if isinstance(offer, PurchaseOffer) else "sell",
+        from_id=event.sender_id,
+        to_id=event.recipient_id,
+        item=offer.kind,
+        quantity=offer.quantity,
+        price=offer.price,
+    )
+
+
+def _proposal_view(event: Event, proposal: ContractProposal) -> ContractProposalView:
+    supplier_id, buyer_id = proposal.parties(event)
+    return ContractProposalView(
+        event_id=event.id,
+        from_id=event.sender_id,
+        to_id=event.recipient_id,
+        supplier_id=supplier_id,
+        buyer_id=buyer_id,
+        item=proposal.kind,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        deliveries=proposal.deliveries,
+        duration_seconds=proposal.duration,
     )
 
 

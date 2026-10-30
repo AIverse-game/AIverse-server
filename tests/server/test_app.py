@@ -21,7 +21,7 @@ from aiverse_server.economy.chips import CHIP_MODELS
 from aiverse_server.economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE
 from aiverse_server.economy.mining import MINE_SECONDS
 from aiverse_server.economy.tokens import TOKEN
-from aiverse_server.game.actions import OfferToSell, Say, perform
+from aiverse_server.game.actions import OfferToSell, ProposeContract, RespondToEvent, Say, perform
 from aiverse_server.game.layout import POOL_COUNT, STARTING_TOKENS
 from aiverse_server.game.lifecycle import GAME_DURATION
 from aiverse_server.residents.walking import WALK_SPEED
@@ -110,6 +110,9 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
                 "speech": [],
+                "offers": [],
+                "contractProposals": [],
+                "contracts": [],
             },
         }
 
@@ -773,6 +776,60 @@ def test_whispers_reach_only_pages_viewing_as_a_party(clock: FakeClock) -> None:
         assert ws.receive_json()["world"]["speech"] == [aloud, whisper]
         ws.send_text(view_as(None))
         assert ws.receive_json()["world"]["speech"] == [aloud]
+
+
+def test_states_show_only_the_viewers_offers_and_contracts() -> None:
+    rich = tuple(replace(resident, coins=1000) for resident in SPEECH_WORLD.residents)
+    world = replace(SPEECH_WORLD, residents=rich)
+    # b offers a tokens, a proposes b a contract and b signs it, then a proposes another.
+    world = perform(world, OfferToSell("b", "a", TOKEN, 5, 80))
+    world = perform(world, ProposeContract("a", "b", False, TOKEN, 10, 100, 3, 60))
+    world = perform(world, RespondToEvent("b", 2, True))
+    world = perform(replace(world, time=15), ProposeContract("b", "a", True, "MK1", 1, 200, 1, 30))
+    shown = world_view(world, 100, viewer="a").model_dump(by_alias=True, exclude_none=True)
+    assert shown["offers"] == [
+        {
+            "eventId": 1,
+            "side": "sell",
+            "fromId": "b",
+            "toId": "a",
+            "item": TOKEN,
+            "quantity": 5,
+            "price": 80,
+        }
+    ]
+    assert shown["contractProposals"] == [
+        {
+            "eventId": 3,
+            "fromId": "b",
+            "toId": "a",
+            "supplierId": "b",
+            "buyerId": "a",
+            "item": "MK1",
+            "quantity": 1,
+            "price": 200,
+            "deliveries": 1,
+            "durationSeconds": 30,
+        }
+    ]
+    assert shown["contracts"] == [
+        {
+            "id": 1,
+            "supplierId": "b",
+            "buyerId": "a",
+            "item": TOKEN,
+            "quantity": 10,
+            "price": 100,
+            "deliveriesLeft": 3,
+            "escrow": 300,
+            "remainingSeconds": 45.0,
+        }
+    ]
+    # The escrow still counts in a's public total.
+    assert resident_view(shown, "a")["coins"] == 1000
+    for outsider in ("c", None):
+        hidden = world_view(world, 100, viewer=outsider)
+        assert (hidden.offers, hidden.contract_proposals, hidden.contracts) == ([], [], [])
 
 
 def test_viewing_as_a_resident_needs_hello_and_a_resident(client: TestClient) -> None:
