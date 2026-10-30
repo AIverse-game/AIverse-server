@@ -5,7 +5,7 @@ Any provider that speaks that API will do; none is built in. The player gives it
 an API key and a model on the page, and the server's config file may override any of them,
 see `server/config.py`; `LLMSettings` carries them and `over` lays one on another.
 
-Each round is a conversation of its own: the system prompt gives the rules (`rules.py`), the
+Each round is a conversation of its own: the system prompt gives the rules (`system_prompt.py`), the
 first message the observation and a summary of the previous round, and the model then calls
 tools, sees their results and calls more, until it replies without a tool call or
 `MAX_STEPS` requests have gone by. The model's own notes carry anything further between
@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .observation import Observation, to_json
-from .rules import system_prompt
+from .system_prompt import system_prompt
 from .tools import ResidentTools, ToolCall, tool_specs
 
 MAX_STEPS = 8

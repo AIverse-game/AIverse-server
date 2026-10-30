@@ -15,9 +15,9 @@ from typing import TextIO
 
 import uvicorn
 
-from .agents.llm import ChatCompletionsBrain, LLMSettings, SettingsError, complete
+from .agents.llm_brain import ChatCompletionsBrain, LLMSettings, SettingsError, complete
 from .agents.runner import Brain, TurnRecord, record_to_json, summarize
-from .agents.scripted import ScriptedBrain
+from .agents.scripted_brain import ScriptedBrain
 from .game.layout import create_default_world
 from .game.lifecycle import GAME_DURATION
 from .server.app import create_app

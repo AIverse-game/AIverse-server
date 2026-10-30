@@ -20,7 +20,13 @@ from dataclasses import dataclass, replace
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from ..agents.llm import NO_SETTINGS, ChatCompletionsBrain, LLMSettings, SettingsError, complete
+from ..agents.llm_brain import (
+    NO_SETTINGS,
+    ChatCompletionsBrain,
+    LLMSettings,
+    SettingsError,
+    complete,
+)
 from ..agents.runner import DEFAULT_PACE, AgentRunner, Brain, Pace, TurnRecord
 from ..core.world import Note, NoteTerm, World
 from ..game.actions import Action, ActionRejected, perform

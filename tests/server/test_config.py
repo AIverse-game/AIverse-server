@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from aiverse_server.agents.llm import LLMSettings
+from aiverse_server.agents.llm_brain import LLMSettings
 from aiverse_server.server.config import Config, ConfigError, load_config
 
 EXAMPLE = Path(__file__).parents[2] / "aiverse.example.yml"

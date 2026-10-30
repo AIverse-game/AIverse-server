@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from aiverse_server.agents.llm import NO_SETTINGS, LLMSettings
+from aiverse_server.agents.llm_brain import NO_SETTINGS, LLMSettings
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap

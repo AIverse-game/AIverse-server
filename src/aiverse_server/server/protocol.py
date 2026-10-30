@@ -20,7 +20,7 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from ..agents.llm import LLMSetting, LLMSettings
+from ..agents.llm_brain import LLMSetting, LLMSettings
 from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, pressure_at

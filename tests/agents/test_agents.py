@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from aiverse_server.__main__ import parse_agent
-from aiverse_server.agents.llm import (
+from aiverse_server.agents.llm_brain import (
     ChatCompletionsBrain,
     LLMError,
     LLMSettings,
@@ -16,7 +16,7 @@ from aiverse_server.agents.llm import (
 )
 from aiverse_server.agents.observation import Observation, observe, to_json
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord, record_to_json
-from aiverse_server.agents.scripted import ScriptedBrain
+from aiverse_server.agents.scripted_brain import ScriptedBrain
 from aiverse_server.agents.tools import TOOLS, ResidentTools, tool_specs
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
 from aiverse_server.economy.chips import CHIP_MODELS

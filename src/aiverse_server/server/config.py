@@ -29,7 +29,7 @@ from pydantic import (
     model_validator,
 )
 
-from ..agents.llm import LLMSettings
+from ..agents.llm_brain import LLMSettings
 
 Setting = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
