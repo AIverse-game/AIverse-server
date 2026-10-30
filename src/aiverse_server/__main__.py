@@ -1,36 +1,38 @@
 """Run the server: `uv run aiverse-server [--host HOST] [--port PORT] [--duration SECONDS]
-[--seed N] [--agent RESIDENT=BRAIN ...] [--agent-log FILE]`.
+[--seed N] [--config FILE] [--agent RESIDENT=BRAIN ...] [--agent-log FILE]`.
 
-`--agent r1=scripted` drives resident r1 with the fixed-plan bot, `--agent
-r2=openrouter` or `--agent r2=openrouter:MODEL` with a model on OpenRouter, whose API key is
-read from the environment variable `OPENROUTER_API_KEY`. Residents without an agent are left
-to the pages."""
+`--agent r1=scripted` drives resident r1 with the fixed-plan bot, `--agent r2=llm` or
+`--agent r2=llm:MODEL` with a language model, whose base URL and API key, and model when
+not given, come from the overrides in the config file, see `server/config.py`. Residents
+without an agent are left to the pages, which may hand them to a model too."""
 
 import argparse
 import logging
 import math
-import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import TextIO
 
 import uvicorn
 
-from .agents.openrouter import DEFAULT_MODEL, OpenRouterBrain
+from .agents.llm import ChatCompletionsBrain, LLMSettings, SettingsError, complete
 from .agents.runner import Brain, TurnRecord, record_to_json, summarize
 from .agents.scripted import ScriptedBrain
 from .game.layout import create_default_world
 from .game.lifecycle import GAME_DURATION
 from .server.app import create_app
+from .server.config import Config, ConfigError, load_config
 
-API_KEY_VARIABLE = "OPENROUTER_API_KEY"
+DEFAULT_CONFIG = Path("aiverse.yml")
+"""Read when present and no `--config` is given."""
 
 
 def parse_agent(spec: str) -> tuple[str, str, str | None]:
-    """`RESIDENT=scripted` or `RESIDENT=openrouter[:MODEL]` as (resident, brain, model)."""
+    """`RESIDENT=scripted` or `RESIDENT=llm[:MODEL]` as (resident, brain, model)."""
     resident_id, sep, brain = spec.partition("=")
     kind, _, model = brain.partition(":")
-    if not sep or not resident_id or kind not in ("scripted", "openrouter"):
-        raise ValueError(f"expected RESIDENT=scripted or RESIDENT=openrouter[:MODEL], got {spec!r}")
+    if not sep or not resident_id or kind not in ("scripted", "llm"):
+        raise ValueError(f"expected RESIDENT=scripted or RESIDENT=llm[:MODEL], got {spec!r}")
     if kind == "scripted" and model:
         raise ValueError(f"the scripted brain takes no model: {spec!r}")
     return resident_id, kind, model or None
@@ -54,12 +56,19 @@ def main() -> None:
         help="seed for where the token pools go (default: different every game)",
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help=f"YAML config file (default {DEFAULT_CONFIG} when present)",
+    )
+    parser.add_argument(
         "--agent",
         action="append",
         default=[],
         metavar="RESIDENT=BRAIN",
-        help="drive a resident with an agent: scripted, or openrouter[:MODEL] "
-        f"(default model {DEFAULT_MODEL}; needs {API_KEY_VARIABLE}); may be repeated",
+        help="drive a resident with an agent: scripted, or llm[:MODEL] with the base URL and "
+        "API key from the config file; may be repeated",
     )
     parser.add_argument(
         "--agent-log",
@@ -70,6 +79,14 @@ def main() -> None:
     args = parser.parse_args()
     if not (math.isfinite(args.duration) and args.duration > 0):
         parser.error("--duration must be a positive number of seconds")
+    config_path: Path | None = args.config
+    if config_path is None and DEFAULT_CONFIG.is_file():
+        config_path = DEFAULT_CONFIG
+    try:
+        config = load_config(config_path) if config_path is not None else Config()
+    except ConfigError as error:
+        parser.error(str(error))
+    override = config.llm_override()
     world = create_default_world(args.seed)
     resident_ids = {resident.id for resident in world.residents}
     agents: dict[str, Brain] = {}
@@ -87,14 +104,26 @@ def main() -> None:
         if kind == "scripted":
             agents[resident_id] = ScriptedBrain(seed=args.seed)
         else:
-            api_key = os.environ.get(API_KEY_VARIABLE, "").strip()
-            if not api_key:
-                parser.error(f"set {API_KEY_VARIABLE} to use an OpenRouter agent")
-            agents[resident_id] = OpenRouterBrain(api_key, model or DEFAULT_MODEL)
+            try:
+                settings = complete(override.over(LLMSettings(model=model)))
+            except SettingsError as error:
+                parser.error(
+                    f"{spec}: {error.message}; set them under llm.override in the config file, "
+                    "or the model as RESIDENT=llm:MODEL"
+                )
+            agents[resident_id] = ChatCompletionsBrain(*settings)
     log_file = open(args.agent_log, "a", encoding="utf-8") if args.agent_log else None  # noqa: SIM115
-    if agents:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
-    app = create_app(world, duration=args.duration, agents=agents, record=_recorder(log_file))
+    # Pages may start agents at any time, so their rounds are always shown.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # Its request lines carry the base URL, which a player may have put credentials in.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    app = create_app(
+        world,
+        duration=args.duration,
+        agents=agents,
+        record=_recorder(log_file),
+        llm_override=override,
+    )
     try:
         uvicorn.run(app, host=args.host, port=args.port)
     finally:

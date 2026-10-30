@@ -5,6 +5,7 @@ PROTOCOL_VERSION on incompatible changes.
 """
 
 import json
+from collections.abc import Mapping
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -13,11 +14,13 @@ from pydantic import (
     Field,
     StrictFloat,
     StrictInt,
+    StringConstraints,
     TypeAdapter,
     ValidationError,
 )
 from pydantic.alias_generators import to_camel
 
+from ..agents.llm import LLMSetting, LLMSettings
 from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, pressure_at
@@ -34,10 +37,10 @@ from ..game.actions import (
     Say,
     SellTokens,
 )
-from ..game.lifecycle import ranks, total_coins
+from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 10
+PROTOCOL_VERSION = 11
 
 ERROR_MAX_LENGTH = 200
 
@@ -124,7 +127,43 @@ class ActionMessage(_Message):
     action: ActionInput
 
 
-ClientMessage = Annotated[HelloMessage | ViewAsMessage | ActionMessage, Field(discriminator="type")]
+# Long enough for any real URL, key or model name; a bound so one frame cannot pin much memory.
+SETTING_MAX_LENGTH = 2048
+
+SettingInput = Annotated[
+    str, StringConstraints(strip_whitespace=True, max_length=SETTING_MAX_LENGTH)
+]
+
+
+class LLMSettingsInput(_Message):
+    """What the player filled in; blank or left out means not given, which is fine for those
+    the server overrides."""
+
+    base_url: SettingInput | None = None
+    api_key: SettingInput | None = Field(default=None, repr=False)
+    model: SettingInput | None = None
+
+
+class StartAgentMessage(_Message):
+    """Hand the resident to a language model with these settings, replacing any agent driving
+    them. There is no ownership yet, so any resident may be chosen."""
+
+    type: Literal["start_agent"]
+    resident_id: str
+    llm: LLMSettingsInput
+
+
+class StopAgentMessage(_Message):
+    """Stop the agent driving the resident, if any, leaving them to the pages."""
+
+    type: Literal["stop_agent"]
+    resident_id: str
+
+
+ClientMessage = Annotated[
+    HelloMessage | ViewAsMessage | ActionMessage | StartAgentMessage | StopAgentMessage,
+    Field(discriminator="type"),
+]
 
 _client_message: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
 
@@ -153,6 +192,13 @@ class WalkingView(_Message):
     """Time left until arrival when this was sent."""
 
 
+class AgentView(_Message):
+    """Present on a resident an agent drives."""
+
+    model: str | None = None
+    """The language model asking, as the server calls it; left out for a scripted brain."""
+
+
 class ResidentView(_Message):
     id: str
     name: str
@@ -174,6 +220,8 @@ class ResidentView(_Message):
     walking: WalkingView | None = None
     """Present while the resident is walking; they head straight for `target` at a steady
     pace and arrive after `remaining_seconds`."""
+    agent: AgentView | None = None
+    """Present while an agent drives the resident rather than the pages."""
 
 
 class PoolView(_Message):
@@ -245,9 +293,21 @@ class WorldView(_Message):
     spoken aloud, and the whispers to or from the resident it views as."""
 
 
+LLMSettingName = Literal["baseUrl", "apiKey", "model"]
+
+_SETTING_NAMES: dict[LLMSetting, LLMSettingName] = {
+    "base_url": "baseUrl",
+    "api_key": "apiKey",
+    "model": "model",
+}
+
+
 class WelcomeMessage(_Message):
     type: Literal["welcome"] = "welcome"
     protocol_version: int = PROTOCOL_VERSION
+    llm_overrides: list[LLMSettingName] = []
+    """Language model settings the server's config fixes for every agent, so pages need not
+    ask for them; only which ones, never their values."""
 
 
 class StateMessage(_Message):
@@ -265,6 +325,21 @@ class ActionResultMessage(_Message):
     message: str | None = Field(default=None, max_length=ERROR_MAX_LENGTH)
 
 
+AgentRejectionCode = GameErrorCode | Literal["missing_llm_setting", "invalid_llm_setting"]
+
+
+class AgentResultMessage(_Message):
+    """Reply to the sender's `start_agent` or `stop_agent` for `resident_id`. On success every
+    connection receives a `state` showing who drives the resident; `code` and `message` are
+    present only on rejection."""
+
+    type: Literal["agent_result"] = "agent_result"
+    resident_id: str
+    ok: bool
+    code: AgentRejectionCode | None = None
+    message: str | None = Field(default=None, max_length=ERROR_MAX_LENGTH)
+
+
 ErrorCode = Literal["bad_message", "protocol_mismatch"]
 
 
@@ -274,12 +349,21 @@ class ErrorMessage(_Message):
     message: str = Field(max_length=ERROR_MAX_LENGTH)
 
 
-ServerMessage = WelcomeMessage | StateMessage | ActionResultMessage | ErrorMessage
+ServerMessage = (
+    WelcomeMessage | StateMessage | ActionResultMessage | AgentResultMessage | ErrorMessage
+)
 
 
-def world_view(world: World, remaining_seconds: float, viewer: str | None = None) -> WorldView:
+def world_view(
+    world: World,
+    remaining_seconds: float,
+    viewer: str | None = None,
+    agents: Mapping[str, str | None] | None = None,
+) -> WorldView:
     """The world as a connection viewing as resident `viewer`, or as nobody, sees it: the
-    same for everyone except the whispers, of which it sees only the viewer's."""
+    same for everyone except the whispers, of which it sees only the viewer's. `agents` maps
+    the residents agents drive to the model each asks, None for a scripted brain."""
+    driven = agents or {}
     places = ranks(world)
     visible = [
         line
@@ -322,6 +406,7 @@ def world_view(world: World, remaining_seconds: float, viewer: str | None = None
                     target=_position_view(resident.walking.target),
                     remaining_seconds=max(resident.walking.arrives_at - world.time, 0.0),
                 ),
+                agent=AgentView(model=driven[resident.id]) if resident.id in driven else None,
             )
             for resident in world.residents
         ],
@@ -391,6 +476,21 @@ def to_action(message: ActionMessage) -> Action:
             return Say(resident_id=action.resident_id, text=action.text, to=action.to)
 
 
+def to_llm_settings(message: StartAgentMessage) -> LLMSettings:
+    """The settings the player gave, blanks left out."""
+    chosen = message.llm
+    return LLMSettings(
+        base_url=chosen.base_url or None,
+        api_key=chosen.api_key or None,
+        model=chosen.model or None,
+    )
+
+
+def setting_names(settings: LLMSettings) -> list[LLMSettingName]:
+    """The settings given, as the protocol names them."""
+    return [_SETTING_NAMES[name] for name in settings.given()]
+
+
 def encode(message: ServerMessage) -> str:
     # Optional fields are left out rather than sent as null.
     return message.model_dump_json(by_alias=True, exclude_none=True)
@@ -406,6 +506,17 @@ def bad_message(detail: str) -> ErrorMessage:
     return ErrorMessage(code="bad_message", message=_truncate(detail))
 
 
+def agent_result(
+    resident_id: str, code: AgentRejectionCode | None = None, message: str = ""
+) -> AgentResultMessage:
+    """Success without a code, a rejection with one."""
+    if code is None:
+        return AgentResultMessage(resident_id=resident_id, ok=True)
+    return AgentResultMessage(
+        resident_id=resident_id, ok=False, code=code, message=_truncate(message)
+    )
+
+
 def action_rejected(rejection: ActionRejected) -> ActionResultMessage:
     # The message may echo client input, such as an unknown resident id, so bound it.
     return ActionResultMessage(ok=False, code=rejection.code, message=_truncate(rejection.message))
@@ -413,7 +524,14 @@ def action_rejected(rejection: ActionRejected) -> ActionResultMessage:
 
 def parse_client_message(
     text: str,
-) -> HelloMessage | ViewAsMessage | ActionMessage | ErrorMessage:
+) -> (
+    HelloMessage
+    | ViewAsMessage
+    | ActionMessage
+    | StartAgentMessage
+    | StopAgentMessage
+    | ErrorMessage
+):
     try:
         data = json.loads(text)
     except (ValueError, RecursionError):
@@ -422,8 +540,9 @@ def parse_client_message(
     try:
         return _client_message.validate_python(data)
     except ValidationError as error:
+        # Without the input: an API key must never come back, even in an error.
         issues = "; ".join(
             f"{'.'.join(str(part) for part in issue['loc']) or '(root)'}: {issue['msg']}"
-            for issue in error.errors()
+            for issue in error.errors(include_input=False)
         )
         return bad_message(issues)

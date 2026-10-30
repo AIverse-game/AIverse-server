@@ -74,7 +74,11 @@ def client(clock: FakeClock) -> TestClient:
 def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
     with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps(HELLO))
-        assert ws.receive_json() == {"type": "welcome", "protocolVersion": PROTOCOL_VERSION}
+        assert ws.receive_json() == {
+            "type": "welcome",
+            "protocolVersion": PROTOCOL_VERSION,
+            "llmOverrides": [],
+        }
         assert ws.receive_json() == {
             "type": "state",
             "world": {

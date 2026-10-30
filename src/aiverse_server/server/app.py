@@ -3,44 +3,58 @@
 Every connection greets with `hello` and receives the map. After that it may send operation
 primitives; when one changes the world, every greeted connection receives the new `state`.
 A connection may choose a resident to view as with `view_as`; its states then carry that
-resident's whispers, and no one else's.
+resident's whispers, and no one else's. It may also hand a resident to a language model with
+`start_agent`, or take them back with `stop_agent`; the server's config file may override the
+model settings pages send, see `config.py`.
 The game ends a fixed time after the app is created; every connection then receives the
 final `state`. Mining jobs and walks finish on the same clock, and are broadcast too.
 """
 
 import asyncio
+import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, replace
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+from ..agents.llm import NO_SETTINGS, ChatCompletionsBrain, LLMSettings, SettingsError, complete
 from ..agents.runner import DEFAULT_PACE, AgentRunner, Brain, Pace, TurnRecord
 from ..core.world import Note, NoteTerm, World
 from ..game.actions import Action, ActionRejected, perform
 from ..game.clock import next_due, settle_due
 from ..game.layout import create_default_world
-from ..game.lifecycle import GAME_DURATION, end_game
+from ..game.lifecycle import GAME_DURATION, GameError, check_can_act, end_game
 from ..residents.memory import forget, remember
 from ..residents.perception import Perception, begin_turn
 from .protocol import (
     PROTOCOL_VERSION,
     ActionResultMessage,
+    AgentRejectionCode,
+    AgentResultMessage,
     ErrorMessage,
     HelloMessage,
+    LLMSettingName,
     ServerMessage,
+    StartAgentMessage,
     StateMessage,
+    StopAgentMessage,
     ViewAsMessage,
     WelcomeMessage,
     action_rejected,
+    agent_result,
     bad_message,
     encode,
     parse_client_message,
+    setting_names,
     to_action,
+    to_llm_settings,
     world_view,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -56,6 +70,8 @@ class Outcome:
     viewer: str | None
     """The resident the sender views as, whose whispers its states carry; None for nobody.
     No default: every outcome must carry it on, or the connection's choice would be lost."""
+    request: StartAgentMessage | StopAgentMessage | None = None
+    """A request about agents, for the game to carry out and answer; see `answer_request`."""
 
 
 def handle_text(
@@ -64,10 +80,13 @@ def handle_text(
     greeted: bool,
     remaining_seconds: float,
     viewer: str | None = None,
+    agents: Mapping[str, str | None] | None = None,
+    llm_overrides: Sequence[LLMSettingName] = (),
 ) -> Outcome:
     """Handles one client frame. Errors leave the connection open and the world unchanged.
-    `remaining_seconds` is the game time left, and `viewer` the resident the sender views as,
-    for the states that answer `hello` and `view_as`."""
+    `remaining_seconds` is the game time left, `viewer` the resident the sender views as and
+    `agents` the residents agents drive, for the states that answer `hello` and `view_as`;
+    `llm_overrides` the model settings the server fixes, for the welcome."""
     message = parse_client_message(text)
     if isinstance(message, ErrorMessage):
         return Outcome([message], world, greeted, viewer)
@@ -77,16 +96,19 @@ def handle_text(
                 code="protocol_mismatch", message=f"server speaks protocol {PROTOCOL_VERSION}"
             )
             return Outcome([mismatch], world, greeted, viewer)
-        state = StateMessage(world=world_view(world, remaining_seconds, viewer))
-        return Outcome([WelcomeMessage(), state], world, True, viewer)
+        state = StateMessage(world=world_view(world, remaining_seconds, viewer, agents))
+        welcome = WelcomeMessage(llm_overrides=list(llm_overrides))
+        return Outcome([welcome, state], world, True, viewer)
     if not greeted:
         return Outcome([bad_message("send hello before anything else")], world, greeted, viewer)
     if isinstance(message, ViewAsMessage):
         chosen = message.resident_id
         if chosen is not None and all(resident.id != chosen for resident in world.residents):
             return Outcome([bad_message(f"no resident with id {chosen!r}")], world, greeted, viewer)
-        state = StateMessage(world=world_view(world, remaining_seconds, chosen))
+        state = StateMessage(world=world_view(world, remaining_seconds, chosen, agents))
         return Outcome([state], world, greeted, chosen)
+    if isinstance(message, StartAgentMessage | StopAgentMessage):
+        return Outcome([], world, greeted, viewer, message)
     try:
         after = perform(world, to_action(message))
     except ActionRejected as rejection:
@@ -146,8 +168,28 @@ class Outbox:
             await self._ready.wait()
 
 
+class AgentRejected(Exception):
+    def __init__(self, code: AgentRejectionCode, message: str) -> None:
+        super().__init__(message)
+        self.code: AgentRejectionCode = code
+        self.message = message
+
+
+LLMBrainFactory = Callable[[str, str, str], Brain]
+"""Makes the brain for a base URL, API key and model."""
+
+
+@dataclass(frozen=True)
+class _Agent:
+    brain: Brain
+    model: str | None
+    """The language model the brain asks; None for a scripted one."""
+    task: asyncio.Task[None]
+
+
 class Game:
-    """The world all connections share, its clock, and the outboxes of those that said hello.
+    """The world all connections share, its clock, the outboxes of those that said hello, and
+    the agents driving residents.
 
     A broadcast reaches every outbox at once, so no connection can see an older state
     after a newer one.
@@ -158,16 +200,30 @@ class Game:
         world: World,
         duration: float = GAME_DURATION,
         clock: Callable[[], float] = time.monotonic,
+        pace: Pace = DEFAULT_PACE,
+        record: Callable[[TurnRecord], None] | None = None,
+        llm_override: LLMSettings = NO_SETTINGS,
+        llm_brain: LLMBrainFactory = ChatCompletionsBrain,
     ) -> None:
         self.world = world
+        self.llm_override = llm_override
+        """Model settings from the config file, laid over whatever a page or the command line
+        chose."""
         self._clock = clock
         self._start = clock()
         self._duration = duration
+        self._pace = pace
+        self._record = record
+        self._llm_brain = llm_brain
         self._outboxes: set[Outbox] = set()
         # Set on every broadcast: a new job or walk may end before what the timer waits for.
         self._changed = asyncio.Event()
         # One per agent waiting for something to happen, see `agents/runner.py`.
         self._subscribers: set[asyncio.Event] = set()
+        self._agents: dict[str, _Agent] = {}
+        # Model requests each resident's brains have made this game, so the limit holds per
+        # resident however often their agent is restarted.
+        self._llm_requests: dict[str, int] = {}
 
     def remaining(self) -> float:
         return max(self._duration - (self._clock() - self._start), 0.0)
@@ -237,6 +293,79 @@ class Game:
         self.tick()
         self.world = forget(self.world, resident_id, note_id)
 
+    def agents(self) -> dict[str, str | None]:
+        """The residents agents drive, to the model each asks, None for a scripted brain."""
+        return {resident_id: agent.model for resident_id, agent in self._agents.items()}
+
+    def start_agent(self, resident_id: str, brain: Brain, model: str | None = None) -> None:
+        """Drive the resident with `brain` from now on, replacing any agent driving them, and
+        tell everyone. Needs a running event loop. Raises `AgentRejected` for a resident who
+        cannot act."""
+        self._check_can_act(resident_id)
+        self._cancel(resident_id)
+        if isinstance(brain, ChatCompletionsBrain):
+            brain.requests = max(brain.requests, self._llm_requests.get(resident_id, 0))
+        runner = AgentRunner(self, resident_id, brain, self._pace, self._record)
+        task = asyncio.get_running_loop().create_task(runner.run())
+        agent = _Agent(brain, model, task)
+        self._agents[resident_id] = agent
+        task.add_done_callback(lambda _: self._agent_ended(resident_id, agent))
+        self.broadcast_world()
+
+    def start_llm_agent(self, resident_id: str, chosen: LLMSettings) -> None:
+        """Drive the resident with a language model: the config file's settings where it gives
+        them, `chosen` for the rest. Raises `AgentRejected` for a resident who cannot act, or
+        settings missing or malformed after that."""
+        self._check_can_act(resident_id)
+        try:
+            base_url, api_key, model = complete(self.llm_override.over(chosen))
+        except SettingsError as error:
+            raise AgentRejected(error.code, error.message) from None
+        self.start_agent(resident_id, self._llm_brain(base_url, api_key, model), model)
+
+    def stop_agent(self, resident_id: str) -> None:
+        """Stop the agent driving the resident, if any, and tell everyone. Raises
+        `AgentRejected` for an unknown resident."""
+        if all(resident.id != resident_id for resident in self.world.residents):
+            raise AgentRejected("unknown_resident", f"no resident with id {resident_id!r}")
+        if self._cancel(resident_id):
+            self.broadcast_world()
+
+    async def stop_agents(self) -> None:
+        """Stop every agent and wait until they have let go of what they hold."""
+        tasks = [agent.task for agent in self._agents.values()]
+        for resident_id in list(self._agents):
+            self._cancel(resident_id)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _check_can_act(self, resident_id: str) -> None:
+        self.tick()
+        try:
+            check_can_act(self.world, resident_id)
+        except GameError as error:
+            raise AgentRejected(error.code, error.message) from None
+
+    def _cancel(self, resident_id: str) -> bool:
+        agent = self._agents.pop(resident_id, None)
+        if agent is None:
+            return False
+        self._count_requests(resident_id, agent)
+        agent.task.cancel()
+        return True
+
+    def _count_requests(self, resident_id: str, agent: _Agent) -> None:
+        if isinstance(agent.brain, ChatCompletionsBrain):
+            self._llm_requests[resident_id] = agent.brain.requests
+
+    def _agent_ended(self, resident_id: str, agent: _Agent) -> None:
+        if not agent.task.cancelled() and agent.task.exception() is not None:
+            logger.error("agent for %s stopped", resident_id, exc_info=agent.task.exception())
+        # Still listed only if its loop stopped by itself: the resident left or the game ended.
+        if self._agents.get(resident_id) is agent:
+            del self._agents[resident_id]
+            self._count_requests(resident_id, agent)
+            self.broadcast_world()
+
     def _until_next(self) -> float:
         """Seconds until the game ends or the next mining job or walk does, whichever comes
         first."""
@@ -263,15 +392,27 @@ class Game:
         """Send the world to every greeted connection as its viewer sees it; one encoding
         per viewer, since only the whispers differ."""
         remaining = self.remaining()
+        agents = self.agents()
         texts: dict[str | None, str] = {}
         for outbox in self._outboxes:
             if outbox.viewer not in texts:
-                view = world_view(self.world, remaining, outbox.viewer)
+                view = world_view(self.world, remaining, outbox.viewer, agents)
                 texts[outbox.viewer] = encode(StateMessage(world=view))
             outbox.put_state(texts[outbox.viewer])
         self._changed.set()
         for changed in self._subscribers:
             changed.set()
+
+
+def answer_request(game: Game, request: StartAgentMessage | StopAgentMessage) -> AgentResultMessage:
+    try:
+        if isinstance(request, StartAgentMessage):
+            game.start_llm_agent(request.resident_id, to_llm_settings(request))
+        else:
+            game.stop_agent(request.resident_id)
+    except AgentRejected as rejection:
+        return agent_result(request.resident_id, rejection.code, rejection.message)
+    return agent_result(request.resident_id)
 
 
 async def _send_all(websocket: WebSocket, outbox: Outbox) -> None:
@@ -297,7 +438,15 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
             # No await from here to the broadcast, so each frame sees and commits the
             # latest world without interleaving with other connections.
             game.tick()
-            outcome = handle_text(text, game.world, greeted, game.remaining(), outbox.viewer)
+            outcome = handle_text(
+                text,
+                game.world,
+                greeted,
+                game.remaining(),
+                outbox.viewer,
+                game.agents(),
+                setting_names(game.llm_override),
+            )
             outbox.viewer = outcome.viewer
             if outcome.greeted and not greeted:
                 game.watch(outbox)
@@ -309,6 +458,8 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                 else:
                     outbox.put(encode(reply))
             game.commit(outcome.world)
+            if outcome.request is not None:
+                outbox.put(encode(answer_request(game, outcome.request)))
     except WebSocketDisconnect:
         # The client left mid-receive; nothing else to clean up.
         return
@@ -322,29 +473,38 @@ def create_app(
     agents: Mapping[str, Brain] | None = None,
     pace: Pace = DEFAULT_PACE,
     record: Callable[[TurnRecord], None] | None = None,
+    llm_override: LLMSettings = NO_SETTINGS,
+    llm_brain: LLMBrainFactory = ChatCompletionsBrain,
 ) -> FastAPI:
     """The game starts now, when its world is created, and ends `duration` seconds later.
-    `agents` maps resident ids to the brains that drive them while the app runs, see
-    `agents/runner.py`; `record` receives every round they take. Other residents are left to
-    the pages."""
-    game = Game(world if world is not None else create_default_world(), duration, clock)
+    `agents` maps resident ids to the brains that drive them from the start, see
+    `agents/runner.py`; pages may start and stop more later, with brains from `llm_brain`
+    and settings `llm_override` lays over theirs. `record` receives every round agents
+    take. Other residents are left to the pages."""
+    game = Game(
+        world if world is not None else create_default_world(),
+        duration,
+        clock,
+        pace,
+        record,
+        llm_override,
+        llm_brain,
+    )
     unknown = set(agents or {}) - {resident.id for resident in game.world.residents}
     if unknown:
         raise ValueError(f"agents for unknown residents: {', '.join(sorted(unknown))}")
-    runners = [
-        AgentRunner(game, resident_id, brain, pace, record)
-        for resident_id, brain in (agents or {}).items()
-    ]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        tasks = [asyncio.create_task(game.run_clock())]
-        tasks += [asyncio.create_task(runner.run()) for runner in runners]
+        clock_task = asyncio.create_task(game.run_clock())
+        for resident_id, brain in (agents or {}).items():
+            model = brain.model if isinstance(brain, ChatCompletionsBrain) else None
+            game.start_agent(resident_id, brain, model)
         try:
             yield
         finally:
-            for task in tasks:
-                task.cancel()
+            clock_task.cancel()
+            await game.stop_agents()
 
     app = FastAPI(title="AIverse server", lifespan=lifespan)
 

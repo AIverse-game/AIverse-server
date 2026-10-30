@@ -12,8 +12,9 @@ happens, see decision 0003 in the client repository:
 
 Rounds start at least `Pace.interval` apart, `Pace.retry` after a brain failed, which bounds
 how often a model is asked and blunts the edge of a fast one. The loop stops when the
-resident leaves or the game ends. A brain that raises is recorded and asked again later; it
-never stops the game or other agents.
+resident leaves or the game ends, or when its task is cancelled because the agent was
+stopped; a brain holding connections is then closed. A brain that raises is recorded and
+asked again later; it never stops the game or other agents.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import math
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..game.lifecycle import GameError
 from .observation import Observation, observe, to_json
@@ -42,6 +43,13 @@ class Brain(Protocol):
         """Decide and act for one round through `tools`; returns a remark for the record,
         such as what a model said it was thinking, or None."""
         ...
+
+
+@runtime_checkable
+class Closable(Protocol):
+    """A brain holding something to let go of once it stops, such as an HTTP client."""
+
+    async def aclose(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -145,6 +153,8 @@ class AgentRunner:
                 await self._sleep(changed, started, failed, seen)
         finally:
             self.game.unsubscribe(changed)
+            if isinstance(self.brain, Closable):
+                await self.brain.aclose()
 
     async def _take_turn(self) -> bool:
         """One round; returns whether it failed. Nothing raised here stops the loop: a failure

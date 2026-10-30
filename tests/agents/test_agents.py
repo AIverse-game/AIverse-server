@@ -7,8 +7,14 @@ import httpx
 import pytest
 
 from aiverse_server.__main__ import parse_agent
+from aiverse_server.agents.llm import (
+    ChatCompletionsBrain,
+    LLMError,
+    LLMSettings,
+    SettingsError,
+    complete,
+)
 from aiverse_server.agents.observation import Observation, observe, to_json
-from aiverse_server.agents.openrouter import OPENROUTER_URL, OpenRouterBrain, OpenRouterError
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord, record_to_json
 from aiverse_server.agents.scripted import ScriptedBrain
 from aiverse_server.agents.tools import TOOLS, ResidentTools, tool_specs
@@ -381,14 +387,14 @@ def test_the_scripted_bot_earns_coins_on_the_default_map() -> None:
     asyncio.run(scenario())
 
 
-# The OpenRouter brain.
+# The language model brain.
 
 
 def _reply(message: dict[str, Any]) -> dict[str, Any]:
     return {"choices": [{"message": message}]}
 
 
-def _openrouter(replies: list[httpx.Response], requests: list[httpx.Request]) -> httpx.AsyncClient:
+def _http(replies: list[httpx.Response], requests: list[httpx.Request]) -> httpx.AsyncClient:
     def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return replies.pop(0)
@@ -396,7 +402,7 @@ def _openrouter(replies: list[httpx.Response], requests: list[httpx.Request]) ->
     return httpx.AsyncClient(transport=httpx.MockTransport(handle))
 
 
-def test_openrouter_brain_runs_the_tools_the_model_calls() -> None:
+def test_llm_brain_runs_the_tools_the_model_calls() -> None:
     async def scenario() -> None:
         game, _ = make_game()
         call = {
@@ -409,16 +415,18 @@ def test_openrouter_brain_runs_the_tools_the_model_calls() -> None:
             httpx.Response(200, json=_reply({"content": "Bought MK2, off to mine."})),
         ]
         requests: list[httpx.Request] = []
-        brain = OpenRouterBrain("secret", "nvidia/test", client=_openrouter(replies, requests))
+        brain = ChatCompletionsBrain(
+            "https://llm.example/v1/", "secret", "vendor/test", client=_http(replies, requests)
+        )
         tools = ResidentTools(game, "a")
         remark = await brain.take_turn(look(game, "a"), tools)
         assert remark == "Bought MK2, off to mine."
         assert me(game, "a").inventory.count("MK2") == 1
         assert brain.requests == 2
         first = json.loads(requests[0].content)
-        assert requests[0].url == OPENROUTER_URL
+        assert requests[0].url == "https://llm.example/v1/chat/completions"
         assert requests[0].headers["Authorization"] == "Bearer secret"
-        assert first["model"] == "nvidia/test"
+        assert first["model"] == "vendor/test"
         assert {tool["function"]["name"] for tool in first["tools"]} >= {"move_to", "mine"}
         assert "甲" in first["messages"][0]["content"]
         second = json.loads(requests[1].content)["messages"]
@@ -446,23 +454,24 @@ def test_openrouter_brain_runs_the_tools_the_model_calls() -> None:
         httpx.Response(200, json=_reply({"content": None, "tool_calls": ["oops"]})),
     ],
 )
-def test_openrouter_failures_raise_for_the_runner_to_record(response: httpx.Response) -> None:
+def test_llm_failures_raise_for_the_runner_to_record(response: httpx.Response) -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        brain = OpenRouterBrain("k", client=_openrouter([response], []))
-        with pytest.raises(OpenRouterError):
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http([response], []))
+        with pytest.raises(LLMError):
             await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
     asyncio.run(scenario())
 
 
-def test_openrouter_brain_stops_asking_at_its_request_limit() -> None:
+def test_llm_brain_stops_asking_at_its_request_limit() -> None:
     async def scenario() -> None:
         game, _ = make_game()
         call = {"id": "c", "function": {"name": "remember", "arguments": "{}"}}
         replies = [httpx.Response(200, json=_reply({"tool_calls": [call]})) for _ in range(3)]
         requests: list[httpx.Request] = []
-        brain = OpenRouterBrain("k", client=_openrouter(replies, requests), request_limit=3)
+        client = _http(replies, requests)
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=client, request_limit=3)
         tools = ResidentTools(game, "a")
         await brain.take_turn(look(game, "a"), tools)
         assert len(requests) == 3
@@ -478,8 +487,138 @@ def test_openrouter_brain_stops_asking_at_its_request_limit() -> None:
 
 def test_agents_are_named_resident_equals_brain() -> None:
     assert parse_agent("r1=scripted") == ("r1", "scripted", None)
-    assert parse_agent("r2=openrouter") == ("r2", "openrouter", None)
-    assert parse_agent("r2=openrouter:nvidia/x:free") == ("r2", "openrouter", "nvidia/x:free")
-    for bad in ("r1", "=scripted", "r1=gpt", "r1=scripted:x"):
+    assert parse_agent("r2=llm") == ("r2", "llm", None)
+    assert parse_agent("r2=llm:nvidia/x:free") == ("r2", "llm", "nvidia/x:free")
+    for bad in ("r1", "=scripted", "r1=gpt", "r1=scripted:x", "r1=openrouter"):
         with pytest.raises(ValueError):
             parse_agent(bad)
+
+
+# Model settings.
+
+
+def test_settings_given_override_those_chosen() -> None:
+    chosen = LLMSettings("http://page", "page-key", "page-model")
+    assert LLMSettings(api_key="server-key").over(chosen) == LLMSettings(
+        "http://page", "server-key", "page-model"
+    )
+    assert LLMSettings().over(chosen) == chosen
+    assert LLMSettings(model="m").given() == ("model",)
+    assert "page-key" not in repr(chosen)
+
+
+@pytest.mark.parametrize(
+    ("settings", "code"),
+    [
+        (LLMSettings(None, "k", "m"), "missing_llm_setting"),
+        (LLMSettings("http://x", None, None), "missing_llm_setting"),
+        (LLMSettings("ftp://x", "k", "m"), "invalid_llm_setting"),
+        (LLMSettings("llm.example/v1", "k", "m"), "invalid_llm_setting"),
+        (LLMSettings("http://[bad", "k", "m"), "invalid_llm_setting"),
+        (LLMSettings("http://x", "sk-secret\nmore", "m"), "invalid_llm_setting"),
+        (LLMSettings("http://x", "sk secret", "m"), "invalid_llm_setting"),
+        (LLMSettings("http://x", "sk-密钥", "m"), "invalid_llm_setting"),
+    ],
+)
+def test_incomplete_or_malformed_settings_are_refused(settings: LLMSettings, code: str) -> None:
+    with pytest.raises(SettingsError) as raised:
+        complete(settings)
+    assert raised.value.code == code
+
+
+def test_complete_settings_come_back_in_order() -> None:
+    assert complete(LLMSettings("https://x/v1", "k", "m")) == ("https://x/v1", "k", "m")
+
+
+def test_the_brain_closes_only_a_client_it_made() -> None:
+    async def scenario() -> None:
+        given = httpx.AsyncClient()
+        await ChatCompletionsBrain("http://x", "k", "m", client=given).aclose()
+        assert not given.is_closed
+        await given.aclose()
+        brain = ChatCompletionsBrain("http://x", "k", "m")
+        await brain.aclose()
+        assert brain._client.is_closed
+
+    asyncio.run(scenario())
+
+
+class ClosingBrain:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
+        return None
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def test_a_stopped_runner_closes_its_brain() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        brain = ClosingBrain()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, QUICK).run())
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert brain.closed
+
+    asyncio.run(scenario())
+
+
+def test_failures_never_carry_the_key_into_logs(caplog: pytest.LogCaptureFixture) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.LocalProtocolError(f"Illegal header value {request.headers['Authorization']}")
+
+    async def scenario() -> None:
+        game, _ = make_game()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(refuse))
+        brain = ChatCompletionsBrain("http://llm", "sk-secret", "m", client=client)
+        records: list[TurnRecord] = []
+        runner = AgentRunner(game, "a", brain, QUICK, records.append)
+        task = asyncio.create_task(runner.run())
+        while not records:
+            await asyncio.sleep(0.01)
+        task.cancel()
+        assert records[0].error == "LLMError: request failed: LocalProtocolError"
+
+    with caplog.at_level("DEBUG"):
+        asyncio.run(scenario())
+    assert "agent for a failed" in caplog.text
+    assert "sk-secret" not in caplog.text
+
+
+def test_a_provider_quoting_the_key_back_has_it_masked() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        reply = httpx.Response(401, json={"error": {"message": "bad key sk-secret"}})
+        brain = ChatCompletionsBrain("http://llm", "sk-secret", "m", client=_http([reply], []))
+        with pytest.raises(LLMError, match=r"bad key \*\*\*"):
+            await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+    asyncio.run(scenario())
+
+
+def test_a_residents_request_count_survives_restarting_their_agent() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        first = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
+        first.requests = 7
+        game.start_agent("a", first, "m")
+        second = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
+        game.start_agent("a", second, "m")
+        assert second.requests == 7
+        second.requests = 9
+        game.stop_agent("a")
+        third = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
+        game.start_agent("a", third, "m")
+        assert third.requests == 9
+        # Another resident has a count of their own.
+        other = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
+        game.start_agent("b", other, "m")
+        assert other.requests == 0
+        await game.stop_agents()
+
+    asyncio.run(scenario())
