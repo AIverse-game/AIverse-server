@@ -132,10 +132,11 @@ class OfferToSell:
 
 @dataclass(frozen=True)
 class ProposeContract:
-    """Propose a contract to `partner_id`, see `contracts.py`: each time the supplier delivers
-    `quantity` items of `kind`, the buyer pays `price` coins, up to `deliveries` times within
-    `duration` seconds of the partner accepting. The resident supplies if `supplies`, and
-    otherwise buys, their coins for every delivery set aside at once."""
+    """Propose a contract to `partner_id`, see `contracts.py`: the supplier is to deliver
+    `quantity` items of `kind` `deliveries` times within `duration` seconds of the partner
+    accepting, each delivery paying them `price` coins, staking `deposit` coins on each. The
+    resident supplies if `supplies`, and otherwise buys; their coins for every delivery,
+    deposit or payment, are set aside at once."""
 
     resident_id: str
     partner_id: str
@@ -146,12 +147,14 @@ class ProposeContract:
     """Coins for one delivery."""
     deliveries: int
     duration: int
+    deposit: int = 0
+    """Coins the supplier stakes on one delivery."""
 
 
 @dataclass(frozen=True)
 class Deliver:
-    """As the supplier, hand the buyer one delivery under a contract and be paid for it from
-    the coins they set aside, see `contracts.py`."""
+    """As the supplier, hand the buyer one delivery under a contract, be paid for it from the
+    coins they set aside and get its deposit back, see `contracts.py`."""
 
     resident_id: str
     contract_id: int
@@ -159,7 +162,8 @@ class Deliver:
 
 @dataclass(frozen=True)
 class CancelContract:
-    """As the supplier, call off a contract's remaining deliveries, see `contracts.py`."""
+    """As the supplier, call off a contract's remaining deliveries, forfeiting their deposit
+    to the buyer, see `contracts.py`."""
 
     resident_id: str
     contract_id: int
@@ -255,6 +259,7 @@ def _carry_out(world: World, action: Action) -> World:
                 action.price,
                 action.deliveries,
                 action.duration,
+                action.deposit,
             )
             try:
                 return send_event(world, action.resident_id, action.partner_id, payload)[0]

@@ -5,7 +5,8 @@ hands it, with tools bound to the resident, to the brain. Then it sleeps until o
 happens, see decision 0003 in the client repository:
 
 - the resident stops being busy: a walk or a mining job has ended;
-- while free, an offer arrives for them;
+- while free, an offer arrives for them, or a contract of theirs ends other than by their
+  own doing, such as the supplier's last delivery or the contract lapsing;
 - someone says something they hear, even while busy, since they can still answer;
 - while free, `Pace.idle` passes with nothing of the above, so a brain that chose to wait
   is asked again.
@@ -118,6 +119,8 @@ class _Attention:
 
     free: bool
     offers: frozenset[int] = field(default_factory=frozenset)
+    ended: frozenset[int] = field(default_factory=frozenset)
+    """Ids of the resident's contracts that ended other than by their own doing."""
     heard: int = 0
     """Sequence number of the latest line said by someone else in the resident's hearing."""
     done: int = 0
@@ -144,9 +147,9 @@ class AgentRunner:
         try:
             while not self._finished():
                 started = asyncio.get_running_loop().time()
-                # Offers, speech and finished jobs as of the look, so those arriving while the
-                # brain thinks still wake it, a walk that also ended meanwhile included; free
-                # or busy as the brain left the resident.
+                # Offers, speech, ended contracts and finished jobs as of the look, so those
+                # arriving while the brain thinks still wake it, a walk that also ended
+                # meanwhile included; free or busy as the brain left the resident.
                 before = self._attention()
                 failed = await self._take_turn()
                 seen = replace(before, free=self._attention().free)
@@ -211,6 +214,7 @@ class AgentRunner:
                     not seen.free
                     or current.done > seen.done
                     or current.offers - seen.offers
+                    or current.ended - seen.ended
                     or now >= idle_until
                 ):
                     return
@@ -232,6 +236,11 @@ class AgentRunner:
             free=me.walking is None and me.mining is None,
             offers=frozenset(
                 event.id for event in world.events.pending if event.recipient_id == me.id
+            ),
+            ended=frozenset(
+                end.contract.id
+                for end in world.contracts.ended
+                if me.id in (end.contract.supplier_id, end.contract.buyer_id) and end.by != me.id
             ),
             heard=max(
                 (line.seq for line in world.speech.entries if me.id in line.listeners),

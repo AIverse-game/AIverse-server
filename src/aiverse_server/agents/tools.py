@@ -116,18 +116,25 @@ class WithdrawOfferArgs(_Args):
 class ProposeContractArgs(_Args):
     partner_id: str = Field(description="Resident id you propose the contract to.")
     my_role: Literal["supplier", "buyer"] = Field(
-        description="supplier: you deliver the items and get paid; buyer: you pay for each "
-        "delivery, and all your payments are set aside now."
+        description="supplier: you deliver the items and get paid, your deposits set aside "
+        "now; buyer: you pay for each delivery, and all your payments are set aside now."
     )
     kind: str = Field(description='Item kind delivered, such as "token" or "MK1".')
     quantity: StrictInt = Field(description="Items in each delivery.")
     price: StrictInt = Field(description="Coins the buyer pays for each delivery.")
     deliveries: StrictInt = Field(
-        description=f"How many deliveries at most, 1 to {MAX_DELIVERIES}; 1 for a one-off."
+        description=f"How many deliveries the supplier owes before it ends, 1 to "
+        f"{MAX_DELIVERIES}; 1 for a one-off."
     )
     duration_seconds: StrictInt = Field(
         description=f"Seconds the contract stays in force once accepted, 1 to "
         f"{MAX_CONTRACT_SECONDS}."
+    )
+    deposit: StrictInt = Field(
+        default=0,
+        description="Coins the supplier stakes on each delivery, set aside on signing and "
+        "returned with each delivery; those for deliveries not made go to the buyer. 0, the "
+        "default, for none.",
     )
 
 
@@ -249,21 +256,21 @@ TOOLS = (
     ),
     ToolSpec(
         "propose_contract",
-        "Propose a standing deal: each time the supplier delivers the items, the buyer is "
-        "paid for automatically from coins set aside when the contract is signed. Comes into "
-        "force when the partner accepts.",
+        "Propose a standing deal: the supplier owes a number of deliveries before it ends, and "
+        "each one is paid for automatically from the buyer's coins set aside when the contract "
+        "is signed. Comes into force when the partner accepts.",
         ProposeContractArgs,
     ),
     ToolSpec(
         "deliver",
         "As a contract's supplier, hand the buyer one delivery from what you carry and be "
-        "paid its price at once.",
+        "paid its price at once, with its deposit back.",
         DeliverArgs,
     ),
     ToolSpec(
         "cancel_contract",
         "As a contract's supplier, call off its remaining deliveries; the buyer gets their "
-        "set-aside coins back.",
+        "set-aside coins back, and your deposit for those deliveries.",
         CancelContractArgs,
     ),
     ToolSpec(
@@ -329,6 +336,7 @@ class ResidentTools:
         price: int,
         deliveries: int,
         duration_seconds: int,
+        deposit: int = 0,
     ) -> ToolResult:
         return self.call(
             "propose_contract",
@@ -340,6 +348,7 @@ class ResidentTools:
                 "price": price,
                 "deliveries": deliveries,
                 "duration_seconds": duration_seconds,
+                "deposit": deposit,
             },
         )
 
@@ -399,6 +408,7 @@ class ResidentTools:
                         args.price,
                         args.deliveries,
                         args.duration_seconds,
+                        args.deposit,
                     )
                 )
             # The subclass first: a cancellation would match the delivery's arguments too.

@@ -1,21 +1,27 @@
 """Contracts: standing deals that settle future deliveries between two residents.
 
-A contract says "each time the supplier delivers 30 tokens to the buyer, the buyer pays 500
-coins, up to 4 times within the next 300 seconds". A single delivery is a contract for one.
+A contract says "the supplier delivers 30 tokens to the buyer 4 times within the next 300
+seconds, and each delivery pays them 500 coins". A single delivery is a contract for one.
 Either party proposes it with a `ContractProposal`, an event, see `events.py`, and it comes
 into force when the other accepts. The clock starts then.
 
 The buyer's side is guaranteed: on signing, their coins for every delivery are set aside in
 the contract, and each delivery pays the supplier from them at once, so a buyer cannot go
-back on the deal. A buyer who proposes sets the coins aside when proposing, as a purchase
-offer does; a supplier's proposal takes them from the buyer on acceptance, which fails and
-leaves the proposal pending when the buyer lacks them. The supplier's side is not
-guaranteed: they deliver when they choose and may cancel the rest, and the buyer only gets
-their unspent coins back.
+back on the deal. The supplier's side is guaranteed as far as their deposit goes: they may
+stake some coins on each delivery, set aside alongside the buyer's and handed back with each
+delivery. Deliveries not made when the contract lapses or the supplier cancels it, or when
+the supplier leaves the game, cost the supplier their deposit, which goes to the buyer. A
+deposit of 0, the default, binds the supplier to nothing.
+
+Each party's coins are set aside when they commit: the sender's when proposing, as an offer
+does, the recipient's on accepting, which fails and leaves the proposal pending when they
+lack them.
 
 A contract ends after its last delivery, when it lapses at `expires_at`, when the supplier
-cancels it, when either party leaves the game, or when the game ends; whatever is still set
-aside goes back to the buyer. The set-aside coins count for the buyer in the ranking.
+cancels it, when either party leaves the game, or when the game ends; the buyer gets back
+their coins still set aside, and the supplier their deposit unless forfeited as above. The
+set-aside coins count for each in the ranking. The world keeps the last few endings in
+`ContractBook.ended`, so the parties can learn how a contract ended.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -29,7 +35,12 @@ from typing import TYPE_CHECKING, Literal
 
 from ..core.events import EventPayload
 from ..core.inventory import add_coins, store_item, take_coins, take_item
-from ..core.world import Contract, ContractBook
+from ..core.world import (
+    CONTRACT_END_LIMIT,
+    Contract,
+    ContractEnd,
+    ContractEndReason,
+)
 from .trade import MAX_AMOUNT
 
 if TYPE_CHECKING:
@@ -55,7 +66,7 @@ class ContractError(Exception):
 @dataclass(frozen=True)
 class ContractProposal(EventPayload):
     """Terms the sender offers the recipient; the sender supplies if `sender_supplies`,
-    otherwise the sender buys and their coins wait set aside."""
+    otherwise the sender buys. The sender's coins, deposit or payment, wait set aside."""
 
     sender_supplies: bool
     kind: str
@@ -67,10 +78,21 @@ class ContractProposal(EventPayload):
     deliveries: int
     duration: int
     """Seconds from signing until the contract lapses."""
+    deposit: int = 0
+    """Coins the supplier stakes on each delivery."""
 
     @property
     def total_price(self) -> int:
         return self.price * self.deliveries
+
+    @property
+    def total_deposit(self) -> int:
+        return self.deposit * self.deliveries
+
+    @property
+    def sender_stake(self) -> int:
+        """Coins set aside from the sender while the proposal waits."""
+        return self.total_deposit if self.sender_supplies else self.total_price
 
     def check(self) -> None:
         """Refuse terms that cannot make a contract. They come from untrusted requests, so
@@ -89,10 +111,16 @@ class ContractProposal(EventPayload):
             # Exactly int, as for trades: True is not one delivery.
             if type(value) is not int or not 1 <= value <= most:
                 raise ContractError("invalid_contract", f"{name} must be an integer in 1..{most}")
-        if self.total_price > MAX_AMOUNT:
+        if type(self.deposit) is not int or not 0 <= self.deposit <= MAX_AMOUNT:
             raise ContractError(
-                "invalid_contract", f"price times deliveries must be at most {MAX_AMOUNT} coins"
+                "invalid_contract", f"deposit must be an integer in 0..{MAX_AMOUNT}"
             )
+        for name, total in (("price", self.total_price), ("deposit", self.total_deposit)):
+            if total > MAX_AMOUNT:
+                raise ContractError(
+                    "invalid_contract",
+                    f"{name} times deliveries must be at most {MAX_AMOUNT} coins",
+                )
 
     def parties(self, event: Event) -> tuple[str, str]:
         """Supplier and buyer."""
@@ -102,14 +130,14 @@ class ContractProposal(EventPayload):
 
     def on_send(self, world: World, event: Event) -> World:
         self.check()
-        if self.sender_supplies:
-            return world
-        return take_coins(world, event.sender_id, self.total_price)
+        return _take(world, event.sender_id, self.sender_stake)
 
     def on_accept(self, world: World, event: Event) -> World:
         supplier_id, buyer_id = self.parties(event)
         if self.sender_supplies:
             world = take_coins(world, buyer_id, self.total_price)
+        else:
+            world = _take(world, supplier_id, self.total_deposit)
         book = world.contracts
         contract = Contract(
             id=book.next_id,
@@ -121,27 +149,29 @@ class ContractProposal(EventPayload):
             deliveries_left=self.deliveries,
             signed_at=world.time,
             expires_at=world.time + self.duration,
+            deposit=self.deposit,
         )
-        return replace(world, contracts=ContractBook((*book.active, contract), book.next_id + 1))
+        return replace(
+            world,
+            contracts=replace(book, active=(*book.active, contract), next_id=book.next_id + 1),
+        )
 
     def on_decline(self, world: World, event: Event) -> World:
-        if self.sender_supplies:
-            return world
-        return add_coins(world, event.sender_id, self.total_price)
+        return _give(world, event.sender_id, self.sender_stake)
 
 
 def contract_coins(world: World, resident_id: str) -> int:
-    """Coins the resident has set aside as a buyer: in contracts in force and in proposals
-    they sent that are still waiting for an answer."""
+    """Coins the resident has set aside in contracts in force, as the buyer's payments or the
+    supplier's deposit, and in proposals they sent that are still waiting for an answer."""
     proposed = sum(
-        event.payload.total_price
+        event.payload.sender_stake
         for event in world.events.pending
-        if event.sender_id == resident_id
-        and isinstance(event.payload, ContractProposal)
-        and not event.payload.sender_supplies
+        if event.sender_id == resident_id and isinstance(event.payload, ContractProposal)
     )
     held = sum(
-        contract.escrow for contract in world.contracts.active if contract.buyer_id == resident_id
+        (contract.escrow if contract.buyer_id == resident_id else 0)
+        + (contract.deposit_held if contract.supplier_id == resident_id else 0)
+        for contract in world.contracts.active
     )
     return proposed + held
 
@@ -157,8 +187,8 @@ def contracts_of(world: World, resident_id: str) -> tuple[Contract, ...]:
 
 def deliver(world: World, resident_id: str, contract_id: int) -> World:
     """The supplier hands one delivery to the buyer and is paid for it from the coins set
-    aside; the last delivery ends the contract. Refused, changing nothing, when the
-    resident is not the supplier or lacks the items."""
+    aside, getting that delivery's deposit back too; the last delivery ends the contract.
+    Refused, changing nothing, when the resident is not the supplier or lacks the items."""
     contract = _find(world, resident_id, contract_id)
     if contract.supplier_id != resident_id:
         raise ContractError(
@@ -167,31 +197,41 @@ def deliver(world: World, resident_id: str, contract_id: int) -> World:
     world = take_item(world, resident_id, contract.kind, contract.quantity)
     world = store_item(world, contract.buyer_id, contract.kind, contract.quantity)
     world = add_coins(world, resident_id, contract.price)
+    world = _give(world, resident_id, contract.deposit)
     rest = replace(contract, deliveries_left=contract.deliveries_left - 1)
-    return _replace(world, contract, rest if rest.deliveries_left > 0 else None)
+    if rest.deliveries_left > 0:
+        return _replace(world, contract, rest)
+    return _record(_replace(world, contract, None), rest, "completed", resident_id, 0)
 
 
 def cancel_contract(world: World, resident_id: str, contract_id: int) -> World:
-    """The supplier calls off the deliveries still to come; the buyer gets their coins back.
-    The buyer cannot cancel: the supplier may already have worked towards the deal."""
+    """The supplier calls off the deliveries still to come; the buyer gets their coins back
+    and the supplier's deposit for those deliveries. The buyer cannot cancel: the supplier
+    may already have worked towards the deal."""
     contract = _find(world, resident_id, contract_id)
     if contract.supplier_id != resident_id:
         raise ContractError("not_supplier", f"only the supplier can cancel contract {contract_id}")
-    return _end(world, contract)
+    return _end(world, contract, "cancelled", resident_id)
 
 
-def end_contracts(world: World, ends: Callable[[Contract], bool]) -> World:
-    """End every contract `ends` picks, handing the buyers back what is set aside."""
+def end_contracts(
+    world: World,
+    ends: Callable[[Contract], bool],
+    reason: ContractEndReason,
+    by: str | None = None,
+) -> World:
+    """End every contract `ends` picks for `reason`, by the doing of `by` if anyone's,
+    handing back or forfeiting what is set aside as the module docstring says."""
     for contract in world.contracts.active:
         if ends(contract):
-            world = _end(world, contract)
+            world = _end(world, contract, reason, by)
     return world
 
 
 def expire_contracts(world: World) -> World:
     """End the contracts that have lapsed by `world.time`; returns `world` itself when none
     has."""
-    return end_contracts(world, lambda contract: contract.expires_at <= world.time)
+    return end_contracts(world, lambda contract: contract.expires_at <= world.time, "lapsed")
 
 
 def next_expiry(world: World) -> float | None:
@@ -211,8 +251,36 @@ def _find(world: World, resident_id: str, contract_id: int) -> Contract:
     )
 
 
-def _end(world: World, contract: Contract) -> World:
-    return _replace(add_coins(world, contract.buyer_id, contract.escrow), contract, None)
+def _end(world: World, contract: Contract, reason: ContractEndReason, by: str | None) -> World:
+    breached = reason in ("lapsed", "cancelled") or (
+        reason == "party_left" and by == contract.supplier_id
+    )
+    forfeit = contract.deposit_held if breached else 0
+    world = add_coins(world, contract.buyer_id, contract.escrow)
+    world = _give(world, contract.buyer_id, forfeit)
+    world = _give(world, contract.supplier_id, contract.deposit_held - forfeit)
+    return _record(_replace(world, contract, None), contract, reason, by, forfeit)
+
+
+def _record(
+    world: World,
+    contract: Contract,
+    reason: ContractEndReason,
+    by: str | None,
+    forfeit: int,
+) -> World:
+    book = world.contracts
+    end = ContractEnd(contract, world.time, reason, by, forfeit)
+    return replace(world, contracts=replace(book, ended=(*book.ended, end)[-CONTRACT_END_LIMIT:]))
+
+
+def _take(world: World, resident_id: str, coins: int) -> World:
+    """`take_coins`, which refuses 0, for amounts that may be 0, such as no deposit."""
+    return take_coins(world, resident_id, coins) if coins else world
+
+
+def _give(world: World, resident_id: str, coins: int) -> World:
+    return add_coins(world, resident_id, coins) if coins else world
 
 
 def _replace(world: World, contract: Contract, by: Contract | None) -> World:

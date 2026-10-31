@@ -42,7 +42,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 13
 
 ERROR_MAX_LENGTH = 200
 
@@ -304,6 +304,8 @@ class ContractProposalView(_Message):
     deliveries: int
     duration_seconds: int
     """How long the contract runs once accepted."""
+    deposit: int
+    """Coins the supplier stakes on each delivery; 0 for none."""
 
 
 class ContractView(_Message):
@@ -318,6 +320,10 @@ class ContractView(_Message):
     deliveries_left: int
     escrow: int
     """The buyer's coins set aside for the deliveries left."""
+    deposit: int
+    """Coins the supplier stakes on each delivery; 0 for none."""
+    deposit_held: int
+    """The supplier's coins set aside for the deliveries left, the buyer's if not made."""
     remaining_seconds: float
     """Time until it lapses when this was sent."""
 
@@ -525,6 +531,8 @@ def world_view(
                 price=contract.price,
                 deliveries_left=contract.deliveries_left,
                 escrow=contract.escrow,
+                deposit=contract.deposit,
+                deposit_held=contract.deposit_held,
                 remaining_seconds=max(contract.expires_at - world.time, 0.0),
             )
             for contract in (contracts_of(world, viewer) if viewer is not None else ())
@@ -557,6 +565,7 @@ def _proposal_view(event: Event, proposal: ContractProposal) -> ContractProposal
         price=proposal.price,
         deliveries=proposal.deliveries,
         duration_seconds=proposal.duration,
+        deposit=proposal.deposit,
     )
 
 

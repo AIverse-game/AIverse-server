@@ -6,8 +6,10 @@ import pytest
 from aiverse_server.core.events import accept_event, reject_event, send_event, withdraw_event
 from aiverse_server.core.inventory import InventoryError, coin_balance, list_items
 from aiverse_server.core.world import (
+    CONTRACT_END_LIMIT,
     Contract,
     ContractBook,
+    ContractEnd,
     Inventory,
     Position,
     Resident,
@@ -116,6 +118,9 @@ def test_declining_a_buyers_proposal_hands_the_coins_back(decline: object) -> No
         {"quantity": True},
         {"kind": ""},
         {"price": 10**9, "deliveries": 2},
+        {"deposit": -1},
+        {"deposit": True},
+        {"deposit": 10**9, "deliveries": 2},
     ],
 )
 def test_unworkable_terms_are_refused(changes: dict[str, Any]) -> None:
@@ -250,6 +255,105 @@ def test_coins_set_aside_still_count_for_the_buyer() -> None:
     assert total_coins(world, "a") == 2000
 
 
+# Deposits.
+
+# b stakes 100 coins on each of the 3 deliveries and has just that.
+STAKED = replace(BY_SUPPLIER, deposit=100)
+DEPOSIT_WORLD = replace(
+    WORLD, residents=(WORLD.residents[0], replace(WORLD.residents[1], coins=300))
+)
+
+
+def staked() -> World:
+    """b proposes the staked terms and a accepts: contract 1, with deposits, from time 0."""
+    world, proposal = send_event(DEPOSIT_WORLD, "b", "a", STAKED)
+    return accept_event(world, "a", proposal.id)
+
+
+def last_end(world: World) -> ContractEnd:
+    return world.contracts.ended[-1]
+
+
+def test_a_supplier_proposing_sets_the_deposit_aside_and_gets_it_back_if_declined() -> None:
+    world, proposal = send_event(DEPOSIT_WORLD, "b", "a", STAKED)
+    assert coin_balance(world, "b") == 0
+    assert contract_coins(world, "b") == total_coins(world, "b") == 300
+    assert coin_balance(reject_event(world, "a", proposal.id), "b") == 300
+
+
+def test_a_buyers_proposal_takes_the_deposit_on_acceptance_or_fails() -> None:
+    by_buyer = replace(STAKED, sender_supplies=False)
+    world, proposal = send_event(DEPOSIT_WORLD, "a", "b", by_buyer)
+    signed_world = accept_event(world, "b", proposal.id)
+    assert coin_balance(signed_world, "b") == 0
+    assert the_contract(signed_world).deposit_held == 300
+    world, proposal = send_event(WORLD, "a", "b", by_buyer)
+    with pytest.raises(InventoryError):
+        accept_event(world, "b", proposal.id)
+    assert world.events.pending == (proposal,)
+
+
+def test_each_delivery_hands_back_its_deposit() -> None:
+    world = perform(staked(), Deliver("b", 1))
+    assert coin_balance(world, "b") == 600
+    assert the_contract(world).deposit_held == 200
+    assert contract_coins(world, "b") == 200
+    for _ in range(2):
+        world = perform(world, Deliver("b", 1))
+    assert holdings(world, "b") == ({TOKEN: 10}, 1800)
+    end = last_end(world)
+    assert (end.reason, end.by, end.forfeit, end.contract.deliveries_left) == (
+        "completed",
+        "b",
+        0,
+        0,
+    )
+
+
+@pytest.mark.parametrize("ending", ["lapse", "cancel", "supplier_leaves"])
+def test_deliveries_not_made_cost_the_supplier_their_deposit(ending: str) -> None:
+    world = perform(staked(), Deliver("b", 1))
+    if ending == "lapse":
+        world = settle_due(replace(world, time=60))
+    elif ending == "cancel":
+        world = perform(world, CancelContract("b", 1))
+    else:
+        world = perform(world, LeaveGame("b"))
+    # a gets the 1000 coins left of the payments and b's 200 for the 2 deliveries not made.
+    assert coin_balance(world, "a") == 500 + 1000 + 200
+    assert coin_balance(world, "b") == 600
+    end = last_end(world)
+    reason, by = {
+        "lapse": ("lapsed", None),
+        "cancel": ("cancelled", "b"),
+        "supplier_leaves": ("party_left", "b"),
+    }[ending]
+    assert (end.reason, end.by, end.forfeit, end.contract.deliveries_left) == (reason, by, 200, 2)
+
+
+@pytest.mark.parametrize("ending", ["buyer_leaves", "game_ends"])
+def test_the_deposit_goes_back_when_the_supplier_is_not_at_fault(ending: str) -> None:
+    world = perform(staked(), Deliver("b", 1))
+    world = perform(world, LeaveGame("a")) if ending == "buyer_leaves" else end_game(world)
+    assert coin_balance(world, "a") == 1500
+    assert coin_balance(world, "b") == 800
+    assert last_end(world).forfeit == 0
+
+
+def test_the_world_keeps_only_the_latest_endings() -> None:
+    world = replace(
+        DEPOSIT_WORLD, residents=(replace(WORLD.residents[0], coins=10**6), WORLD.residents[1])
+    )
+    one_off = replace(BY_BUYER, price=1, deliveries=1)
+    for _ in range(CONTRACT_END_LIMIT + 1):
+        world, proposal = send_event(world, "a", "b", one_off)
+        world = accept_event(world, "b", proposal.id)
+        world = perform(world, CancelContract("b", the_contract(world).id))
+    ended = world.contracts.ended
+    assert len(ended) == CONTRACT_END_LIMIT
+    assert ended[0].contract.id == 2
+
+
 # Through primitives.
 
 
@@ -276,3 +380,24 @@ def test_the_world_refuses_contracts_that_cannot_be() -> None:
         ContractBook((replace(contract, expires_at=contract.signed_at),), 2)
     with pytest.raises(ValueError):
         replace(WORLD, contracts=ContractBook((replace(contract, buyer_id="b"),), 2))
+    with pytest.raises(ValueError):
+        ContractBook((replace(contract, deposit=-1),), 2)
+
+
+def test_the_world_refuses_endings_that_cannot_be() -> None:
+    world = perform(staked(), CancelContract("b", 1))
+    end = last_end(world)
+    for wrong in (
+        replace(end, forfeit=end.contract.deposit_held + 1),
+        replace(end, reason="completed"),
+        replace(end, time=-1.0),
+        replace(end, contract=replace(end.contract, id=2)),
+    ):
+        with pytest.raises(ValueError):
+            replace(world.contracts, ended=(wrong,))
+    with pytest.raises(ValueError):
+        replace(world.contracts, ended=(end, end))
+    # Whoever ended it is one of the parties, or nobody.
+    with pytest.raises(ValueError):
+        replace(world, contracts=replace(world.contracts, ended=(replace(end, by="c"),)))
+    replace(world, contracts=replace(world.contracts, ended=(replace(end, by=None),)))

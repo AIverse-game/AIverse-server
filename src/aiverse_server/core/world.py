@@ -283,9 +283,9 @@ class SpeechLog:
 
 @dataclass(frozen=True)
 class Contract:
-    """A standing deal between two residents, see `contracts.py`: each time the supplier
-    delivers `quantity` of `kind` to the buyer, the buyer pays `price` coins, up to
-    `deliveries_left` more times, until `expires_at`."""
+    """A standing deal between two residents, see `contracts.py`: the supplier is to deliver
+    `quantity` of `kind` to the buyer `deliveries_left` more times by `expires_at`, and each
+    delivery pays them `price` coins and returns `deposit` of their own."""
 
     id: int
     """Unique within a world and never reused, counting up from 1."""
@@ -300,19 +300,50 @@ class Contract:
     signed_at: float
     expires_at: float
     """Game times when the contract was agreed and when it lapses, see `World.time`."""
+    deposit: int = 0
+    """Coins the supplier stakes on one delivery, set aside with the buyer's; 0 for none."""
 
     @property
     def escrow(self) -> int:
         """Coins set aside from the buyer for the deliveries still to come."""
         return self.price * self.deliveries_left
 
+    @property
+    def deposit_held(self) -> int:
+        """Coins set aside from the supplier for the deliveries still to come."""
+        return self.deposit * self.deliveries_left
+
+
+ContractEndReason = Literal["completed", "lapsed", "cancelled", "party_left", "game_ended"]
+
+
+@dataclass(frozen=True)
+class ContractEnd:
+    """How a contract ended, see `contracts.py`."""
+
+    contract: Contract
+    """The contract as it stood when it ended; `deliveries_left` are those never made."""
+    time: float
+    reason: ContractEndReason
+    by: str | None
+    """The party whose doing ended it: the supplier for the last delivery or a cancellation,
+    the one who left; None when it lapsed or the game ended."""
+    forfeit: int
+    """The supplier's deposit paid to the buyer for the deliveries never made."""
+
+
+CONTRACT_END_LIMIT = 100
+"""Ended contracts the world keeps; older ones are dropped, so the record stays small."""
+
 
 @dataclass(frozen=True)
 class ContractBook:
-    """Contracts in force, oldest first, and the id the next one will get."""
+    """Contracts in force, oldest first, the id the next one will get, and recently ended
+    contracts in the order they ended."""
 
     active: tuple[Contract, ...] = ()
     next_id: int = 1
+    ended: tuple[ContractEnd, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.next_id) is not int or self.next_id < 1:
@@ -325,17 +356,46 @@ class ContractBook:
                     f"and below {self.next_id}"
                 )
             previous = contract.id
-            for amount in (contract.quantity, contract.price, contract.deliveries_left):
-                if type(amount) is not int or amount < 1:
-                    raise ValueError(f"contract {contract.id} has {amount!r}, must be >= 1")
-            if not contract.kind:
-                raise ValueError(f"contract {contract.id} has no item kind")
-            if not (
-                math.isfinite(contract.signed_at)
-                and math.isfinite(contract.expires_at)
-                and contract.signed_at < contract.expires_at
-            ):
-                raise ValueError(f"contract {contract.id} never lapses or lapses before signed")
+            _check_contract(contract, least_left=1)
+        if len(self.ended) > CONTRACT_END_LIMIT:
+            raise ValueError(f"{len(self.ended)} ended contracts kept, over the limit")
+        ids = [contract.id for contract in self.active]
+        last = -math.inf
+        for end in self.ended:
+            contract = end.contract
+            if type(contract.id) is not int or not 1 <= contract.id < self.next_id:
+                raise ValueError(f"ended contract id {contract.id!r} was never given out")
+            ids.append(contract.id)
+            # Only the last delivery leaves none to make.
+            _check_contract(contract, least_left=0 if end.reason == "completed" else 1)
+            if end.reason == "completed" and contract.deliveries_left != 0:
+                raise ValueError(f"contract {contract.id} completed with deliveries left")
+            if not (math.isfinite(end.time) and max(contract.signed_at, last) <= end.time):
+                raise ValueError(f"contract {contract.id} ended before signed or out of order")
+            last = end.time
+            if not 0 <= end.forfeit <= contract.deposit_held:
+                raise ValueError(f"contract {contract.id} forfeited more than its deposit")
+        if len(set(ids)) != len(ids):
+            raise ValueError("a contract is recorded twice")
+
+
+def _check_contract(contract: Contract, least_left: int) -> None:
+    for amount, least in (
+        (contract.quantity, 1),
+        (contract.price, 1),
+        (contract.deliveries_left, least_left),
+        (contract.deposit, 0),
+    ):
+        if type(amount) is not int or amount < least:
+            raise ValueError(f"contract {contract.id} has {amount!r}, must be >= {least}")
+    if not contract.kind:
+        raise ValueError(f"contract {contract.id} has no item kind")
+    if not (
+        math.isfinite(contract.signed_at)
+        and math.isfinite(contract.expires_at)
+        and contract.signed_at < contract.expires_at
+    ):
+        raise ValueError(f"contract {contract.id} never lapses or lapses before signed")
 
 
 @dataclass(frozen=True)
@@ -537,3 +597,7 @@ class World:
                 raise ValueError(f"contract {contract.id} needs two known residents")
             if self.ended or parties & left:
                 raise ValueError(f"contract {contract.id} outlives its game or a party")
+        for end in self.contracts.ended:
+            parties = {end.contract.supplier_id, end.contract.buyer_id}
+            if parties - set(ids) or len(parties) != 2 or end.by not in (*parties, None):
+                raise ValueError(f"ended contract {end.contract.id} needs two known residents")

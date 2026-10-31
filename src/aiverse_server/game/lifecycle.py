@@ -54,14 +54,17 @@ def check_can_act(world: World, resident_id: str) -> None:
 def leave_game(world: World, resident_id: str) -> World:
     """Take the resident out of the game: a mining job stops and its tokens go back to the
     pool, a walk stops where they are, their pending events are declined and their contracts
-    end, which hands back whatever offers and contracts set aside, then their items are
-    cleared. Their coins stay."""
+    end, which hands back whatever offers and contracts set aside, a supplier's deposit
+    going to the buyer, then their items are cleared. Their coins stay."""
     check_can_act(world, resident_id)
     world = cancel_mining(world, resident_id)
     world = stop_walking(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
     world = end_contracts(
-        world, lambda contract: resident_id in (contract.supplier_id, contract.buyer_id)
+        world,
+        lambda contract: resident_id in (contract.supplier_id, contract.buyer_id),
+        "party_left",
+        resident_id,
     )
     world = clear_items(world, resident_id)
     residents = tuple(
@@ -115,7 +118,7 @@ def end_game(world: World) -> World:
     for resident in world.residents:
         world = cancel_mining(world, resident.id)
         world = stop_walking(world, resident.id)
-    world = end_contracts(_settle(world, lambda event: True), lambda contract: True)
+    world = end_contracts(_settle(world, lambda event: True), lambda contract: True, "game_ended")
     return replace(world, ended=True)
 
 

@@ -62,35 +62,36 @@ llm:
 
 key 只放在服务端内存里，用来调用接口，不写进状态、控制台、`--agent-log` 或错误信息；服务商在错误信息里回显的 key 替换为 `***`。httpx 的请求日志调到 WARNING，不打印请求地址。
 
-- 每名居民一个异步循环（`agents/runner.py`）：感知 → 大脑决策一轮并调用工具 → 等待唤醒。唤醒条件：行走或采矿结束、空闲时收到报价、听到别人说话（忙碌时也唤醒）、空闲 20 秒无事。两轮开始至少相隔 3 秒，大脑出错后 10 秒。居民出局或游戏结束时停止。
+- 每名居民一个异步循环（`agents/runner.py`）：感知 → 大脑决策一轮并调用工具 → 等待唤醒。唤醒条件：行走或采矿结束、空闲时收到报价、空闲时自己的合约因别人或时间而结束、听到别人说话（忙碌时也唤醒）、空闲 20 秒无事。两轮开始至少相隔 3 秒，大脑出错后 10 秒。居民出局或游戏结束时停止。
 - 工具（`agents/tools.py`）绑定到一名居民，参数里没有“谁来做”：`move_to`、`mine`、`sell_tokens`、`buy_chip`、`say`、`offer_to_buy`、`offer_to_sell`、`respond_to_offer`、`withdraw_offer`、`propose_contract`、`deliver`、`cancel_contract`、`remember`、`forget`。`respond_to_offer` 与 `withdraw_offer` 也用来答复和撤回合约提议。不提供退出游戏。参数错误、未知工具、原语被拒绝都作为失败结果交回，世界不变。
-- 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价与合约提议，自己参与的合约，到收购点和已知矿池的距离与走路花费。
+- 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价与合约提议，自己参与的合约和最近结束的几份（结束原因、没交付的次数、赔付的押金），到收购点和已知矿池的距离与走路花费。
 - 脚本机器人（`agents/scripted_brain.py`）：买得起的最好芯片 → 最近的有储量矿池（找不到就到固定点探索）→ 采到 260 个 token 回收购点卖到剩 60 → 快结束时卖到剩 1。
 - 大模型大脑（`agents/llm_brain.py`）：系统提示是规则说明（`agents/system_prompt.py`，数值取自代码常量），用户消息是观察和上一轮的行动结果；模型每轮最多请求 8 次，每局每名居民最多 400 次（停止或更换 Agent 不重置），每次最多写 2048 token。请求失败时由循环记录，10 秒后再问。停止或更换 Agent 时关闭它的 HTTP 客户端。
 - 控制台每轮打印一行摘要；`--agent-log` 另外把完整记录（观察、工具调用与结果、模型的话、错误）写成 JSONL。
 
 ## 合约
 
-合约规定两名居民之间未来的交付与付款（`economy/contracts.py`，设计见客户端 `docs/design/contracts.md`）：供货方每交付一批 `quantity` 个 `kind`，买方付 `price` 金币，最多 `deliveries` 次（1 即一次性），签订后 `duration` 秒到期。
+合约规定两名居民之间未来的交付与付款（`economy/contracts.py`，设计见客户端 `docs/design/contracts.md`）：供货方应在签订后 `duration` 秒内交付 `deliveries` 次（1 即一次性），每次 `quantity` 个 `kind`，每次得到 `price` 金币；供货方可以为每次交付押 `deposit` 金币（默认 0）。
 
-- 任一方用原语 `ProposeContract` 发出提议（事件 `ContractProposal`），对方用 `RespondToEvent` 同意即签订，发件人可撤回。买方提议时立即预留全部货款（`price × deliveries`）；供货方提议时，买方同意时扣款，不够则拒绝且提议仍待处理。
-- 生效后货款留在合约里。供货方用 `Deliver` 交出一批物品，立即从预留中得到这一批的价款，买方不能拒付；最后一批交付后合约结束。
-- 只有供货方能 `CancelContract`，买方不能单方面取消。到期（`settle_due`）、任一方出局、游戏结束时合约终止。终止时余款退回买方。
-- 预留的货款计入买方的金币总额和排名。交付与普通原语一样，在行走或采矿中不能进行。
+- 任一方用原语 `ProposeContract` 发出提议（事件 `ContractProposal`），对方用 `RespondToEvent` 同意即签订，发件人可撤回。发件人提议时立即预留自己的一份：买方是全部货款（`price × deliveries`），供货方是全部押金（`deposit × deliveries`）；收件人的一份在同意时扣，不够则拒绝且提议仍待处理。
+- 生效后货款和押金都留在合约里。供货方用 `Deliver` 交出一批物品，立即从预留中得到这一批的价款，并拿回这一批的押金，买方不能拒付；最后一批交付后合约结束。
+- 只有供货方能 `CancelContract`，买方不能单方面取消。到期（`settle_due`）、任一方出局、游戏结束时合约终止。终止时余款退回买方；还没交付的押金在到期、供货方取消或出局时赔给买方，在买方出局或游戏结束时退回供货方。
+- 世界保留最近 100 份结束的合约（`ContractBook.ended`：结束原因、由谁造成、赔付的押金），Agent 从中得知合约怎样结束，并据此唤醒。
+- 预留的货款和押金分别计入买方和供货方的金币总额和排名。交付与普通原语一样，在行走或采矿中不能进行。
 - 页面可以在状态中看到所选居民参与的合约与提议（见下文“协议”），但还不能发起、答复、交付或取消。
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 12。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 13。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 12}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 13}` | 连接后发送；多余字段忽略 |
 | 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价与合约，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
-| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 11, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
+| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 13, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
 | 服务端 → 客户端 | `{"type": "state", "world": {...}}` | 紧跟 `welcome`；世界变化后、游戏结束时也推送给每个已握手的连接。内容见下 |
 | 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`not_enough_tokens`、`busy`、`not_at_pool`、`pool_empty`、`unknown_pool`、`not_at_market`、`invalid_quantity`、`price_too_low`、`no_chip`、`unknown_chip`、`not_enough_coins`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
 | 服务端 → 客户端 | `{"type": "agent_result", "residentId": "r1", "ok": true}` | 回应发送者对 `residentId` 的 `start_agent` 或 `stop_agent`，成功后所有连接收到新的 `state`。被拒绝时 `ok` 为 `false`，附 `code`（`unknown_resident`、`resident_left`、`game_over`，与配置文件合并后缺项的 `missing_llm_setting`，地址不是 http(s) URL 或 key 不是不含空格的可打印 ASCII 的 `invalid_llm_setting`；客户端应接受未知代码）和 `message`，不含 key |
@@ -149,11 +150,12 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
   ],
   "contractProposals": [
     { "eventId": 3, "fromId": "r3", "toId": "r1", "supplierId": "r3", "buyerId": "r1", "item": "token",
-      "quantity": 20, "price": 300, "deliveries": 1, "durationSeconds": 120 }
+      "quantity": 20, "price": 300, "deliveries": 1, "durationSeconds": 120, "deposit": 50 }
   ],
   "contracts": [
     { "id": 1, "supplierId": "r2", "buyerId": "r1", "item": "token", "quantity": 30, "price": 500,
-      "deliveriesLeft": 3, "escrow": 1500, "remainingSeconds": 549.5 }
+      "deliveriesLeft": 3, "escrow": 1500,
+      "deposit": 0, "depositHeld": 0, "remainingSeconds": 549.5 }
   ],
   "market": {
     "position": { "x": 50.0, "y": 50.0 }, "radius": 5.0,
@@ -173,7 +175,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 - `tokens` 是拥有的 token：携带的加出售报价中预留的。`chips` 是拥有的芯片，型号到块数，同样含出售报价中预留的，没有的型号省略。`mining` 只在采矿期间出现，`chip` 是干活的芯片型号，`remainingSeconds` 是发送时该次采矿的剩余秒数。`pools` 的位置和半径整局不变，`reserve` 是剩余储量。
 - `market` 是收购点；没有收购点的地图省略它。`basePrice`、`depth`、`halfLifeSeconds` 是定价参数，`pressure` 是发送时的近期卖出压力。`chips` 是出售的芯片型号，按从差到好排列，`price` 是固定价格，`tokensPerJob` 是每次采矿的产量。客户端可以按收到时刻起经过的时间推算当前单价，只用于显示，成交以服务端为准。
 - `speech` 是这个连接可见的最近 50 句，按先后排列：所有当众说的话，加上 `view_as` 所选居民发出或收到的私聊；没选居民时没有私聊。`time` 是开局以来的游戏秒数，`to` 只在私聊时出现，`listeners` 是听到的居民（不含说话人）。居民本人只从感知中拿到自己听到的。
-- `offers`、`contractProposals`、`contracts` 是 `view_as` 所选居民参与的待答复报价、待答复合约提议和生效的合约，按先后排列；和私聊一样，没选居民时为空，别人的交易不发给这个连接。报价的 `side` 为 `sell` 时发件人卖、为 `buy` 时发件人买，`price` 是整批总价；合约的 `price` 是每次交付的价款，`escrow` 是托管的余款（`price × deliveriesLeft`），`remainingSeconds` 是发送时距到期的秒数。页面还不能发起或答复它们。
+- `offers`、`contractProposals`、`contracts` 是 `view_as` 所选居民参与的待答复报价、待答复合约提议和生效的合约，按先后排列；和私聊一样，没选居民时为空，别人的交易不发给这个连接。报价的 `side` 为 `sell` 时发件人卖、为 `buy` 时发件人买，`price` 是整批总价；合约的 `price` 是每次交付的价款，`deposit` 是供货方每次的押金（0 为不押），`escrow` 是托管的余款（`price × deliveriesLeft`），`depositHeld` 是托管的押金（`deposit × deliveriesLeft`），`remainingSeconds` 是发送时距到期的秒数。页面还不能发起或答复它们。
 - `remainingSeconds` 是发送时的剩余秒数，结束后为 0。状态只在变化时推送，客户端应以收到时刻为起点本地倒计时，到点后以服务端的 `ended` 为准。
 
 协议在客户端 `packages/protocol` 中还有一份 TypeScript 定义。改动时两边同时修改并更新测试；不兼容的改动同时提升两边的 `PROTOCOL_VERSION`。

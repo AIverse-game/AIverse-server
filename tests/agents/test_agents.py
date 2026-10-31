@@ -21,7 +21,15 @@ from aiverse_server.agents.tools import TOOLS, ResidentTools, tool_specs
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
 from aiverse_server.economy.chips import CHIP_MODELS
 from aiverse_server.economy.tokens import TOKEN
-from aiverse_server.game.actions import ActionRejected, MoveTo, OfferToSell, Say
+from aiverse_server.game.actions import (
+    ActionRejected,
+    CancelContract,
+    MoveTo,
+    OfferToSell,
+    ProposeContract,
+    RespondToEvent,
+    Say,
+)
 from aiverse_server.game.clock import next_due
 from aiverse_server.game.layout import STARTING_COINS, create_default_world
 from aiverse_server.server.app import Game, create_app
@@ -161,26 +169,43 @@ def test_trading_tools_send_and_answer_offers() -> None:
 def test_contract_tools_propose_sign_deliver_and_cancel() -> None:
     game, clock = make_game()
     buyer, supplier = ResidentTools(game, "a"), ResidentTools(game, "b")
-    assert buyer.propose_contract("b", "buyer", TOKEN, 20, 300, 2, 120).ok
+    assert buyer.propose_contract("b", "buyer", TOKEN, 20, 300, 2, 120, deposit=50).ok
     proposal = look(game, "b").contract_proposals_to_me[0]
-    assert (proposal.supplier_id, proposal.buyer_id, proposal.deliveries) == ("b", "a", 2)
+    assert (proposal.supplier_id, proposal.buyer_id, proposal.deliveries, proposal.deposit) == (
+        "b",
+        "a",
+        2,
+        50,
+    )
     assert look(game, "a").me.coins_in_contracts == 600
     assert supplier.call("respond_to_offer", {"event_id": proposal.event_id, "accept": True}).ok
+    assert look(game, "b").me.coins_in_contracts == 100
     clock.now = 30
     (mine,) = look(game, "b").my_contracts
-    assert (mine.my_role, mine.partner_id, mine.escrow, mine.expires_in) == (
+    assert (mine.my_role, mine.partner_id, mine.escrow, mine.deposit_held, mine.expires_in) == (
         "supplier",
         "a",
         600,
+        100,
         90,
     )
     refused = buyer.deliver(mine.contract_id)
     assert not refused.ok and refused.code == "not_supplier"
     assert supplier.deliver(mine.contract_id).ok
-    assert me(game, "b").coins == 5300 and me(game, "a").inventory.count(TOKEN) == 120
+    assert me(game, "b").coins == 5000 - 100 + 300 + 50
+    assert me(game, "a").inventory.count(TOKEN) == 120
     assert supplier.call("cancel_contract", {"contract_id": mine.contract_id}).ok
-    assert me(game, "a").coins == 4700
-    assert look(game, "a").my_contracts == ()
+    # The payment left and the deposit for the delivery not made.
+    assert me(game, "a").coins == 5000 - 600 + 300 + 50
+    seen = look(game, "a")
+    assert seen.my_contracts == ()
+    (ended,) = seen.ended_contracts
+    assert (ended.reason, ended.my_role, ended.deliveries_missed, ended.deposit_forfeited) == (
+        "cancelled",
+        "buyer",
+        1,
+        50,
+    )
 
 
 def test_tool_specs_are_function_schemas() -> None:
@@ -287,6 +312,28 @@ def test_the_loop_wakes_for_speech_even_while_busy_and_for_offers_when_free() ->
         await _until(lambda: len(brain.seen) == 2)
         assert len(brain.seen[1].offers_to_me) == 1
         task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_a_party_when_a_contract_ends_not_by_their_doing() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        game.act(ProposeContract("a", "b", False, TOKEN, 10, 100, 2, 60, deposit=10))
+        game.act(RespondToEvent("b", 1, True))
+        buyer, supplier = Recorder(), Recorder()
+        tasks = [
+            asyncio.create_task(AgentRunner(game, "a", buyer, Pace(0, 0, 60)).run()),
+            asyncio.create_task(AgentRunner(game, "b", supplier, Pace(0, 0, 60)).run()),
+        ]
+        await _until(lambda: len(buyer.seen) == len(supplier.seen) == 1)
+        game.act(CancelContract("b", 1))
+        await _until(lambda: len(buyer.seen) == 2)
+        assert buyer.seen[1].ended_contracts[0].deposit_forfeited == 20
+        await asyncio.sleep(0.05)
+        assert len(supplier.seen) == 1, "the supplier cancelled it, nothing to wake them for"
+        for task in tasks:
+            task.cancel()
 
     asyncio.run(scenario())
 

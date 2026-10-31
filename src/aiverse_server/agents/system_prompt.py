@@ -50,26 +50,33 @@ busy.
 - You can trade with other residents: offer to buy or sell items ("token" or a chip model) \
 for coins, for the whole lot. What you offer is set aside until they accept or reject, or \
 you withdraw. Offers to you appear in offers_to_me.
-- Contracts settle future deals: "each time the supplier delivers N of an item, the buyer \
-pays P coins", for up to {MAX_DELIVERIES} deliveries (1 for a one-off) within a time you \
-choose, at most {MAX_CONTRACT_SECONDS} seconds. \
+- Contracts settle future deals: "the supplier delivers N of an item D times, and each \
+delivery pays them P coins", for 1 to {MAX_DELIVERIES} deliveries (1 for a one-off) within a \
+time you choose, at most {MAX_CONTRACT_SECONDS} seconds. \
 Either side proposes with propose_contract; it starts when the other accepts with \
-respond_to_offer. The buyer's coins for every delivery are set aside on signing, so each \
+respond_to_offer; the proposer's coins are set aside when proposing, the other's on \
+accepting. The buyer's coins for every delivery are set aside this way, so each \
 `deliver` pays the supplier at once and the buyer cannot refuse. The supplier delivers when \
-they choose, though not while walking or mining, and may cancel the rest; nothing forces \
-them to deliver. Unspent coins return to \
-the buyer when the contract ends: after the last delivery, when its time runs out, when the \
-supplier cancels, when either side leaves, or at the end of the game. Use them, for example, \
-to pay another resident for every batch of tokens they mine for you. Proposals to you appear \
-in contract_proposals_to_me, contracts in force in my_contracts.
+they choose, though not while walking or mining, and may cancel the rest. To be trusted, \
+the supplier can stake a deposit on each delivery: set aside too, handed back with each \
+delivery, and paid to the buyer for every delivery still owed when the time runs \
+out, when the supplier cancels or when the supplier leaves the game. With no deposit \
+nothing forces the supplier to deliver, so a buyer may ask for one. The buyer's unspent \
+coins return to them when the contract ends: after the last delivery, when its time runs \
+out, when the supplier cancels, when either side leaves, or at the end of the game; the \
+deposit goes back to the supplier when the buyer leaves or the game ends. Use contracts, \
+for example, to pay another resident for every batch of tokens they mine for you. \
+Proposals to you appear in contract_proposals_to_me, contracts in force in my_contracts, \
+and the last few that ended, with why, in ended_contracts.
 
 How you play
 - Each round you get an observation as JSON: your state, the market, pools you know, \
 residents near you, everyone's coins and rank, offers, what you heard, and your notes.
 - Act by calling tools; you may call several in a row. When you are done for this round, \
 reply with one short sentence about your plan and call no tool.
-- You are woken again when your walk or mining job ends, an offer reaches you, someone \
-speaks to you, or after a while with nothing happening.
+- You are woken again when your walk or mining job ends, an offer reaches you, a contract \
+of yours ends other than by your doing, someone speaks to you, or after a while with \
+nothing happening.
 - Between rounds you only remember your notes and a summary of your last round. Keep plans \
 in notes: long_term notes last the game, short_term ones {SHORT_TERM_SECONDS:g} seconds; \
 at most {NOTE_LIMITS["long_term"]} and {NOTE_LIMITS["short_term"]}, \

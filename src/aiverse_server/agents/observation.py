@@ -3,7 +3,7 @@ the resident knows of themselves and what is public.
 
 `observe` adds to the perception (`perception.py`) the resident's own coins, tokens, chips
 and what they are busy with; the offers and contract proposals waiting for them and those
-they sent, and the contracts they are party to; and every
+they sent, the contracts they are party to and the last few of theirs that ended; and every
 resident's name, coins and place, which the page shows anyway and which an agent needs to
 whisper or trade. Other residents' positions stay limited to those in sight. Distances and
 walking costs are worked out from where the resident stands, so a model need not do the
@@ -15,7 +15,7 @@ import math
 from dataclasses import asdict, dataclass
 
 from ..core.events import Event, pending_for, pending_from
-from ..core.world import Contract, Position, World
+from ..core.world import Contract, ContractEnd, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.tokens import TOKEN, walk_cost
@@ -23,6 +23,9 @@ from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_i
 from ..game.lifecycle import ranks, total_coins
 from ..residents.perception import Perception
 from ..residents.walking import walk_seconds
+
+ENDED_CONTRACTS_SHOWN = 5
+"""Ended contracts an observation lists, the latest."""
 
 
 @dataclass(frozen=True)
@@ -38,7 +41,8 @@ class Me:
     """Tokens carried, which walking and speaking spend."""
     tokens_in_offers: int
     coins_in_contracts: int
-    """Coins set aside as a buyer, in contracts in force and in proposals not yet answered."""
+    """Coins set aside as a buyer's payments or a supplier's deposits, in contracts in force
+    and in proposals not yet answered."""
     chips: dict[str, int]
     """Chips carried, model to count."""
     walking_to: Position | None
@@ -135,6 +139,8 @@ class ProposalView:
     deliveries: int
     duration_seconds: int
     """How long the contract runs once accepted."""
+    deposit: int
+    """Coins the supplier stakes on each delivery."""
 
 
 @dataclass(frozen=True)
@@ -150,6 +156,28 @@ class ContractView:
     expires_in: float
     escrow: int
     """The buyer's coins set aside for the deliveries left."""
+    deposit: int
+    """Coins the supplier stakes on each delivery."""
+    deposit_held: int
+    """The supplier's coins set aside for the deliveries left, the buyer's if not made."""
+
+
+@dataclass(frozen=True)
+class EndedContractView:
+    contract_id: int
+    my_role: str
+    partner_id: str
+    kind: str
+    quantity: int
+    price: int
+    reason: str
+    """`completed`, `lapsed`, `cancelled` (by the supplier), `party_left` or `game_ended`."""
+    deliveries_missed: int
+    """Deliveries never made."""
+    deposit_forfeited: int
+    """The supplier's deposit paid to the buyer for them."""
+    ended_ago: float
+    """Seconds since it ended."""
 
 
 @dataclass(frozen=True)
@@ -196,6 +224,8 @@ class Observation:
     contract_proposals_to_me: tuple[ProposalView, ...]
     my_contract_proposals: tuple[ProposalView, ...]
     my_contracts: tuple[ContractView, ...]
+    ended_contracts: tuple[EndedContractView, ...]
+    """The last few contracts of the resident's that ended, oldest first."""
     speech: tuple[Line, ...]
     """What was said in the resident's hearing since they last looked, their own words too."""
     activity: tuple[Happening, ...]
@@ -303,6 +333,14 @@ def observe(
             _contract(contract, resident_id, world.time)
             for contract in contracts_of(world, resident_id)
         ),
+        ended_contracts=tuple(
+            _ended(end, resident_id, world.time)
+            for end in [
+                end
+                for end in world.contracts.ended
+                if resident_id in (end.contract.supplier_id, end.contract.buyer_id)
+            ][-ENDED_CONTRACTS_SHOWN:]
+        ),
         speech=tuple(
             Line(line.time, line.speaker_id, line.text, line.to) for line in perception.speech
         ),
@@ -364,6 +402,7 @@ def _proposals(events: tuple[Event, ...]) -> tuple[ProposalView, ...]:
                 price=proposal.price,
                 deliveries=proposal.deliveries,
                 duration_seconds=proposal.duration,
+                deposit=proposal.deposit,
             )
         )
     return tuple(views)
@@ -381,6 +420,25 @@ def _contract(contract: Contract, resident_id: str, now: float) -> ContractView:
         deliveries_left=contract.deliveries_left,
         expires_in=max(contract.expires_at - now, 0.0),
         escrow=contract.escrow,
+        deposit=contract.deposit,
+        deposit_held=contract.deposit_held,
+    )
+
+
+def _ended(end: ContractEnd, resident_id: str, now: float) -> EndedContractView:
+    contract = end.contract
+    supplies = contract.supplier_id == resident_id
+    return EndedContractView(
+        contract_id=contract.id,
+        my_role="supplier" if supplies else "buyer",
+        partner_id=contract.buyer_id if supplies else contract.supplier_id,
+        kind=contract.kind,
+        quantity=contract.quantity,
+        price=contract.price,
+        reason=end.reason,
+        deliveries_missed=contract.deliveries_left,
+        deposit_forfeited=end.forfeit,
+        ended_ago=max(now - end.time, 0.0),
     )
 
 

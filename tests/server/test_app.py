@@ -783,9 +783,11 @@ def test_states_show_only_the_viewers_offers_and_contracts() -> None:
     world = replace(SPEECH_WORLD, residents=rich)
     # b offers a tokens, a proposes b a contract and b signs it, then a proposes another.
     world = perform(world, OfferToSell("b", "a", TOKEN, 5, 80))
-    world = perform(world, ProposeContract("a", "b", False, TOKEN, 10, 100, 3, 60))
+    world = perform(world, ProposeContract("a", "b", False, TOKEN, 10, 100, 3, 60, deposit=20))
     world = perform(world, RespondToEvent("b", 2, True))
-    world = perform(replace(world, time=15), ProposeContract("b", "a", True, "MK1", 1, 200, 1, 30))
+    world = perform(
+        replace(world, time=15), ProposeContract("b", "a", True, "MK1", 1, 200, 1, 30, deposit=50)
+    )
     shown = world_view(world, 100, viewer="a").model_dump(by_alias=True, exclude_none=True)
     assert shown["offers"] == [
         {
@@ -810,6 +812,7 @@ def test_states_show_only_the_viewers_offers_and_contracts() -> None:
             "price": 200,
             "deliveries": 1,
             "durationSeconds": 30,
+            "deposit": 50,
         }
     ]
     assert shown["contracts"] == [
@@ -822,11 +825,14 @@ def test_states_show_only_the_viewers_offers_and_contracts() -> None:
             "price": 100,
             "deliveriesLeft": 3,
             "escrow": 300,
+            "deposit": 20,
+            "depositHeld": 60,
             "remainingSeconds": 45.0,
         }
     ]
-    # The escrow still counts in a's public total.
+    # The escrow still counts in a's public total, b's deposits in b's.
     assert resident_view(shown, "a")["coins"] == 1000
+    assert resident_view(shown, "b")["coins"] == 1000
     for outsider in ("c", None):
         hidden = world_view(world, 100, viewer=outsider)
         assert (hidden.offers, hidden.contract_proposals, hidden.contracts) == ([], [], [])
