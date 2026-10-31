@@ -24,7 +24,7 @@
 | 包与模块 | snake_case（PEP 8），领域名词；以一个类或函数为主时取它的名字 | `residents/perception.py`、`agents/llm_brain.py` |
 | 子包 | 按领域划分，一个单词；职责见 `README.md` 的“代码结构” | `economy/`、`residents/` |
 | 启动入口 | `__main__.py` | `aiverse_server/__main__.py` |
-| 测试 | 镜像源码子包：`tests/<子包>/test_<模块>.py`；覆盖多个模块的一项功能时用 `test_<功能>.py` | `tests/economy/test_market.py`、`tests/server/test_agent_control.py` |
+| 测试 | 先分层，再镜像源码子包：`tests/<层>/<子包>/test_<模块>.py`，层是 `unit` 或 `integration`；覆盖多个模块的一项功能时用 `test_<功能>.py`；包根的模块放在层目录下 | `tests/unit/economy/test_market.py`、`tests/integration/server/test_agent_control.py`、`tests/unit/test_main.py` |
 
 测试目录不加 `__init__.py`，沿用 pytest 默认导入方式，所以**测试文件名在整个 `tests/` 中必须唯一**；重名时在名字里加上子包或功能区分。
 
@@ -50,7 +50,8 @@
 | 位置 | 内容 |
 | --- | --- |
 | `src/aiverse_server/` | 源码，按领域分子包 |
-| `tests/` | 测试，按同样的子包分组 |
+| `tests/unit/` | 单元测试，按同样的子包分组 |
+| `tests/integration/` | 集成测试，按同样的子包分组 |
 | `.agents/rules/` | 给 Agent 的工作规则：开发流程、命名与目录、测试 |
 | `.agents/skills/` | Codex 与 Claude Code 共用的 Skill |
 
@@ -58,7 +59,7 @@
 
 1. **先找已有子包**：按领域放进 `core/`、`economy/`、`residents/`、`game/`、`server/`、`agents/`；`core/` 只放世界模型与共用机制，且只依赖 `core/`。归属以 `README.md` 的“代码结构”为准。
 2. **新建子包要有理由**：已有子包的职责明显不符，且新主题会有不止一个文件时才新建，不为单个文件建子包。新建子包时同时更新 `README.md` 的“代码结构”；改变依赖方向时先记录决策。
-3. **测试跟着源码**：测试放进与源码同名的 `tests/<子包>/`。
+3. **测试先分层，再跟着源码**：按 [测试约定](testing.md) 选好层，放进该层下与源码同名的子包目录，如 `tests/unit/economy/`。同一模块的测试可以分在两层，例如 `llm_brain.py` 的设置校验在 `tests/unit/agents/test_llm_settings.py`，调用模型的大脑在 `tests/integration/agents/test_llm_brain.py`。
 4. **不进仓库的东西**：构建产物、虚拟环境、缓存、日志、本地配置与密钥，由 `.gitignore` 排除；新增此类产物时同步补忽略规则。
 
 ### 配置文件放在哪里

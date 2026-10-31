@@ -6,7 +6,7 @@ from aiverse_server.agents.llm_brain import LLMSettings
 from aiverse_server.server.config import Config, ConfigError, load_config
 
 EXAMPLE = (
-    Path(__file__).parents[2] / "src" / "aiverse_server" / "agents" / "config" / "llm.example.yml"
+    Path(__file__).parents[3] / "src" / "aiverse_server" / "agents" / "config" / "llm.example.yml"
 )
 
 

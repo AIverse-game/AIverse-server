@@ -41,4 +41,6 @@ Skill 只在适用时读取。未自动发现 Skill 时，直接读取上述文�
 ```sh
 uv sync        # 安装依赖
 make verify    # ruff、mypy、pytest
+uv run pytest tests/unit         # 只跑单元测试
+uv run pytest tests/integration  # 只跑集成测试
 ```

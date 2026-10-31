@@ -12,7 +12,7 @@ from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy.tokens import TOKEN
 from aiverse_server.server.app import create_app
-from aiverse_server.server.protocol import PROTOCOL_VERSION, parse_client_message
+from aiverse_server.server.protocol import PROTOCOL_VERSION
 
 WORLD = World(
     map=WorldMap(size=50),
@@ -252,9 +252,3 @@ def test_malformed_settings_are_refused_without_echoing_them(llm: dict[str, Any]
         reply = ws.receive_json()
         assert reply["type"] == "error" and reply["code"] == "bad_message"
         assert "page-key" not in reply["message"]
-
-
-def test_a_parsed_request_keeps_the_key_out_of_its_repr() -> None:
-    message = parse_client_message(start("a", **PAGE))
-    assert "page-model" in repr(message)
-    assert "page-key" not in repr(message)

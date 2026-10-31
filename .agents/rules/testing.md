@@ -6,15 +6,16 @@
 
 ## 测试分层
 
-| 层 | 测什么 | 怎么测 | 示例 |
+| 层 | 测什么 | 怎么测 | 目录与示例 |
 | --- | --- | --- | --- |
-| 单元 | 一个模块的规则与计算：原语成败、数值、不变量、边界与拒绝路径 | 直接调用函数或原语，不经网络、不等真实时间 | `tests/economy/test_market.py` 对 `perform(WORLD, SellTokens(...))` 断言 |
-| 集成 | 多个模块经真实入口协作：消息进出、广播与按观看者过滤、定时器、Agent 循环与大脑 | 用 `TestClient` 连上 `create_app` 的 WebSocket，或运行真实的 Agent 循环；只替换下文列出的边界 | `tests/server/test_app.py`、`tests/agents/test_agents.py` |
-| 端到端 | 用户在浏览器里的完整流程，与网页客户端一起运行 | 目前人工：启动服务端和网页客户端，在浏览器实际操作一次 | 见 [开发流程](development.md#验证如何选择) |
+| 单元 | 一个模块的规则与计算：原语成败、数值、不变量、边界与拒绝路径 | 直接调用函数、原语或 `Game` 的方法，不经网络、不等真实时间 | `tests/unit/`；`tests/unit/economy/test_market.py` 对 `perform(WORLD, SellTokens(...))` 断言 |
+| 集成 | 多个模块经真实入口协作：消息进出、广播与按观看者过滤、定时器、Agent 循环与大脑 | 用 `TestClient` 连上 `create_app` 的 WebSocket，或运行真实的 Agent 循环；只替换下文列出的边界 | `tests/integration/`；`tests/integration/server/test_websocket.py`、`tests/integration/agents/test_agent_loop.py` |
+| 端到端 | 用户在浏览器里的完整流程，与网页客户端一起运行 | 目前人工：启动服务端和网页客户端，在浏览器实际操作一次 | 没有目录；见 [开发流程](development.md#验证如何选择) |
 
 - **放在能证明行为的最低一层**：游戏规则与数值在单元层测全，含边界和拒绝路径；集成层只证明各部分接得上，不重复单元层已经测过的数值组合。
+- **按怎么测分层，不按测哪个模块**：一个测试经 WebSocket、运行 Agent 循环或调用大脑，就属于集成层；否则属于单元层。所以同一模块的测试可以分在两层，`server/app.py` 的 `Game` 与发件箱在 `tests/unit/server/test_app.py`，经它的 WebSocket 在 `tests/integration/server/test_websocket.py`。只跑单元层用 `uv run pytest tests/unit`。
 - **数量随层递减**：单元测试最多，集成测试覆盖每条入口和跨模块流程，端到端只走关键用户流程。不设覆盖率数字。
-- **协议改动**：在集成层经 WebSocket 测新消息的收发与拒绝。网页客户端会按服务端规则推算一些数值（如市场价），这类规则的单元测试断言具体数字，供客户端对照，例如 `tests/economy/test_market.py` 断言卖 30 token 得 524 金币。
+- **协议改动**：在集成层经 WebSocket 测新消息的收发与拒绝。网页客户端会按服务端规则推算一些数值（如市场价），这类规则的单元测试断言具体数字，供客户端对照，例如 `tests/unit/economy/test_market.py` 断言卖 30 token 得 524 金币。
 - **缺陷修复**：在能复现缺陷的最低一层加回归测试。
 
 ## 一个测试的结构

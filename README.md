@@ -23,6 +23,7 @@ uv run aiverse-server --seed 7        # 固定矿池布局；不给则每局随�
 uv run aiverse-server --config my.yml # 大模型配置文件，默认读 agents/config/llm.yml（可以没有），见下
 uv run aiverse-server --agent r1=scripted --agent r2=llm:模型名   # r1、r2 由 Agent 驱动，见下
 make verify                           # ruff、ruff format --check、mypy strict、pytest
+uv run pytest tests/unit              # 只跑单元测试；集成测试在 tests/integration
 ```
 
 一局游戏从服务端创建世界（即启动）时开始计时，到点后自动结束：停止所有采矿、撤销所有待处理报价、终止所有合约、退回预留，世界冻结。要开新的一局，重启服务端。矿池在创建世界时放好，之后只有储量变化。
@@ -181,7 +182,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 ## 代码结构
 
-源码按领域分成几个子包，测试目录 `tests/` 按同样的子包分组。根目录的 `.agents/` 放给 Agent 的规则与 Skill，入口是 `AGENTS.md`。
+源码按领域分成几个子包。测试目录 `tests/` 先按层分为 `unit/` 与 `integration/`，层内按同样的子包分组。根目录的 `.agents/` 放给 Agent 的规则与 Skill，入口是 `AGENTS.md`。
 
 | 子包 | 内容 |
 | --- | --- |
@@ -219,4 +220,5 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/agents/` | AI 居民：`runner.py` 事件驱动的循环与唤醒规则，`observation.py` 每轮的观察，`tools.py` 绑定居民的工具，`scripted_brain.py` 脚本机器人，`llm_brain.py` OpenAI 兼容接口的大模型大脑与设置的合并、校验，`system_prompt.py` 给模型的系统提示（规则说明） |
 | `src/aiverse_server/agents/config/` | 大模型配置：示例 `llm.example.yml`；本地的 `llm.yml` 被 Git 忽略 |
 | `src/aiverse_server/__main__.py` | 启动入口，`--config` 读配置文件，`--agent` 指定由 Agent 驱动的居民，`--agent-log` 写每轮记录 |
-| `tests/` | 世界模型、操作原语、物品栏与金币、事件、交易、合约、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民（工具、观察、唤醒、脚本机器人的快进对局、模拟 HTTP 的大模型大脑、设置的合并与校验）、配置文件、从页面启动与停止 Agent 与 WebSocket 接口测试 |
+| `tests/unit/` | 单元测试：世界模型、操作原语、物品栏与金币、事件、交易、合约、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民的工具、观察、每轮记录与大模型设置的合并和校验、`Game` 的执行入口与发件箱、协议视图、配置文件、命令行参数 |
+| `tests/integration/` | 集成测试：WebSocket 接口、从页面启动与停止 Agent、Agent 循环的唤醒、模拟 HTTP 的大模型大脑、脚本机器人的快进对局 |
