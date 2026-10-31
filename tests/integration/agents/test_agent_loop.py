@@ -307,3 +307,22 @@ def test_a_stopped_runner_closes_its_brain() -> None:
         assert brain.closed
 
     asyncio.run(scenario())
+
+
+def test_a_round_ends_at_the_time_the_brain_finishes_without_acting() -> None:
+    async def scenario() -> None:
+        game, clock = make_game()
+        brain = Recorder(lambda seen, tools: setattr(clock, "now", 25.0))
+        records: list[TurnRecord] = []
+        runner = AgentRunner(game, "a", brain, Pace(0, 0, 60), records.append)
+
+        task = asyncio.create_task(runner.run())
+        await _until(lambda: len(records) == 1)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert records[0].time == 0
+        assert records[0].ended_at == 25
+        assert game.agent_turns["a"][0].ended_at == 25
+
+    asyncio.run(scenario())

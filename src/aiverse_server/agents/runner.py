@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..game.lifecycle import GameError
 from .observation import Observation, observe, to_json
-from .tools import ResidentTools, ToolCall
+from .tools import ResidentTools, ResourceBalance, ToolCall, resource_balance
 
 if TYPE_CHECKING:
     from ..server.app import Game
@@ -80,6 +80,9 @@ class TurnRecord:
     calls: tuple[ToolCall, ...]
     remark: str | None = None
     error: str | None = None
+    before: ResourceBalance | None = None
+    after: ResourceBalance | None = None
+    ended_at: float = 0.0
 
 
 def record_to_json(turn: TurnRecord) -> str:
@@ -172,6 +175,7 @@ class AgentRunner:
                 self.game.world, self.resident_id, perception, self.game.remaining()
             )
             tools = ResidentTools(self.game, self.resident_id)
+            balance = resource_balance(self.game, self.resident_id)
             remark: str | None = None
             error: str | None = None
             try:
@@ -179,6 +183,8 @@ class AgentRunner:
             except Exception as failure:
                 logger.exception("agent for %s failed", self.resident_id)
                 error = f"{type(failure).__name__}: {failure}"[:500]
+            # The model may have waited without calling a tool or another world event.
+            self.game.tick()
             turn = TurnRecord(
                 self.resident_id,
                 observation.time,
@@ -186,7 +192,11 @@ class AgentRunner:
                 tuple(tools.calls),
                 remark,
                 error,
+                balance,
+                resource_balance(self.game, self.resident_id),
+                self.game.world.time,
             )
+            self.game.record_turn(turn)
             if self._record is not None:
                 self._record(turn)
         except Exception:

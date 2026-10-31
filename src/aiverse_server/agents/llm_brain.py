@@ -153,9 +153,11 @@ class ChatCompletionsBrain:
                     break
                 message = await self._complete(messages)
                 content = message.get("content")
-                remark = content.strip() if isinstance(content, str) and content.strip() else remark
                 calls = message.get("tool_calls")
                 if not isinstance(calls, list) or not calls:
+                    remark = (
+                        content.strip() if isinstance(content, str) and content.strip() else None
+                    )
                     break
                 messages.append(
                     {"role": "assistant", "content": content or "", "tool_calls": calls}
@@ -180,6 +182,10 @@ class ChatCompletionsBrain:
         finally:
             self._last_round = _summary(tools.calls, remark)
         return remark
+
+    def redact(self, text: str) -> str:
+        """Remove a provider-echoed credential before exposing a turn on the page."""
+        return text.replace(self._api_key, "***") if self._api_key else text
 
     async def aclose(self) -> None:
         if self._owns_client:

@@ -222,3 +222,13 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/__main__.py` | 启动入口，`--config` 读配置文件，`--agent` 指定由 Agent 驱动的居民，`--agent-log` 写每轮记录 |
 | `tests/unit/` | 单元测试：世界模型、操作原语、物品栏与金币、事件、交易、合约、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民的工具、观察、每轮记录与大模型设置的合并和校验、`Game` 的执行入口与发件箱、协议视图、配置文件、命令行参数 |
 | `tests/integration/` | 集成测试：WebSocket 接口、从页面启动与停止 Agent、Agent 循环的唤醒、模拟 HTTP 的大模型大脑、脚本机器人的快进对局 |
+
+## 页面 AI 行动时间线与经营方针
+
+页面选中居民后，地图下方显示其最近 30 个已完成的 AI 决策轮，含模型最终回复的短计划、每次工具调用的时间、参数与成败，以及金币总额（含托管）和 token 的实际净变化。轮间变化单独显示，不归因给下一次动作。摘要不是隐藏推理，也不作为收益原因的证据。
+
+`start_agent` 可附带 `strategy`（最多 1000 个 Unicode 字符，留空不追加方针），传给模型系统提示；不受 YAML 的接口配置覆盖。页面按居民保存草稿，修改后需重新交给 AI。
+
+协议版本为 14。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
+
+`agents/tools.py` 的 `ResourceBalance` 和 `resource_balance` 测量动作前后总额，`runner.py` 生成带首尾资源的 `TurnRecord`，`server/protocol.py` 转为有界的 `AgentTurnView`，`server/app.py` 按观看者发送。

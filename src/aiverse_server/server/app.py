@@ -36,10 +36,12 @@ from ..game.lifecycle import GAME_DURATION, GameError, check_can_act, end_game
 from ..residents.memory import forget, remember
 from ..residents.perception import Perception, begin_turn
 from .protocol import (
+    AGENT_TURN_LIMIT,
     PROTOCOL_VERSION,
     ActionResultMessage,
     AgentRejectionCode,
     AgentResultMessage,
+    AgentTurnView,
     ErrorMessage,
     HelloMessage,
     LLMSettingName,
@@ -51,6 +53,7 @@ from .protocol import (
     WelcomeMessage,
     action_rejected,
     agent_result,
+    agent_turn_view,
     bad_message,
     encode,
     parse_client_message,
@@ -89,6 +92,7 @@ def handle_text(
     viewer: str | None = None,
     agents: Mapping[str, str | None] | None = None,
     llm_overrides: Sequence[LLMSettingName] = (),
+    agent_turns: Mapping[str, Sequence[AgentTurnView]] | None = None,
 ) -> Outcome:
     """Handles one client frame. Errors leave the connection open and the world unchanged.
     `remaining_seconds` is the game time left, `viewer` the resident the sender views as and
@@ -103,7 +107,9 @@ def handle_text(
                 code="protocol_mismatch", message=f"server speaks protocol {PROTOCOL_VERSION}"
             )
             return Outcome([mismatch], world, greeted, viewer)
-        state = StateMessage(world=world_view(world, remaining_seconds, viewer, agents))
+        state = StateMessage(
+            world=world_view(world, remaining_seconds, viewer, agents, agent_turns)
+        )
         welcome = WelcomeMessage(llm_overrides=list(llm_overrides))
         return Outcome([welcome, state], world, True, viewer)
     if not greeted:
@@ -112,7 +118,9 @@ def handle_text(
         chosen = message.resident_id
         if chosen is not None and all(resident.id != chosen for resident in world.residents):
             return Outcome([bad_message(f"no resident with id {chosen!r}")], world, greeted, viewer)
-        state = StateMessage(world=world_view(world, remaining_seconds, chosen, agents))
+        state = StateMessage(
+            world=world_view(world, remaining_seconds, chosen, agents, agent_turns)
+        )
         return Outcome([state], world, greeted, chosen)
     if isinstance(message, StartAgentMessage | StopAgentMessage):
         return Outcome([], world, greeted, viewer, message)
@@ -182,7 +190,7 @@ class AgentRejected(Exception):
         self.message = message
 
 
-LLMBrainFactory = Callable[[str, str, str], Brain]
+LLMBrainFactory = Callable[[str, str, str, str | None], Brain]
 """Makes the brain for a base URL, API key and model."""
 
 
@@ -231,6 +239,8 @@ class Game:
         # Model requests each resident's brains have made this game, so the limit holds per
         # resident however often their agent is restarted.
         self._llm_requests: dict[str, int] = {}
+        self.agent_turns: dict[str, deque[AgentTurnView]] = {}
+        self._turn_seq = 0
 
     def remaining(self) -> float:
         return max(self._duration - (self._clock() - self._start), 0.0)
@@ -300,6 +310,19 @@ class Game:
         self.tick()
         self.world = forget(self.world, resident_id, note_id)
 
+    def record_turn(self, turn: TurnRecord) -> None:
+        """Keep a bounded page projection independently of optional console/file logging."""
+        self._turn_seq += 1
+        agent = self._agents.get(turn.resident_id)
+        redact = (
+            agent.brain.redact
+            if agent and isinstance(agent.brain, ChatCompletionsBrain)
+            else lambda text: text
+        )
+        shown = agent_turn_view(turn, self._turn_seq, redact)
+        self.agent_turns.setdefault(turn.resident_id, deque(maxlen=AGENT_TURN_LIMIT)).append(shown)
+        self.broadcast_world()
+
     def agents(self) -> dict[str, str | None]:
         """The residents agents drive, to the model each asks, None for a scripted brain."""
         return {resident_id: agent.model for resident_id, agent in self._agents.items()}
@@ -319,7 +342,7 @@ class Game:
         task.add_done_callback(lambda _: self._agent_ended(resident_id, agent))
         self.broadcast_world()
 
-    def start_llm_agent(self, resident_id: str, chosen: LLMSettings) -> None:
+    def start_llm_agent(self, resident_id: str, chosen: LLMSettings, strategy: str = "") -> None:
         """Drive the resident with a language model: the config file's settings where it gives
         them, `chosen` for the rest. Raises `AgentRejected` for a resident who cannot act, or
         settings missing or malformed after that."""
@@ -328,7 +351,9 @@ class Game:
             base_url, api_key, model = complete(self.llm_override.over(chosen))
         except SettingsError as error:
             raise AgentRejected(error.code, error.message) from None
-        self.start_agent(resident_id, self._llm_brain(base_url, api_key, model), model)
+        self.start_agent(
+            resident_id, self._llm_brain(base_url, api_key, model, strategy or None), model
+        )
 
     def stop_agent(self, resident_id: str) -> None:
         """Stop the agent driving the resident, if any, and tell everyone. Raises
@@ -403,7 +428,7 @@ class Game:
         texts: dict[str | None, str] = {}
         for outbox in self._outboxes:
             if outbox.viewer not in texts:
-                view = world_view(self.world, remaining, outbox.viewer, agents)
+                view = world_view(self.world, remaining, outbox.viewer, agents, self.agent_turns)
                 texts[outbox.viewer] = encode(StateMessage(world=view))
             outbox.put_state(texts[outbox.viewer])
         self._changed.set()
@@ -414,7 +439,7 @@ class Game:
 def answer_request(game: Game, request: StartAgentMessage | StopAgentMessage) -> AgentResultMessage:
     try:
         if isinstance(request, StartAgentMessage):
-            game.start_llm_agent(request.resident_id, to_llm_settings(request))
+            game.start_llm_agent(request.resident_id, to_llm_settings(request), request.strategy)
         else:
             game.stop_agent(request.resident_id)
     except AgentRejected as rejection:
@@ -453,6 +478,7 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                 outbox.viewer,
                 game.agents(),
                 setting_names(game.llm_override),
+                game.agent_turns,
             )
             outbox.viewer = outcome.viewer
             if outcome.greeted and not greeted:

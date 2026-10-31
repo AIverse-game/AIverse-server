@@ -268,3 +268,30 @@ def test_each_resident_has_a_request_count_of_their_own() -> None:
         await game.stop_agents()
 
     asyncio.run(scenario())
+
+
+def test_page_turn_redacts_credentials_echoed_in_model_output() -> None:
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+        replies = [httpx.Response(200, json=_reply({"content": "provider echoed top-secret"}))]
+        http = _http(replies, requests)
+        brain = ChatCompletionsBrain(
+            "https://llm.example/v1", "top-secret", "m", "稳健经营", client=http
+        )
+        game, _ = make_game()
+
+        game.start_agent("a", brain, "m")
+        # Wait for a completed turn, without another paid/model turn.
+        for _ in range(100):
+            if game.agent_turns.get("a"):
+                break
+            await asyncio.sleep(0.001)
+        await game.stop_agents()
+        await http.aclose()
+
+        shown = game.agent_turns["a"][0]
+        assert shown.summary == "provider echoed ***"
+        assert "top-secret" not in shown.model_dump_json()
+        assert "稳健经营" in json.loads(requests[0].content)["messages"][0]["content"]
+
+    asyncio.run(scenario())

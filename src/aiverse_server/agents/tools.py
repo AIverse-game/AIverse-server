@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 
 from ..core.world import Position
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
-from ..economy.tokens import TOKEN
+from ..economy.tokens import TOKEN, token_total
 from ..game.actions import (
     ActionRejected,
     BuyChip,
@@ -41,7 +41,7 @@ from ..game.actions import (
     SellTokens,
     WithdrawEvent,
 )
-from ..game.lifecycle import GameError
+from ..game.lifecycle import GameError, total_coins
 from ..residents.memory import NoteError
 
 if TYPE_CHECKING:
@@ -180,12 +180,28 @@ class ToolResult:
 
 
 @dataclass(frozen=True)
+class ResourceBalance:
+    coins: int
+    tokens: int
+
+
+def resource_balance(game: Game, resident_id: str) -> ResourceBalance:
+    """Owned resources, including escrow; reserving coins is not a loss."""
+    return ResourceBalance(
+        total_coins(game.world, resident_id), token_total(game.world, resident_id)
+    )
+
+
+@dataclass(frozen=True)
 class ToolCall:
     """One call an agent made, for the turn's record."""
 
     name: str
     arguments: Mapping[str, Any]
     result: ToolResult
+    time: float = 0.0
+    coins_change: int = 0
+    tokens_change: int = 0
 
 
 @dataclass(frozen=True)
@@ -297,6 +313,7 @@ class ResidentTools:
 
     def call(self, name: str, arguments: Mapping[str, Any] | str) -> ToolResult:
         """Run a tool by name, as a model asks for it; arguments may be a JSON object text."""
+        self.game.tick()
         if isinstance(arguments, str):
             try:
                 loaded = json.loads(arguments) if arguments.strip() else {}
@@ -305,11 +322,27 @@ class ResidentTools:
                 loaded = None
             if not isinstance(loaded, dict):
                 result = ToolResult(False, "invalid_arguments", "arguments must be a JSON object")
-                self.calls.append(ToolCall(name, {"_raw": arguments[:300]}, result))
+                self.calls.append(
+                    ToolCall(name, {"_raw": arguments[:300]}, result, self.game.world.time)
+                )
                 return result
             arguments = loaded
+        # Settle timed work before measuring this action, so a completed mine is not
+        # credited to an unrelated tool call.
+        before = resource_balance(self.game, self.resident_id)
+        time = self.game.world.time
         result = self._dispatch(name, arguments)
-        self.calls.append(ToolCall(name, dict(arguments), result))
+        after = resource_balance(self.game, self.resident_id)
+        self.calls.append(
+            ToolCall(
+                name,
+                dict(arguments),
+                result,
+                time,
+                after.coins - before.coins,
+                after.tokens - before.tokens,
+            )
+        )
         return result
 
     def move_to(self, x: float, y: float) -> ToolResult:

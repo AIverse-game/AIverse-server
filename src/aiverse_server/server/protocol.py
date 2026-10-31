@@ -5,7 +5,7 @@ PROTOCOL_VERSION on incompatible changes.
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -21,6 +21,7 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from ..agents.llm_brain import LLMSetting, LLMSettings
+from ..agents.runner import TurnRecord
 from ..core.events import Event
 from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.chips import CHIP_MODELS
@@ -42,7 +43,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 13
+PROTOCOL_VERSION = 14
 
 ERROR_MAX_LENGTH = 200
 
@@ -153,6 +154,7 @@ class StartAgentMessage(_Message):
     type: Literal["start_agent"]
     resident_id: str
     llm: LLMSettingsInput
+    strategy: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
 
 
 class StopAgentMessage(_Message):
@@ -338,6 +340,84 @@ class GameView(_Message):
     """Time left when this was sent; 0 once the game has ended."""
 
 
+class ResourceBalanceView(_Message):
+    coins: int
+    tokens: int
+
+
+class AgentCallView(_Message):
+    name: str
+    arguments: str
+    time: float
+    ok: bool
+    code: str | None = None
+    coins_change: int
+    tokens_change: int
+
+
+class AgentTurnView(_Message):
+    seq: int
+    time: float
+    ended_at: float
+    summary: str | None = None
+    error: str | None = None
+    before: ResourceBalanceView
+    after: ResourceBalanceView
+    calls: list[AgentCallView]
+
+
+class AgentTimelineView(_Message):
+    resident_id: str
+    turns: list[AgentTurnView]
+
+
+# Latest completed rounds per resident. Summaries and arguments are bounded separately.
+AGENT_TURN_LIMIT = 30
+
+
+def agent_turn_view(
+    turn: TurnRecord, seq: int, redact: Callable[[str], str] = lambda text: text
+) -> AgentTurnView:
+    assert turn.before is not None and turn.after is not None
+    return AgentTurnView(
+        seq=seq,
+        time=turn.time,
+        ended_at=turn.ended_at,
+        summary=redact(turn.remark)[:500] if turn.remark else None,
+        # Exception text is diagnostic, may contain private input, and stays in server logs.
+        error="本轮 AI 调用失败，请查看服务端日志。" if turn.error else None,
+        before=ResourceBalanceView(coins=turn.before.coins, tokens=turn.before.tokens),
+        after=ResourceBalanceView(coins=turn.after.coins, tokens=turn.after.tokens),
+        calls=[
+            AgentCallView(
+                name=redact(call.name)[:80],
+                # Redact before repr escapes characters; never display malformed raw input.
+                arguments=(
+                    "参数不是有效 JSON，未展示原文。"
+                    if "_raw" in call.arguments and call.result.code == "invalid_arguments"
+                    else repr(_redacted_arguments(call.arguments, redact))[:300]
+                ),
+                time=call.time,
+                ok=call.result.ok,
+                code=call.result.code,
+                coins_change=call.coins_change,
+                tokens_change=call.tokens_change,
+            )
+            for call in turn.calls[:128]
+        ],
+    )
+
+
+def _redacted_arguments(value: object, redact: Callable[[str], str]) -> object:
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, Mapping):
+        return {redact(str(key)): _redacted_arguments(item, redact) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_redacted_arguments(item, redact) for item in value]
+    return value
+
+
 class WorldView(_Message):
     map: MapView
     pools: list[PoolView]
@@ -354,6 +434,7 @@ class WorldView(_Message):
     contract_proposals: list[ContractProposalView]
     """Contract proposals to or from the viewed resident, oldest first."""
     contracts: list[ContractView]
+    agent_timeline: AgentTimelineView | None = None
     """Contracts in force the viewed resident is a party to, oldest first."""
 
 
@@ -423,6 +504,7 @@ def world_view(
     remaining_seconds: float,
     viewer: str | None = None,
     agents: Mapping[str, str | None] | None = None,
+    agent_turns: Mapping[str, Sequence[AgentTurnView]] | None = None,
 ) -> WorldView:
     """The world as a connection viewing as resident `viewer`, or as nobody, sees it: the
     same for everyone except whispers, offers and contracts, of which it sees only the
@@ -441,6 +523,11 @@ def world_view(
         if line.to is None or (viewer is not None and viewer in (line.speaker_id, line.to))
     ]
     return WorldView(
+        agent_timeline=AgentTimelineView(
+            resident_id=viewer, turns=list((agent_turns or {}).get(viewer, ()))
+        )
+        if viewer is not None
+        else None,
         map=MapView(size=world.map.size),
         pools=[
             PoolView(

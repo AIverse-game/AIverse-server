@@ -30,7 +30,10 @@ HELLO = json.dumps({"type": "hello", "protocolVersion": PROTOCOL_VERSION})
 class IdleBrain:
     """Never acts; remembers what it was made with and whether it was closed."""
 
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
+    def __init__(
+        self, base_url: str, api_key: str, model: str, strategy: str | None = None
+    ) -> None:
+        self.strategy = strategy
         self.settings = (base_url, api_key, model)
         self.closed = False
 
@@ -47,8 +50,10 @@ class Brains:
     def __init__(self) -> None:
         self.made: list[IdleBrain] = []
 
-    def __call__(self, base_url: str, api_key: str, model: str) -> IdleBrain:
-        brain = IdleBrain(base_url, api_key, model)
+    def __call__(
+        self, base_url: str, api_key: str, model: str, strategy: str | None = None
+    ) -> IdleBrain:
+        brain = IdleBrain(base_url, api_key, model, strategy)
         self.made.append(brain)
         return brain
 
@@ -274,3 +279,74 @@ def test_malformed_settings_are_refused_without_echoing_them(llm: dict[str, Any]
         reply = ws.receive_json()
         assert reply["type"] == "error" and reply["code"] == "bad_message"
         assert "page-key" not in reply["message"]
+
+
+def test_page_strategy_reaches_the_brain_without_being_a_config_override() -> None:
+    brains = Brains()
+    with TestClient(app_with(brains)) as client, client.websocket_connect("/ws") as ws:
+        greet(ws)
+
+        ws.send_json(
+            {"type": "start_agent", "residentId": "a", "llm": PAGE, "strategy": "  稳健经营  "}
+        )
+        reply = ws.receive_json()
+
+    assert reply["ok"] is True
+    assert brains.made[0].strategy == "稳健经营"
+
+
+@pytest.mark.parametrize("strategy", ["界" * 1001, 123, ["text"]])
+def test_bad_strategies_do_not_replace_an_agent(strategy: object) -> None:
+    brains = Brains()
+    with TestClient(app_with(brains)) as client, client.websocket_connect("/ws") as ws:
+        greet(ws)
+
+        ws.send_json({"type": "start_agent", "residentId": "a", "llm": PAGE, "strategy": strategy})
+        reply = ws.receive_json()
+
+    assert reply["code"] == "bad_message"
+    assert brains.made == []
+
+
+def test_completed_turns_follow_the_viewer_and_survive_reconnecting() -> None:
+    from aiverse_server.agents.runner import Pace
+
+    class TalkingBrain:
+        async def take_turn(self, observation: Observation, tools: ResidentTools) -> str:
+            tools.say("hello")
+            tools.buy_chip("MK1")  # No market in WORLD: show the rejected action too.
+            return "准备采矿"
+
+    with TestClient(
+        create_app(
+            WORLD, pace=Pace(0, 0, 3600), llm_brain=lambda url, key, model, strategy: TalkingBrain()
+        )
+    ) as client:
+        with client.websocket_connect("/ws") as ws:
+            greet(ws)
+            # Start a deterministic local brain through the same page request.
+            ws.send_json({"type": "view_as", "residentId": "a"})
+            ws.receive_json()
+            ws.send_text(start("a", **PAGE))
+            assert ws.receive_json()["ok"] is True
+            shown = ws.receive_json()["world"]
+            while not shown.get("agentTimeline", {}).get("turns"):
+                shown = ws.receive_json()["world"]
+            ws.send_text(stop("a"))
+            ws.receive_json()
+            ws.receive_json()
+            ws.send_json({"type": "view_as", "residentId": "b"})
+            other = ws.receive_json()["world"]
+        with client.websocket_connect("/ws") as late:
+            _, nobody = greet(late)
+            late.send_json({"type": "view_as", "residentId": "a"})
+            reconnected = late.receive_json()["world"]
+
+    turn = shown["agentTimeline"]["turns"][0]
+    assert shown["agentTimeline"]["residentId"] == "a"
+    assert turn["summary"] == "准备采矿"
+    assert turn["before"]["tokens"] == 100 and turn["after"]["tokens"] == 98
+    assert [call["ok"] for call in turn["calls"]] == [True, False]
+    assert other["agentTimeline"] == {"residentId": "b", "turns": []}
+    assert "agentTimeline" not in nobody
+    assert reconnected["agentTimeline"] == shown["agentTimeline"]
