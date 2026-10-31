@@ -85,17 +85,22 @@ def test_a_page_hands_a_resident_to_a_model_and_everyone_sees_it() -> None:
     brains = Brains()
     with TestClient(app_with(brains)) as client:
         with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as other:
-            welcome, world = greet(ws)
-            assert welcome["llmOverrides"] == [] and agents(world) == {}
+            welcome, before = greet(ws)
             greet(other)
+
             ws.send_text(start("a", **PAGE))
-            assert ws.receive_json() == {"type": "agent_result", "residentId": "a", "ok": True}
-            assert agents(ws.receive_json()["world"]) == {"a": {"model": "page-model"}}
-            assert agents(other.receive_json()["world"]) == {"a": {"model": "page-model"}}
-            assert brains.made[0].settings == ("https://page.example/v1", "page-key", "page-model")
+            result = ws.receive_json()
+            mine = ws.receive_json()["world"]
+            theirs = other.receive_json()["world"]
             # A new connection sees it from its first state.
             with client.websocket_connect("/ws") as late:
-                assert agents(greet(late)[1]) == {"a": {"model": "page-model"}}
+                _, first = greet(late)
+
+    assert welcome["llmOverrides"] == [] and agents(before) == {}
+    assert result == {"type": "agent_result", "residentId": "a", "ok": True}
+    shown = {"a": {"model": "page-model"}}
+    assert agents(mine) == agents(theirs) == agents(first) == shown
+    assert brains.made[0].settings == ("https://page.example/v1", "page-key", "page-model")
 
 
 def test_the_config_overrides_what_the_page_chose_and_is_never_sent() -> None:
@@ -105,10 +110,11 @@ def test_the_config_overrides_what_the_page_chose_and_is_never_sent() -> None:
     with TestClient(app_with(brains, override)) as client, client.websocket_connect("/ws") as ws:
         ws.send_text(HELLO)
         frames += [ws.receive_text(), ws.receive_text()]
-        assert json.loads(frames[0])["llmOverrides"] == ["baseUrl", "apiKey", "model"]
         # Blanks are fine for the settings the server fixes.
         ws.send_text(start("a", baseUrl=" ", apiKey="", model="page-model"))
         frames += [ws.receive_text(), ws.receive_text()]
+
+    assert json.loads(frames[0])["llmOverrides"] == ["baseUrl", "apiKey", "model"]
     assert json.loads(frames[2]) == {"type": "agent_result", "residentId": "a", "ok": True}
     assert agents(json.loads(frames[3])["world"]) == {"a": {"model": "server-model"}}
     assert brains.made[0].settings == ("https://server.example/v1", "server-secret", "server-model")
@@ -122,9 +128,12 @@ def test_a_partial_override_fills_in_only_what_it_gives() -> None:
         client.websocket_connect("/ws") as ws,
     ):
         welcome, _ = greet(ws)
-        assert welcome["llmOverrides"] == ["apiKey"]
+
         ws.send_text(start("a", baseUrl="http://localhost:9000/v1", model="m"))
-        assert ws.receive_json()["ok"] is True
+        reply = ws.receive_json()
+
+    assert welcome["llmOverrides"] == ["apiKey"]
+    assert reply["ok"] is True
     assert brains.made[0].settings == ("http://localhost:9000/v1", "server-secret", "m")
 
 
@@ -144,15 +153,18 @@ def test_bad_requests_are_refused_and_start_nothing(
     brains = Brains()
     with TestClient(app_with(brains)) as client, client.websocket_connect("/ws") as ws:
         greet(ws)
+
         ws.send_text(start(resident_id, **llm))
         reply = ws.receive_json()
-        assert reply["type"] == "agent_result" and reply["ok"] is False
-        assert reply["residentId"] == resident_id
-        assert reply["code"] == code
-        assert "page-key" not in json.dumps(reply)
-        # Nothing changed, so no state follows: the next frame answers the next request.
         ws.send_text(stop("a"))
-        assert ws.receive_json() == {"type": "agent_result", "residentId": "a", "ok": True}
+        next_frame = ws.receive_json()
+
+    assert reply["type"] == "agent_result" and reply["ok"] is False
+    assert reply["residentId"] == resident_id
+    assert reply["code"] == code
+    assert "page-key" not in json.dumps(reply)
+    # Nothing changed, so no state follows: the next frame answers the next request.
+    assert next_frame == {"type": "agent_result", "residentId": "a", "ok": True}
     assert brains.made == []
 
 
@@ -182,14 +194,19 @@ def test_stopping_and_replacing_an_agent_closes_the_old_brain() -> None:
         greet(ws)
         ws.send_text(start("a", **PAGE))
         ws.receive_json(), ws.receive_json()
+
         ws.send_text(start("a", **{**PAGE, "model": "second"}))
-        assert ws.receive_json()["ok"] is True
-        assert agents(ws.receive_json()["world"]) == {"a": {"model": "second"}}
+        replaced = ws.receive_json(), ws.receive_json()["world"]
         ws.send_text(stop("a"))
-        assert ws.receive_json() == {"type": "agent_result", "residentId": "a", "ok": True}
-        assert agents(ws.receive_json()["world"]) == {}
+        stopped = ws.receive_json(), ws.receive_json()["world"]
         ws.send_text(stop("nobody"))
-        assert ws.receive_json()["code"] == "unknown_resident"
+        unknown = ws.receive_json()
+
+    assert replaced[0]["ok"] is True
+    assert agents(replaced[1]) == {"a": {"model": "second"}}
+    assert stopped[0] == {"type": "agent_result", "residentId": "a", "ok": True}
+    assert agents(stopped[1]) == {}
+    assert unknown["code"] == "unknown_resident"
     assert [brain.closed for brain in brains.made] == [True, True]
 
 
@@ -216,10 +233,15 @@ def test_agents_started_on_the_command_line_show_up_and_can_be_stopped() -> None
         TestClient(create_app(WORLD, agents={"b": brain})) as client,
         client.websocket_connect("/ws") as ws,
     ):
-        assert agents(greet(ws)[1]) == {"b": {}}
+        _, first = greet(ws)
+
         ws.send_text(stop("b"))
-        assert ws.receive_json()["ok"] is True
-        assert agents(ws.receive_json()["world"]) == {}
+        reply = ws.receive_json()
+        after = ws.receive_json()["world"]
+
+    assert agents(first) == {"b": {}}
+    assert reply["ok"] is True
+    assert agents(after) == {}
     assert brain.closed
 
 

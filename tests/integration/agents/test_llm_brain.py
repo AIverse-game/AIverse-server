@@ -78,8 +78,9 @@ def test_llm_brain_runs_the_tools_the_model_calls() -> None:
         brain = ChatCompletionsBrain(
             "https://llm.example/v1/", "secret", "vendor/test", client=_http(replies, requests)
         )
-        tools = ResidentTools(game, "a")
-        remark = await brain.take_turn(look(game, "a"), tools)
+
+        remark = await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
         assert remark == "Bought MK2, off to mine."
         assert me(game, "a").inventory.count("MK2") == 1
         assert brain.requests == 2
@@ -92,14 +93,28 @@ def test_llm_brain_runs_the_tools_the_model_calls() -> None:
         second = json.loads(requests[1].content)["messages"]
         assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "c1"
         assert json.loads(second[-1]["content"])["ok"] is True
-        # The next round hears what happened in this one.
-        replies.append(httpx.Response(200, json=_reply({"content": "Waiting."})))
-        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
-        assert (
-            "buy_chip(model='MK2') -> ok"
-            in json.loads(requests[2].content)["messages"][1]["content"]
-        )
         assert all("secret" not in json.dumps(json.loads(r.content)) for r in requests)
+
+    asyncio.run(scenario())
+
+
+def test_the_next_round_hears_what_the_tools_did_in_this_one() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        replies = [
+            httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
+            httpx.Response(200, json=_reply({"content": "Bought MK2, off to mine."})),
+            httpx.Response(200, json=_reply({"content": "Waiting."})),
+        ]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        next_round = json.loads(requests[2].content)["messages"][1]["content"]
+        assert "buy_chip(model='MK2') -> ok" in next_round
 
     asyncio.run(scenario())
 
@@ -133,24 +148,38 @@ def test_llm_brain_stops_asking_at_its_request_limit() -> None:
         client = _http(replies, requests)
         brain = ChatCompletionsBrain("http://llm", "k", "m", client=client, request_limit=3)
         tools = ResidentTools(game, "a")
+
         await brain.take_turn(look(game, "a"), tools)
-        assert len(requests) == 3
+        after_the_limit = await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
         assert [c.result.code for c in tools.calls] == ["invalid_arguments"] * 3
-        assert await brain.take_turn(look(game, "a"), ResidentTools(game, "a")) is not None
+        assert after_the_limit is not None
         assert len(requests) == 3
 
     asyncio.run(scenario())
 
 
-def test_the_brain_closes_only_a_client_it_made() -> None:
+def test_the_brain_leaves_a_client_it_was_given_open() -> None:
     async def scenario() -> None:
         given = httpx.AsyncClient()
+
         await ChatCompletionsBrain("http://x", "k", "m", client=given).aclose()
+
         assert not given.is_closed
         await given.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_the_brain_closes_a_client_it_made() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
         brain = ChatCompletionsBrain("http://x", "k", "m")
+
         await brain.aclose()
-        assert brain._client.is_closed
+
+        with pytest.raises(RuntimeError, match="client has been closed"):
+            await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
     asyncio.run(scenario())
 
@@ -188,23 +217,53 @@ def test_a_provider_quoting_the_key_back_has_it_masked() -> None:
     asyncio.run(scenario())
 
 
-def test_a_residents_request_count_survives_restarting_their_agent() -> None:
+def idle_brain(requests: int = 0) -> ChatCompletionsBrain:
+    """A brain that has already sent `requests` requests and is given no replies."""
+    brain = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
+    brain.requests = requests
+    return brain
+
+
+def test_a_residents_request_count_survives_replacing_their_agent() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        first = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
-        first.requests = 7
-        game.start_agent("a", first, "m")
-        second = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
+        game.start_agent("a", idle_brain(7), "m")
+        second = idle_brain()
+
         game.start_agent("a", second, "m")
+
         assert second.requests == 7
-        second.requests = 9
+        await game.stop_agents()
+
+    asyncio.run(scenario())
+
+
+def test_a_residents_request_count_survives_stopping_their_agent() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        running = idle_brain()
+        game.start_agent("a", running, "m")
+        later = idle_brain()
+
+        # The agent sends requests while it runs; stopping it reads the count then.
+        running.requests = 9
         game.stop_agent("a")
-        third = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
-        game.start_agent("a", third, "m")
-        assert third.requests == 9
-        # Another resident has a count of their own.
-        other = ChatCompletionsBrain("http://x", "k", "m", client=_http([], []))
+        game.start_agent("a", later, "m")
+
+        assert later.requests == 9
+        await game.stop_agents()
+
+    asyncio.run(scenario())
+
+
+def test_each_resident_has_a_request_count_of_their_own() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        game.start_agent("a", idle_brain(7), "m")
+        other = idle_brain()
+
         game.start_agent("b", other, "m")
+
         assert other.requests == 0
         await game.stop_agents()
 

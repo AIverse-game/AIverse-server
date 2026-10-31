@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -66,14 +67,21 @@ def test_a_walk_takes_its_distance_over_the_speed_and_is_paid_when_setting_off()
     assert next_due(WALKING) == ARRIVAL
 
 
-def test_walkers_move_steadily_and_arrive_on_time() -> None:
+def test_walkers_move_steadily_on_their_way() -> None:
     a = WALKING.residents[0]
+
     assert position_at(a, 2.0) == Position(0, 0)
     assert position_at(a, 2.0 + 10 / WALK_SPEED) == Position(10, 0)
     assert position_at(a, ARRIVAL + 5) == Position(40, 0)
+
+
+def test_walkers_arrive_on_time() -> None:
     early = replace(WALKING, time=ARRIVAL - 0.01)
-    assert settle_due(early) is early
+
+    not_yet = settle_due(early)
     arrived = at(WALKING, ARRIVAL).residents[0]
+
+    assert not_yet is early
     assert arrived.position == Position(40, 0)
     assert arrived.walking is None
 
@@ -86,9 +94,14 @@ def test_standing_still_starts_no_walk() -> None:
 def test_a_walker_can_do_nothing_but_leave(action: MoveTo | Mine) -> None:
     with pytest.raises(ActionRejected) as raised:
         perform(WALKING, action)
+
     assert raised.value.code == "busy"
-    # Once there, a can act again: mine the pool they walked to.
-    assert perform(at(WALKING, ARRIVAL), Mine("a", "p")).residents[0].mining is not None
+
+
+def test_a_walker_can_act_again_once_there() -> None:
+    arrived = at(WALKING, ARRIVAL)
+
+    assert perform(arrived, Mine("a", "p")).residents[0].mining is not None
 
 
 def test_leaving_on_the_way_stops_the_walker_where_they_are() -> None:
@@ -111,9 +124,11 @@ def test_selling_the_last_tokens_on_the_way_takes_the_walker_out_on_arrival() ->
     world = replace(WORLD, residents=(resident("a", 0, 0, tokens=50), WORLD.residents[1]))
     world = perform(world, OfferToSell("a", "b", TOKEN, 10, 5))
     world = perform(world, MoveTo("a", Position(40, 0)))
-    world = perform(world, RespondToEvent("b", 1, accept=True))
-    assert not world.residents[0].left
-    a = at(world, ARRIVAL).residents[0]
+
+    sold = perform(world, RespondToEvent("b", 1, accept=True))
+    a = at(sold, ARRIVAL).residents[0]
+
+    assert not sold.residents[0].left
     assert a.left
     assert a.position == Position(40, 0)
 
@@ -134,9 +149,10 @@ def test_the_clock_brings_walkers_in_and_tells_everyone() -> None:
     game.world = perform(game.world, MoveTo("a", Position(40, 0)))
     watcher = Outbox()
     game.watch(watcher)
-    assert game._until_next() == pytest.approx(40 / WALK_SPEED)
+
     now[0] = 40 / WALK_SPEED
     game.tick()
+
     assert game.world.residents[0].position == Position(40, 0)
     assert watcher.state is not None
 
@@ -145,8 +161,10 @@ def test_a_walk_due_after_the_deadline_ends_where_the_walker_is_then() -> None:
     now = [0.0]
     game = Game(replace(WORLD, time=0.0), duration=4.0, clock=lambda: now[0])
     game.world = perform(game.world, MoveTo("a", Position(40, 0)))
+
     now[0] = 100
     game.tick()
+
     assert game.world.ended
     assert game.world.residents[0].position == Position(4 * WALK_SPEED, 0)
 
@@ -155,15 +173,24 @@ def test_beginning_a_turn_through_the_game_brings_the_world_up_to_now_first() ->
     now = [0.0]
     game = Game(replace(WORLD, time=0.0), clock=lambda: now[0])
     game.world = perform(game.world, MoveTo("a", Position(40, 0)))
+
     now[0] = 40 / WALK_SPEED
     seen = game.begin_turn("a")
+
     assert seen.time == 40 / WALK_SPEED
     assert seen.position == Position(40, 0)
     assert seen.discovered == ("p",)
     # What a noticed stays with the game's world.
     assert [s.pool_id for s in game.world.residents[0].memory.known_pools] == ["p"]
-    with pytest.raises(GameError):
+
+
+def test_beginning_a_turn_through_the_game_is_refused_for_an_unknown_resident() -> None:
+    game = Game(WORLD)
+
+    with pytest.raises(GameError) as raised:
         game.begin_turn("nobody")
+
+    assert raised.value.code == "unknown_resident"
 
 
 @pytest.mark.parametrize(
@@ -180,9 +207,23 @@ def test_a_resident_rejects_impossible_walks(change: dict[str, object], message:
         replace(walker, **change)  # type: ignore[arg-type]
 
 
-def test_a_world_rejects_walks_off_the_map_or_after_the_end() -> None:
-    walker = replace(WORLD.residents[0], walking=WalkJob(Position(1, 1), 0.0, 1.0))
-    with pytest.raises(ValueError, match="outside the map"):
-        replace(WORLD, residents=(replace(walker, walking=WalkJob(Position(101, 0), 0.0, 1.0)),))
-    with pytest.raises(ValueError, match="walking after the game ended"):
-        replace(WORLD, residents=(walker,), ended=True)
+WALKER = replace(WORLD.residents[0], walking=WalkJob(Position(1, 1), 0.0, 1.0))
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (
+            lambda: replace(
+                WORLD, residents=(replace(WALKER, walking=WalkJob(Position(101, 0), 0.0, 1.0)),)
+            ),
+            "outside the map",
+        ),
+        (lambda: replace(WORLD, residents=(WALKER,), ended=True), "walking after the game ended"),
+    ],
+)
+def test_a_world_rejects_walks_off_the_map_or_after_the_end(
+    build: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()

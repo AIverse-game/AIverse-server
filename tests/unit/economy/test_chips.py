@@ -59,12 +59,13 @@ def test_three_models_the_better_dearer_and_digging_more() -> None:
 
 @pytest.mark.parametrize("model", CHIP_MODELS, ids=lambda model: model.model)
 def test_a_chip_costs_its_fixed_price_at_the_market(model: ChipModel) -> None:
-    world = perform(WORLD, BuyChip("a", model.model))
-    assert coins(world, "a") == 10_000 - model.price
-    assert item_count(world, "a", model.model) == 1
-    world = perform(world, BuyChip("a", model.model))
-    assert coins(world, "a") == 10_000 - 2 * model.price
-    assert item_count(world, "a", model.model) == 2
+    once = perform(WORLD, BuyChip("a", model.model))
+    twice = perform(once, BuyChip("a", model.model))
+
+    assert coins(once, "a") == 10_000 - model.price
+    assert item_count(once, "a", model.model) == 1
+    assert coins(twice, "a") == 10_000 - 2 * model.price
+    assert item_count(twice, "a", model.model) == 2
 
 
 def test_the_edge_of_the_radius_is_within_reach() -> None:
@@ -103,28 +104,37 @@ def test_coins_set_aside_in_an_offer_cannot_pay_for_a_chip() -> None:
     assert raised.value.code == "not_enough_coins"
 
 
-def test_a_bought_chip_mines_and_the_best_one_carried_does_the_work() -> None:
+def test_the_best_chip_carried_is_the_one_that_digs_most() -> None:
     world = perform(perform(WORLD, BuyChip("a", "MK1")), BuyChip("a", "MK2"))
+
     assert best_chip(world, "a") == MK2
     assert best_chip(world, "c") is None
-    world = perform(world, MoveTo("a", Position(10, 10)))
-    world = settle_due(replace(world, time=100.0))
-    world = perform(world, Mine("a", "p1"))
-    job = world.residents[0].mining
+
+
+def test_a_bought_chip_mines_and_the_best_one_carried_does_the_work() -> None:
+    bought = perform(perform(WORLD, BuyChip("a", "MK1")), BuyChip("a", "MK2"))
+
+    walked = settle_due(replace(perform(bought, MoveTo("a", Position(10, 10))), time=100.0))
+    mining = perform(walked, Mine("a", "p1"))
+    paid = settle_due(replace(mining, time=100.0 + MINE_SECONDS))
+
+    job = mining.residents[0].mining
     assert job is not None
     assert (job.chip, job.amount) == ("MK2", MK2.tokens_per_job)
-    world = settle_due(replace(world, time=100.0 + MINE_SECONDS))
-    assert item_count(world, "a", TOKEN) == 100 - 57 + MK2.tokens_per_job
-    assert item_count(world, "a", "MK1") == item_count(world, "a", "MK2") == 1
+    # The walk from the market to the pool cost 57 tokens.
+    assert item_count(paid, "a", TOKEN) == 100 - 57 + MK2.tokens_per_job
+    assert item_count(paid, "a", "MK1") == item_count(paid, "a", "MK2") == 1
 
 
 def test_chips_change_hands_through_offers() -> None:
     world = perform(WORLD, BuyChip("a", "MK3"))
     world = perform(world, OfferToSell("a", "c", "MK3", 1, 2_500))
-    world = perform(world, RespondToEvent("c", 1, accept=True))
-    assert item_count(world, "a", "MK3") == 0
-    assert coins(world, "a") == 10_000 - MK3.price + 2_500
-    job = perform(world, Mine("c", "p1")).residents[2].mining
+
+    traded = perform(world, RespondToEvent("c", 1, accept=True))
+    job = perform(traded, Mine("c", "p1")).residents[2].mining
+
+    assert item_count(traded, "a", "MK3") == 0
+    assert coins(traded, "a") == 10_000 - MK3.price + 2_500
     assert job is not None
     assert job.chip == "MK3"
 
@@ -143,11 +153,17 @@ def test_perception_shows_the_chips_on_sale_from_anywhere() -> None:
 
 def test_nobody_starts_with_a_chip() -> None:
     world = create_default_world(1)
-    for someone in world.residents:
-        assert best_chip(world, someone.id) is None
+
+    assert all(best_chip(world, someone.id) is None for someone in world.residents)
+
+
+def test_nobody_can_mine_at_the_start() -> None:
+    world = create_default_world(1)
     pool = world.pools[0]
     first = replace(world.residents[0], position=pool.position)
-    world = replace(world, residents=(first, *world.residents[1:]))
+    at_a_pool = replace(world, residents=(first, *world.residents[1:]))
+
     with pytest.raises(ActionRejected) as raised:
-        perform(world, Mine(first.id, pool.id))
+        perform(at_a_pool, Mine(first.id, pool.id))
+
     assert raised.value.code == "no_chip"

@@ -40,10 +40,15 @@ def test_residents_start_with_nothing_but_their_tokens() -> None:
     assert all(list_items(world, r.id) == {TOKEN: STARTING_TOKENS} for r in world.residents)
 
 
-def test_list_items_is_sorted_by_kind_and_a_copy() -> None:
+def test_list_items_is_sorted_by_kind() -> None:
+    assert list(list_items(WORLD, "b").items()) == [("bread", 1), ("wood", 2)]
+
+
+def test_changing_the_listed_items_leaves_the_world_alone() -> None:
     items = list_items(WORLD, "b")
-    assert list(items.items()) == [("bread", 1), ("wood", 2)]
+
     items["bread"] = 99
+
     assert item_count(WORLD, "b", "bread") == 1
 
 
@@ -67,11 +72,12 @@ def test_store_item_has_no_capacity_limit() -> None:
 
 
 def test_take_item_removes_and_drops_empty_stacks() -> None:
-    after = take_item(WORLD, "b", "wood")
-    assert list_items(after, "b") == {"bread": 1, "wood": 1}
-    after = take_item(after, "b", "wood", 1)
-    assert list_items(after, "b") == {"bread": 1}
-    assert after.residents[1].inventory == Inventory((("bread", 1),))
+    once = take_item(WORLD, "b", "wood")
+    twice = take_item(once, "b", "wood", 1)
+
+    assert list_items(once, "b") == {"bread": 1, "wood": 1}
+    assert list_items(twice, "b") == {"bread": 1}
+    assert twice.residents[1].inventory == Inventory((("bread", 1),))
 
 
 @pytest.mark.parametrize(("kind", "quantity"), [("wood", 3), ("grain", 1)])
@@ -104,12 +110,13 @@ def test_unknown_residents_are_rejected(call: Callable[[], object]) -> None:
     assert raised.value.code == "unknown_resident"
 
 
+@pytest.mark.parametrize("change", [store_item, take_item])
 @pytest.mark.parametrize("quantity", [0, -1, True, 1.5, math.nan])
-def test_quantities_must_be_positive_integers(quantity: int) -> None:
+def test_quantities_must_be_positive_integers(
+    change: Callable[[World, str, str, int], World], quantity: int
+) -> None:
     with pytest.raises(ValueError, match="quantity"):
-        store_item(WORLD, "a", "wood", quantity)
-    with pytest.raises(ValueError, match="quantity"):
-        take_item(WORLD, "b", "wood", quantity)
+        change(WORLD, "b", "wood", quantity)
 
 
 @pytest.mark.parametrize(
@@ -145,15 +152,22 @@ def test_inventory_rejects_invalid_stacks(stacks: tuple[tuple[str, Any], ...]) -
         Inventory(stacks)
 
 
-def test_coins_are_paid_and_earned_all_or_nothing() -> None:
-    world = add_coins(WORLD, "a", 30)
-    assert coin_balance(world, "a") == 30
-    world = take_coins(world, "a", 30)
-    assert coin_balance(world, "a") == 0
-    with pytest.raises(InventoryError) as raised:
-        take_coins(world, "a", 1)
-    assert raised.value.code == "not_enough_coins"
+def test_coins_earned_and_paid_change_the_balance() -> None:
+    earned = add_coins(WORLD, "a", 30)
+    paid = take_coins(earned, "a", 30)
+
+    assert coin_balance(earned, "a") == 30
+    assert coin_balance(paid, "a") == 0
     assert coin_balance(WORLD, "a") == 0
+
+
+def test_paying_more_coins_than_held_is_refused() -> None:
+    world = add_coins(WORLD, "a", 30)
+
+    with pytest.raises(InventoryError) as raised:
+        take_coins(world, "a", 31)
+
+    assert raised.value.code == "not_enough_coins"
 
 
 def test_coins_are_not_items_and_survive_clearing() -> None:
@@ -162,15 +176,22 @@ def test_coins_are_not_items_and_survive_clearing() -> None:
     assert list_items(world, "a") == {}
 
 
+@pytest.mark.parametrize("change", [add_coins, take_coins])
 @pytest.mark.parametrize("amount", [0, -1, True, 1.5])
-def test_coin_amounts_must_be_positive_integers(amount: Any) -> None:
-    for change in (add_coins, take_coins):
-        with pytest.raises(ValueError):
-            change(WORLD, "a", amount)
+def test_coin_amounts_must_be_positive_integers(
+    change: Callable[[World, str, int], World], amount: Any
+) -> None:
+    with pytest.raises(ValueError, match="quantity must be a positive integer"):
+        change(WORLD, "a", amount)
 
 
-def test_coin_functions_refuse_unknown_residents() -> None:
-    for call in (lambda: coin_balance(WORLD, "x"), lambda: add_coins(WORLD, "x", 1)):
-        with pytest.raises(InventoryError) as raised:
-            call()
-        assert raised.value.code == "unknown_resident"
+@pytest.mark.parametrize(
+    "call",
+    [lambda: coin_balance(WORLD, "x"), lambda: add_coins(WORLD, "x", 1)],
+    ids=["balance", "earning"],
+)
+def test_coin_functions_refuse_unknown_residents(call: Callable[[], object]) -> None:
+    with pytest.raises(InventoryError) as raised:
+        call()
+
+    assert raised.value.code == "unknown_resident"

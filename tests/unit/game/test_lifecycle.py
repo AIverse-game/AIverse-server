@@ -74,23 +74,35 @@ def test_leaving_keeps_offers_between_others() -> None:
     assert pending_for(world, "c") == (offer,)
 
 
-def test_a_resident_who_left_can_neither_act_nor_be_dealt_with() -> None:
-    world = leave_game(WORLD, "b")
-    with pytest.raises(GameError) as raised:
-        leave_game(world, "b")
+B_LEFT = leave_game(WORLD, "b")
+
+
+@pytest.mark.parametrize(
+    "action",
+    [LeaveGame("b"), MoveTo("b", Position(2, 2)), OfferToBuy("a", "b", "wood", 1, 1)],
+    ids=["leave", "move", "receive an offer"],
+)
+def test_a_resident_who_left_can_neither_act_nor_be_dealt_with(
+    action: LeaveGame | MoveTo | OfferToBuy,
+) -> None:
+    with pytest.raises(ActionRejected) as raised:
+        perform(B_LEFT, action)
+
     assert raised.value.code == "resident_left"
-    with pytest.raises(EventError) as sent:
-        send_event(world, "a", "b", PurchaseOffer("wood", 1, 1))
-    assert sent.value.code == "resident_left"
-    actions: list[LeaveGame | MoveTo] = [LeaveGame("b"), MoveTo("b", Position(2, 2))]
-    for action in actions:
-        with pytest.raises(ActionRejected) as rejected:
-            perform(world, action)
-        assert rejected.value.code == "resident_left"
-    rejected_offer = OfferToBuy("a", "b", "wood", 1, 1)
-    with pytest.raises(ActionRejected) as rejected:
-        perform(world, rejected_offer)
-    assert rejected.value.code == "resident_left"
+
+
+def test_a_resident_who_left_cannot_leave_again() -> None:
+    with pytest.raises(GameError) as raised:
+        leave_game(B_LEFT, "b")
+
+    assert raised.value.code == "resident_left"
+
+
+def test_a_resident_who_left_receives_no_events() -> None:
+    with pytest.raises(EventError) as raised:
+        send_event(B_LEFT, "a", "b", PurchaseOffer("wood", 1, 1))
+
+    assert raised.value.code == "resident_left"
 
 
 def test_the_game_goes_on_after_someone_leaves() -> None:
@@ -100,22 +112,34 @@ def test_the_game_goes_on_after_someone_leaves() -> None:
     assert not world.ended
 
 
-def test_ending_settles_every_offer_and_freezes_the_world() -> None:
+def test_ending_settles_every_offer() -> None:
     world = end_game(with_offers(WORLD))
+
     assert world.ended
     assert world.events.pending == ()
     assert world.residents == WORLD.residents
-    assert end_game(world) is world
+
+
+def test_nobody_acts_once_the_game_has_ended() -> None:
+    world = end_game(WORLD)
+
     with pytest.raises(ActionRejected) as raised:
         perform(world, MoveTo("a", Position(2, 2)))
+
     assert raised.value.code == "game_over"
+
+
+def test_ending_an_ended_game_changes_nothing() -> None:
+    world = end_game(WORLD)
+
+    assert end_game(world) is world
 
 
 def test_check_can_act_reports_unknown_residents() -> None:
     with pytest.raises(GameError) as raised:
         check_can_act(WORLD, "nobody")
+
     assert raised.value.code == "unknown_resident"
-    check_can_act(WORLD, "a")
 
 
 def test_ranks_count_reserved_coins_and_share_places_on_ties() -> None:

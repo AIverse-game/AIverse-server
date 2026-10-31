@@ -63,13 +63,24 @@ def test_resident_coins_must_be_a_non_negative_integer(coins: object) -> None:
         Resident(id="a", name="a", color="#ffffff", position=Position(1, 1), coins=coins)  # type: ignore[arg-type]
 
 
-def test_world_rejects_pending_events_after_leaving_or_ending() -> None:
+@pytest.mark.parametrize(
+    ("b_left", "ended"), [(False, True), (True, False)], ids=["game ended", "recipient left"]
+)
+def test_world_rejects_pending_events_after_leaving_or_ending(b_left: bool, ended: bool) -> None:
     event = Event(id=1, sender_id="a", recipient_id="b", payload=EventPayload())
     queue = EventQueue((event,), next_id=2)
-    residents = (resident("a", 1, 1), resident("b", 2, 2))
-    World(map=WorldMap(size=10), residents=residents, events=queue)
+    residents = (resident("a", 1, 1), replace(resident("b", 2, 2), left=b_left))
+
     with pytest.raises(ValueError, match="pending after"):
-        World(map=WorldMap(size=10), residents=residents, events=queue, ended=True)
-    gone = (resident("a", 1, 1), replace(resident("b", 2, 2), left=True))
-    with pytest.raises(ValueError, match="pending after"):
-        World(map=WorldMap(size=10), residents=gone, events=queue)
+        World(map=WorldMap(size=10), residents=residents, events=queue, ended=ended)
+
+
+def test_world_keeps_pending_events_between_residents_still_playing() -> None:
+    event = Event(id=1, sender_id="a", recipient_id="b", payload=EventPayload())
+    queue = EventQueue((event,), next_id=2)
+
+    world = World(
+        map=WorldMap(size=10), residents=(resident("a", 1, 1), resident("b", 2, 2)), events=queue
+    )
+
+    assert world.events.pending == (event,)

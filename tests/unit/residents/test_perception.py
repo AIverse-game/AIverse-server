@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -75,21 +76,35 @@ def test_a_resident_sees_the_pools_and_residents_in_range_and_nothing_further() 
     assert seen.residents[0].mining_pool_id is None
 
 
-def test_seeing_a_pool_discovers_it_and_the_memory_outlasts_walking_away() -> None:
+def test_seeing_a_pool_for_the_first_time_discovers_it() -> None:
     world, first = begin_turn(WORLD, "a")
+    _, second = begin_turn(world, "a")
+
     assert first.discovered == ("near",)
     assert first.known_pools == first.pools
-    world, second = begin_turn(world, "a")
     assert second.discovered == ()
-    # b digs some tokens out while a walks off; a still remembers the reserve as it was.
+
+
+def seen_then_left() -> World:
+    """a sees the near pool, then walks out of sight while b digs some tokens out of it."""
+    world, _ = begin_turn(WORLD, "a")
     world = perform(world, Mine("b", "near"))
-    world = arrive(perform(world, MoveTo("a", Position(10, 40))))
-    world, away = begin_turn(world, "a")
+    return arrive(perform(world, MoveTo("a", Position(10, 40))))
+
+
+def test_a_pool_out_of_sight_is_remembered_as_it_was_last_seen() -> None:
+    _, away = begin_turn(seen_then_left(), "a")
+
     assert away.pools == ()
     assert away.known_pools == (PoolSighting("near", Position(20, 10), 4, 100, 3.0),)
-    # Coming back updates the sighting.
+
+
+def test_coming_back_to_a_pool_updates_the_sighting() -> None:
+    world, _ = begin_turn(seen_then_left(), "a")
+
     world = arrive(perform(world, MoveTo("a", Position(10, 10))))
     _, back = begin_turn(world, "a")
+
     sighting = PoolSighting("near", Position(20, 10), 4, 100 - MINE_YIELD, world.time)
     assert back.known_pools == (sighting,)
     assert back.discovered == ()
@@ -108,7 +123,10 @@ def test_others_activity_in_range_is_noticed_once_and_own_activity_never() -> No
     world = perform(world, MoveTo("d", Position(10, 45)))  # leaves from within range
     world = perform(world, MoveTo("b", Position(40, 40)))  # ends out of range, starts in it
     world = arrive(perform(world, MoveTo("a", Position(10, 12))))
+
     world, seen = begin_turn(world, "a")
+    _, again = begin_turn(world, "a")
+
     # Setting off is logged at once; arriving when each gets there, nearest first.
     assert [(entry.resident_id, entry.kind) for entry in seen.activity] == [
         ("c", "started_walking"),
@@ -121,7 +139,6 @@ def test_others_activity_in_range_is_noticed_once_and_own_activity_never() -> No
     start = Activity(1, 3.0, "c", "started_walking", Position(20, 20), Position(60, 60))
     assert seen.activity[0] == start
     assert seen.activity[-1].time == pytest.approx(3.0 + 40 * 2**0.5 / WALK_SPEED)
-    _, again = begin_turn(world, "a")
     assert again.activity == ()
 
 
@@ -153,17 +170,19 @@ def test_range_is_measured_from_where_the_perceiver_stands_now() -> None:
 def test_walkers_are_seen_where_they_have_got_to_on_their_way() -> None:
     # c heads straight for a; after 30 of the 70 or so units, c is still out of sight.
     world = perform(WORLD, MoveTo("c", Position(10, 10)))
-    _, seen = begin_turn(replace(world, time=3.0 + 30 / WALK_SPEED), "a")
-    assert [other.resident_id for other in seen.residents] == ["b", "d"]
+
+    _, early = begin_turn(replace(world, time=3.0 + 30 / WALK_SPEED), "a")
+    _, later = begin_turn(replace(world, time=3.0 + 60 / WALK_SPEED), "a")
+    _, walker = begin_turn(replace(world, time=3.0 + 60 / WALK_SPEED), "c")
+
+    assert [other.resident_id for other in early.residents] == ["b", "d"]
     # Within sight later on, seen on the way with where they are heading.
-    _, seen = begin_turn(replace(world, time=3.0 + 60 / WALK_SPEED), "a")
-    c = next(other for other in seen.residents if other.resident_id == "c")
+    c = next(other for other in later.residents if other.resident_id == "c")
     assert c.walking_to == Position(10, 10)
     assert c.position.x == pytest.approx(60 - 60 / 2**0.5)
     # A walker looking around sees from where they have got to.
-    _, seen = begin_turn(replace(world, time=3.0 + 60 / WALK_SPEED), "c")
-    assert seen.position == c.position
-    assert [sighting.pool_id for sighting in seen.pools] == ["near"]
+    assert walker.position == c.position
+    assert [sighting.pool_id for sighting in walker.pools] == ["near"]
 
 
 def test_mining_is_logged_when_it_starts_and_when_the_clock_pays_it_out() -> None:
@@ -203,10 +222,15 @@ def test_a_miner_who_leaves_is_logged_as_leaving_only() -> None:
 
 def test_a_walk_that_spends_the_last_token_logs_the_move_and_the_exit() -> None:
     world = replace(WORLD, residents=(*WORLD.residents[:3], resident("d", 10, 30, tokens=5)))
+
     world = arrive(perform(world, MoveTo("d", Position(10, 25))))
-    kinds = [entry.kind for entry in world.activity.entries]
-    assert kinds == ["started_walking", "moved", "left_game"]
+
     _, seen = begin_turn(world, "a")
+    assert [entry.kind for entry in world.activity.entries] == [
+        "started_walking",
+        "moved",
+        "left_game",
+    ]
     assert seen.residents[-1].left
 
 
@@ -227,9 +251,11 @@ def test_primitives_that_change_nothing_on_the_map_log_nothing() -> None:
 
 def test_a_busy_miner_can_still_look_around() -> None:
     world = perform(WORLD, Mine("b", "near"))
+
     _, seen = begin_turn(world, "b")
-    assert seen.pools[0].reserve == 100 - MINE_YIELD
     _, watched = begin_turn(world, "a")
+
+    assert seen.pools[0].reserve == 100 - MINE_YIELD
     assert watched.residents[0].mining_pool_id == "near"
 
 
@@ -265,21 +291,37 @@ def test_the_log_keeps_only_the_latest_entries_and_numbering_goes_on() -> None:
     assert log.next_seq == ACTIVITY_LIMIT + 7
 
 
-def test_a_world_rejects_memories_and_activity_it_cannot_account_for() -> None:
-    a = WORLD.residents[0]
-    sighting = PoolSighting("gone", Position(1, 1), 1, 1, 0.0)
-    with pytest.raises(ValueError, match="remembers unknown pool"):
-        replace(WORLD, residents=(replace(a, memory=Memory((sighting,))),))
-    with pytest.raises(ValueError, match="not yet logged"):
-        replace(WORLD, residents=(replace(a, memory=Memory(activity_seen=1)),))
-    stray = Activity(1, 0.0, "ghost", "left_game", Position(1, 1))
-    with pytest.raises(ValueError, match="unknown resident"):
-        replace(WORLD, activity=ActivityLog((stray,), 2))
-    mined = Activity(1, 0.0, "a", "started_mining", Position(1, 1), pool_id="gone")
-    with pytest.raises(ValueError, match="unknown pool"):
-        replace(WORLD, activity=ActivityLog((mined,), 2))
-    with pytest.raises(ValueError, match="above 0"):
-        ActivityLog((replace(stray, resident_id="a"),), 1)
-    crowd = tuple(replace(stray, seq=seq) for seq in range(1, ACTIVITY_LIMIT + 2))
-    with pytest.raises(ValueError, match="over the limit"):
-        ActivityLog(crowd, ACTIVITY_LIMIT + 2)
+A = WORLD.residents[0]
+GONE = PoolSighting("gone", Position(1, 1), 1, 1, 0.0)
+STRAY = Activity(1, 0.0, "ghost", "left_game", Position(1, 1))
+MINED_GONE = Activity(1, 0.0, "a", "started_mining", Position(1, 1), pool_id="gone")
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (
+            lambda: replace(WORLD, residents=(replace(A, memory=Memory((GONE,))),)),
+            "remembers unknown pool",
+        ),
+        (
+            lambda: replace(WORLD, residents=(replace(A, memory=Memory(activity_seen=1)),)),
+            "not yet logged",
+        ),
+        (lambda: replace(WORLD, activity=ActivityLog((STRAY,), 2)), "unknown resident"),
+        (lambda: replace(WORLD, activity=ActivityLog((MINED_GONE,), 2)), "unknown pool"),
+        (lambda: ActivityLog((replace(STRAY, resident_id="a"),), 1), "above 0"),
+        (
+            lambda: ActivityLog(
+                tuple(replace(STRAY, seq=seq) for seq in range(1, ACTIVITY_LIMIT + 2)),
+                ACTIVITY_LIMIT + 2,
+            ),
+            "over the limit",
+        ),
+    ],
+)
+def test_a_world_rejects_memories_and_activity_it_cannot_account_for(
+    build: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()

@@ -1,4 +1,5 @@
 import math
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -72,15 +73,22 @@ def test_selling_pays_the_price_summed_over_the_sale() -> None:
 
 def test_the_price_falls_with_sales_and_recovers_with_time() -> None:
     assert unit_price(WORLD.market, 7.0) == MARKET_BASE_PRICE  # type: ignore[arg-type]
+
     world = perform(WORLD, SellTokens("a", 100))
+
     market = world.market
     assert market is not None
     assert unit_price(market, 7.0) == pytest.approx(MARKET_BASE_PRICE / 2)
     assert pressure_at(market, 7.0 + MARKET_HALF_LIFE) == pytest.approx(50)
     assert unit_price(market, 7.0 + MARKET_HALF_LIFE) == pytest.approx(MARKET_BASE_PRICE / 1.5)
     assert unit_price(market, 7.0 + 20 * MARKET_HALF_LIFE) == pytest.approx(MARKET_BASE_PRICE)
-    # A later sale starts from the faded pressure.
+
+
+def test_a_later_sale_starts_from_the_faded_pressure() -> None:
+    world = perform(WORLD, SellTokens("a", 100))
+
     later = perform(replace(world, time=7.0 + MARKET_HALF_LIFE), SellTokens("b", 10))
+
     assert later.market is not None
     assert later.market.pressure == pytest.approx(60)
     assert later.market.pressure_at == 7.0 + MARKET_HALF_LIFE
@@ -150,12 +158,19 @@ def test_a_sale_worth_less_than_a_coin_is_refused() -> None:
 
 def test_tokens_set_aside_in_an_offer_cannot_be_sold() -> None:
     world = perform(WORLD, OfferToSell("a", "b", TOKEN, 450, 1))
+
     with pytest.raises(ActionRejected) as raised:
         perform(world, SellTokens("a", 51))
+
     assert raised.value.code == "not_enough_tokens"
-    # Selling the rest leaves tokens owned in the offer, so a stays in the game.
-    world = perform(world, SellTokens("a", 50))
-    assert not world.residents[0].left
+
+
+def test_selling_every_token_carried_keeps_a_seller_with_tokens_in_an_offer_in_the_game() -> None:
+    world = perform(WORLD, OfferToSell("a", "b", TOKEN, 450, 1))
+
+    sold = perform(world, SellTokens("a", 50))
+
+    assert not sold.residents[0].left
 
 
 def test_a_busy_resident_cannot_sell() -> None:
@@ -184,13 +199,19 @@ def test_selling_every_token_owned_takes_the_seller_out_with_the_coins() -> None
 
 def test_perception_shows_the_market_and_its_price_from_anywhere() -> None:
     world = perform(WORLD, SellTokens("a", 100))
+
     _, seen = begin_turn(replace(world, time=7.0 + MARKET_HALF_LIFE), "c")
+
     assert seen.market is not None
     assert seen.market.position == Position(50, 50)
     assert seen.market.radius == 5
     assert seen.market.price == pytest.approx(MARKET_BASE_PRICE / 1.5)
-    _, unseen = begin_turn(replace(world, market=None), "c")
-    assert unseen.market is None
+
+
+def test_perception_shows_no_market_in_a_world_without_one() -> None:
+    _, seen = begin_turn(replace(WORLD, market=None), "c")
+
+    assert seen.market is None
 
 
 def test_the_default_world_has_a_market_in_the_middle() -> None:
@@ -216,16 +237,24 @@ def test_mining_and_selling_happen_in_different_places() -> None:
         assert not pool.reaches(world.market.position)
 
 
-def test_the_world_refuses_an_impossible_market() -> None:
-    with pytest.raises(ValueError):
-        replace(WORLD, market=Market(Position(101, 50), 5))
-    with pytest.raises(ValueError):
-        Market(Position(50, 50), 0)
-    with pytest.raises(ValueError):
-        Market(Position(50, 50), 5, pressure=-1)
-    with pytest.raises(ValueError):
-        Market(Position(50, 50), 5, pressure=math.inf)
-    with pytest.raises(ValueError):
-        Market(Position(50, 50), 5, pressure_at=math.nan)
-    with pytest.raises(ValueError):
-        replace(WORLD, market=Market(Position(50, 50), 5, pressure_at=8.0))
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: replace(WORLD, market=Market(Position(101, 50), 5)), "outside the map"),
+        (lambda: Market(Position(50, 50), 0), "radius 0"),
+        (lambda: Market(Position(50, 50), 5, pressure=-1), "pressure must be a finite number"),
+        (
+            lambda: Market(Position(50, 50), 5, pressure=math.inf),
+            "pressure must be a finite number",
+        ),
+        (lambda: Market(Position(50, 50), 5, pressure_at=math.nan), "pressure time must be finite"),
+        (
+            lambda: replace(WORLD, market=Market(Position(50, 50), 5, pressure_at=8.0)),
+            "last sold to after the current time",
+        ),
+    ],
+    ids=["off the map", "no radius", "negative", "infinite", "no sale time", "sale in future"],
+)
+def test_the_world_refuses_an_impossible_market(build: Callable[[], object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()

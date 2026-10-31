@@ -39,7 +39,10 @@ def look(game: Game, resident_id: str) -> Observation:
 def test_observation_shows_self_market_pools_offers_and_ranking() -> None:
     game, _ = make_game()
     game.act(OfferToSell("b", "a", TOKEN, 5, 80))
+
     seen = look(game, "a")
+    them = look(game, "b")
+
     assert seen.me.at_market and seen.me.tokens == 100 and seen.me.coins == 5000
     assert seen.market is not None and seen.market.distance == 0
     assert seen.offers_to_me[0].from_id == "b" and seen.offers_to_me[0].side == "sell"
@@ -47,7 +50,6 @@ def test_observation_shows_self_market_pools_offers_and_ranking() -> None:
     assert [resident.id for resident in seen.nearby_residents] == ["b"]
     # The pool is 30 units away, out of sight, so not yet known.
     assert seen.known_pools == ()
-    them = look(game, "b")
     assert them.my_offers[0].to_id == "a"
     assert them.me.tokens == 95 and them.me.tokens_in_offers == 5
     assert [pool.id for pool in them.known_pools] == ["p1"]
@@ -56,7 +58,9 @@ def test_observation_shows_self_market_pools_offers_and_ranking() -> None:
 
 def test_observation_json_is_compact_and_rounded() -> None:
     game, clock = make_game()
+
     clock.now = 1 / 3
     shown = json.loads(to_json(look(game, "a")))
+
     assert shown["time"] == 0.3
     assert shown["me"]["position"] == {"x": 50, "y": 50}

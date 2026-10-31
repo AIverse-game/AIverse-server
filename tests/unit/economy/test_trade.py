@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import pytest
 
 from aiverse_server.core.events import (
@@ -52,38 +54,49 @@ def holdings(world: World, resident_id: str) -> tuple[dict[str, int], int]:
 
 
 def test_a_purchase_offer_sets_the_coins_aside_and_completes_on_accept() -> None:
-    world, offer = send_event(WORLD, "a", "b", PurchaseOffer("bread", 3, 10))
-    assert holdings(world, "a") == ({}, 10)
-    assert holdings(world, "b") == ({"bread": 5}, 0)
-    world = accept_event(world, "b", offer.id)
-    assert holdings(world, "a") == ({"bread": 3}, 10)
-    assert holdings(world, "b") == ({"bread": 2}, 10)
-    assert world.events.pending == ()
+    sent, offer = send_event(WORLD, "a", "b", PurchaseOffer("bread", 3, 10))
+    accepted = accept_event(sent, "b", offer.id)
+
+    assert holdings(sent, "a") == ({}, 10)
+    assert holdings(sent, "b") == ({"bread": 5}, 0)
+    assert holdings(accepted, "a") == ({"bread": 3}, 10)
+    assert holdings(accepted, "b") == ({"bread": 2}, 10)
+    assert accepted.events.pending == ()
 
 
 def test_a_sale_offer_sets_the_items_aside_and_completes_on_accept() -> None:
-    world, offer = send_event(WORLD, "b", "a", SaleOffer("bread", 3, 10))
-    assert holdings(world, "a") == ({}, 20)
-    assert holdings(world, "b") == ({"bread": 2}, 0)
-    world = accept_event(world, "a", offer.id)
-    assert holdings(world, "a") == ({"bread": 3}, 10)
-    assert holdings(world, "b") == ({"bread": 2}, 10)
-    assert world.events.pending == ()
+    sent, offer = send_event(WORLD, "b", "a", SaleOffer("bread", 3, 10))
+    accepted = accept_event(sent, "a", offer.id)
+
+    assert holdings(sent, "a") == ({}, 20)
+    assert holdings(sent, "b") == ({"bread": 2}, 0)
+    assert holdings(accepted, "a") == ({"bread": 3}, 10)
+    assert holdings(accepted, "b") == ({"bread": 2}, 10)
+    assert accepted.events.pending == ()
 
 
-@pytest.mark.parametrize("decline", ["reject", "withdraw"])
+@pytest.mark.parametrize(
+    "decline",
+    [
+        lambda world, sender, recipient, event_id: reject_event(world, recipient, event_id),
+        lambda world, sender, recipient, event_id: withdraw_event(world, sender, event_id),
+    ],
+    ids=["recipient rejects", "sender withdraws"],
+)
 @pytest.mark.parametrize(
     ("sender", "recipient", "offer"),
     [("a", "b", PurchaseOffer("bread", 3, 10)), ("b", "a", SaleOffer("bread", 3, 10))],
 )
 def test_declining_gives_the_sender_back_what_was_set_aside(
-    decline: str, sender: str, recipient: str, offer: PurchaseOffer | SaleOffer
+    decline: Callable[[World, str, str, int], World],
+    sender: str,
+    recipient: str,
+    offer: PurchaseOffer | SaleOffer,
 ) -> None:
-    world, event = send_event(WORLD, sender, recipient, offer)
-    if decline == "reject":
-        world = reject_event(world, recipient, event.id)
-    else:
-        world = withdraw_event(world, sender, event.id)
+    sent, event = send_event(WORLD, sender, recipient, offer)
+
+    world = decline(sent, sender, recipient, event.id)
+
     assert world.residents == WORLD.residents
     assert world.events.pending == ()
 
@@ -114,30 +127,51 @@ def test_a_recipient_short_of_their_side_leaves_the_offer_pending(
     sender: str, recipient: str, offer: PurchaseOffer | SaleOffer, code: str
 ) -> None:
     world, event = send_event(WORLD, sender, recipient, offer)
+
     with pytest.raises(InventoryError) as raised:
         accept_event(world, recipient, event.id)
+
     assert raised.value.code == code
     assert pending_for(world, recipient) == (event,)
-    # Once they have enough, the same offer goes through.
+
+
+@pytest.mark.parametrize(
+    ("sender", "recipient", "offer"),
+    [("a", "b", PurchaseOffer("bread", 6, 10)), ("b", "a", SaleOffer("bread", 1, 21))],
+)
+def test_an_offer_left_pending_goes_through_once_the_recipient_has_enough(
+    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer
+) -> None:
+    world, event = send_event(WORLD, sender, recipient, offer)
     topped_up = store_item(add_coins(world, "a", 1), "b", "bread")
+
     assert accept_event(topped_up, recipient, event.id).events.pending == ()
 
 
-def test_offers_are_sent_before_the_recipient_can_pay() -> None:
-    # b holds no coins yet; the offer still goes out, since b may earn them before answering.
-    world, event = send_event(WORLD, "b", "a", SaleOffer("bread", 1, 1))
-    assert pending_for(world, "a") == (event,)
-    world, event = send_event(WORLD, "a", "b", PurchaseOffer("wood", 1, 1))
-    assert pending_for(world, "b") == (event,)
+# b holds no coins yet and no wood; the offers still go out, since b may get them before
+# the deal goes through.
+@pytest.mark.parametrize(
+    ("sender", "recipient", "offer"),
+    [("b", "a", SaleOffer("bread", 1, 1)), ("a", "b", PurchaseOffer("wood", 1, 1))],
+)
+def test_offers_are_sent_before_the_recipient_can_pay(
+    sender: str, recipient: str, offer: PurchaseOffer | SaleOffer
+) -> None:
+    world, event = send_event(WORLD, sender, recipient, offer)
+
+    assert pending_for(world, recipient) == (event,)
 
 
 def test_reserved_coins_count_only_pending_purchases_by_that_resident() -> None:
     world, first = send_event(WORLD, "a", "b", PurchaseOffer("bread", 1, 4))
     world, _ = send_event(world, "a", "b", PurchaseOffer("bread", 1, 6))
     world, _ = send_event(world, "b", "a", SaleOffer("bread", 1, 7))
+
+    rejected = reject_event(world, "b", first.id)
+
     assert reserved_coins(world, "a") == 10
     assert reserved_coins(world, "b") == 0
-    assert reserved_coins(reject_event(world, "b", first.id), "a") == 6
+    assert reserved_coins(rejected, "a") == 6
 
 
 @pytest.mark.parametrize("payload", [PurchaseOffer, SaleOffer])

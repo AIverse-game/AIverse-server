@@ -11,6 +11,7 @@ from aiverse_server.core.world import Inventory, Market, Pool, Position, Residen
 from aiverse_server.economy.tokens import TOKEN
 from aiverse_server.game.actions import (
     CancelContract,
+    LeaveGame,
     MoveTo,
     OfferToSell,
     ProposeContract,
@@ -67,47 +68,98 @@ async def _until(condition: Callable[[], bool], limit: float = 2.0) -> None:
         await asyncio.sleep(0.005)
 
 
-def test_the_loop_wakes_when_a_walk_ends_and_stops_when_the_game_does() -> None:
+def test_the_loop_lets_a_walker_be_until_the_walk_ends() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        brain = Recorder(lambda seen, tools: tools.move_to(60, 50))
+
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+        await asyncio.sleep(0.05)
+
+        assert len(brain.seen) == 1
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_when_a_walk_ends() -> None:
     async def scenario() -> None:
         game, clock = make_game()
         brain = Recorder(lambda seen, tools: None if seen.time else tools.move_to(60, 50))
-        records: list[TurnRecord] = []
-        runner = AgentRunner(game, "a", brain, Pace(interval=0, retry=0, idle=60), records.append)
-        task = asyncio.create_task(runner.run())
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
-        await asyncio.sleep(0.05)
-        assert len(brain.seen) == 1, "busy walking, nothing to wake for"
+
         clock.now = 4.0
         game.tick()
         await _until(lambda: len(brain.seen) == 2)
+
         assert brain.seen[1].me.position == Position(60, 50)
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_stops_when_the_game_ends() -> None:
+    async def scenario() -> None:
+        game, clock = make_game()
+        brain = Recorder()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
         clock.now = 600
         game.tick()
         await asyncio.wait_for(task, 1)
+
+        assert task.done() and not task.cancelled()
+
+    asyncio.run(scenario())
+
+
+def test_each_turn_is_recorded_with_what_was_seen_and_the_calls_made() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        brain = Recorder(lambda seen, tools: tools.move_to(60, 50))
+        records: list[TurnRecord] = []
+        runner = AgentRunner(game, "a", brain, Pace(0, 0, 60), records.append)
+
+        task = asyncio.create_task(runner.run())
+        await _until(lambda: len(records) == 1)
+        task.cancel()
+
         assert records[0].calls[0].name == "move_to"
         assert json.loads(record_to_json(records[0]))["observation"]["me"]["id"] == "a"
 
     asyncio.run(scenario())
 
 
-def test_the_loop_wakes_for_speech_even_while_busy_and_for_offers_when_free() -> None:
+def test_the_loop_wakes_for_speech_even_while_busy() -> None:
     async def scenario() -> None:
         game, _ = make_game()
         game.act(MoveTo("a", Position(90, 90)))
         brain = Recorder()
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
+
         game.act(Say("b", "你好", to="a"))
         await _until(lambda: len(brain.seen) == 2)
+
         assert brain.seen[1].speech[0].text == "你好"
         task.cancel()
 
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_for_an_offer_when_free() -> None:
+    async def scenario() -> None:
         game, _ = make_game()
         brain = Recorder()
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
+
         game.act(OfferToSell("b", "a", TOKEN, 5, 80))
         await _until(lambda: len(brain.seen) == 2)
+
         assert len(brain.seen[1].offers_to_me) == 1
         task.cancel()
 
@@ -125,10 +177,12 @@ def test_the_loop_wakes_a_party_when_a_contract_ends_not_by_their_doing() -> Non
             asyncio.create_task(AgentRunner(game, "b", supplier, Pace(0, 0, 60)).run()),
         ]
         await _until(lambda: len(buyer.seen) == len(supplier.seen) == 1)
+
         game.act(CancelContract("b", 1))
         await _until(lambda: len(buyer.seen) == 2)
-        assert buyer.seen[1].ended_contracts[0].deposit_forfeited == 20
         await asyncio.sleep(0.05)
+
+        assert buyer.seen[1].ended_contracts[0].deposit_forfeited == 20
         assert len(supplier.seen) == 1, "the supplier cancelled it, nothing to wake them for"
         for task in tasks:
             task.cancel()
@@ -148,8 +202,10 @@ def test_a_walk_that_ends_while_the_brain_thinks_still_wakes_it() -> None:
                 game.tick()
 
         brain = Recorder(walk_and_wait)
+
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 2)
+
         assert brain.seen[1].me.position == Position(55, 50)
         task.cancel()
 
@@ -160,28 +216,37 @@ def test_an_idle_resident_is_asked_again_and_rounds_keep_their_interval() -> Non
     async def scenario() -> None:
         game, _ = make_game()
         brain = Recorder()
+
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0.1, 0.1, 0.0)).run())
         await asyncio.sleep(0.35)
         task.cancel()
+
         assert 2 <= len(brain.seen) <= 4
 
     asyncio.run(scenario())
 
 
+class Broken:
+    """A brain that fails every turn, counting how often it was asked."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
+        self.calls += 1
+        raise RuntimeError("model unreachable")
+
+
 def test_a_failing_brain_is_recorded_and_asked_again() -> None:
-    class Broken:
-        calls = 0
-
-        async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
-            Broken.calls += 1
-            raise RuntimeError("model unreachable")
-
     async def scenario() -> None:
         game, _ = make_game()
+        brain = Broken()
         records: list[TurnRecord] = []
-        task = asyncio.create_task(AgentRunner(game, "a", Broken(), QUICK, records.append).run())
-        await _until(lambda: Broken.calls >= 2)
+
+        task = asyncio.create_task(AgentRunner(game, "a", brain, QUICK, records.append).run())
+        await _until(lambda: brain.calls >= 2)
         task.cancel()
+
         assert records[0].error == "RuntimeError: model unreachable"
 
     asyncio.run(scenario())
@@ -194,8 +259,10 @@ def test_a_failing_record_is_logged_and_the_loop_goes_on() -> None:
     async def scenario() -> None:
         game, _ = make_game()
         brain = Recorder()
+
         task = asyncio.create_task(AgentRunner(game, "a", brain, QUICK, full_disk).run())
         await _until(lambda: len(brain.seen) >= 2)
+
         assert not task.done()
         task.cancel()
 
@@ -205,10 +272,12 @@ def test_a_failing_record_is_logged_and_the_loop_goes_on() -> None:
 def test_the_loop_stops_when_its_resident_leaves() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        from aiverse_server.game.actions import LeaveGame
+        brain = Recorder()
 
         game.act(LeaveGame("a"))
-        await asyncio.wait_for(AgentRunner(game, "a", Recorder(), QUICK).run(), 1)
+        await asyncio.wait_for(AgentRunner(game, "a", brain, QUICK).run(), 1)
+
+        assert brain.seen == []
 
     asyncio.run(scenario())
 
@@ -228,11 +297,13 @@ def test_a_stopped_runner_closes_its_brain() -> None:
     async def scenario() -> None:
         game, _ = make_game()
         brain = ClosingBrain()
+
         task = asyncio.create_task(AgentRunner(game, "a", brain, QUICK).run())
         await asyncio.sleep(0.01)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
         assert brain.closed
 
     asyncio.run(scenario())

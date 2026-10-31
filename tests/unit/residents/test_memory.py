@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -49,9 +50,11 @@ def at(world: World, time: float) -> World:
 def test_the_resident_chooses_how_long_each_note_lasts() -> None:
     world, plan = remember(WORLD, "a", "  sell tokens to b above 3 coins  ", "long_term")
     world, sight = remember(world, "a", "b is heading north", "short_term")
+
+    _, seen = begin_turn(world, "a")
+
     assert plan == Note(1, "sell tokens to b above 3 coins", 5.0, None)
     assert sight == Note(2, "b is heading north", 5.0, 5.0 + SHORT_TERM_SECONDS)
-    _, seen = begin_turn(world, "a")
     assert seen.long_term == (plan,)
     assert seen.short_term == (sight,)
     # Nobody else's memory changes.
@@ -62,12 +65,15 @@ def test_short_term_notes_expire_and_long_term_notes_last_the_game() -> None:
     world, _ = remember(WORLD, "a", "keep", "long_term")
     world, _ = remember(world, "a", "fleeting", "short_term")
     expires = 5.0 + SHORT_TERM_SECONDS
+
     world, before = begin_turn(at(world, expires - 0.01), "a")
-    assert [note.text for note in before.short_term] == ["fleeting"]
     world, after = begin_turn(at(world, expires), "a")
-    assert after.short_term == ()
-    assert world.residents[0].memory.short_term == ()
+    cleared = world.residents[0].memory.short_term
     world, much_later = begin_turn(at(world, 1000.0), "a")
+
+    assert [note.text for note in before.short_term] == ["fleeting"]
+    assert after.short_term == ()
+    assert cleared == ()
     assert [note.text for note in much_later.long_term] == ["keep"]
 
 
@@ -97,12 +103,21 @@ def test_forgetting_removes_a_note_of_either_term() -> None:
     world, drop_short = remember(world, "a", "drop too", "short_term")
     world = forget(world, "a", drop_long.id)
     world = forget(world, "a", drop_short.id)
+
     _, seen = begin_turn(world, "a")
+
     assert seen.long_term == (keep,)
     assert seen.short_term == ()
-    # Ids are never reused.
+
+
+def test_the_id_of_a_forgotten_note_is_not_used_again() -> None:
+    world, _ = remember(WORLD, "a", "keep", "long_term")
+    world, dropped = remember(world, "a", "drop", "long_term")
+    world = forget(world, "a", dropped.id)
+
     _, again = remember(world, "a", "new", "long_term")
-    assert again.id == 4
+
+    assert again.id == 3
 
 
 # 2 was forgotten already, 0 and 99 never existed.
@@ -148,18 +163,38 @@ def test_a_note_may_fill_the_length_limit_once_trimmed() -> None:
     assert len(note.text) == NOTE_LENGTH_LIMIT
 
 
-@pytest.mark.parametrize("term", ["long_term", "short_term"])
-def test_a_full_memory_refuses_until_the_resident_forgets(term: NoteTerm) -> None:
+def full(term: NoteTerm) -> World:
+    """a's notes of that term are at the limit."""
     world = WORLD
     for i in range(NOTE_LIMITS[term]):
         world, _ = remember(world, "a", f"note {i}", term)
+    return world
+
+
+@pytest.mark.parametrize("term", ["long_term", "short_term"])
+def test_a_full_memory_refuses_another_note_of_that_term(term: NoteTerm) -> None:
     with pytest.raises(NoteError) as error:
-        remember(world, "a", "one too many", term)
+        remember(full(term), "a", "one too many", term)
+
     assert error.value.code == "memory_full"
-    other: NoteTerm = "short_term" if term == "long_term" else "long_term"
-    remember(world, "a", "the other term has room", other)
-    world = forget(world, "a", 1)
-    remember(world, "a", "room again", term)
+
+
+@pytest.mark.parametrize(
+    ("term", "other"), [("long_term", "short_term"), ("short_term", "long_term")]
+)
+def test_a_full_memory_still_has_room_for_the_other_term(term: NoteTerm, other: NoteTerm) -> None:
+    _, note = remember(full(term), "a", "the other term has room", other)
+
+    assert note.text == "the other term has room"
+
+
+@pytest.mark.parametrize("term", ["long_term", "short_term"])
+def test_forgetting_makes_room_in_a_full_memory(term: NoteTerm) -> None:
+    world = forget(full(term), "a", 1)
+
+    _, note = remember(world, "a", "room again", term)
+
+    assert note.text == "room again"
 
 
 def test_expired_notes_make_room() -> None:
@@ -188,13 +223,28 @@ def test_only_an_integer_id_forgets_a_note(note_id: Any) -> None:
     assert error.value.code == "unknown_note"
 
 
-def test_busy_residents_can_still_keep_notes() -> None:
-    walking = perform(WORLD, MoveTo("b", Position(80, 20)))
-    remember(walking, "b", "walking north", "short_term")
-    mining = perform(WORLD, Mine("a", "near"))
-    remember(mining, "a", "mining near", "long_term")
+@pytest.mark.parametrize(
+    ("busy", "resident_id"),
+    [
+        (perform(WORLD, MoveTo("b", Position(80, 20))), "b"),
+        (perform(WORLD, Mine("a", "near")), "a"),
+    ],
+    ids=["walking", "mining"],
+)
+def test_busy_residents_can_still_keep_notes(busy: World, resident_id: str) -> None:
+    _, note = remember(busy, resident_id, "busy", "long_term")
+
+    assert note.text == "busy"
 
 
+@pytest.mark.parametrize(
+    "keep",
+    [
+        lambda world, resident_id: remember(world, resident_id, "x", "long_term"),
+        lambda world, resident_id: forget(world, resident_id, 1),
+    ],
+    ids=["remember", "forget"],
+)
 @pytest.mark.parametrize(
     ("world", "resident_id", "code"),
     [
@@ -204,28 +254,36 @@ def test_busy_residents_can_still_keep_notes() -> None:
     ],
 )
 def test_residents_who_cannot_act_cannot_keep_notes(
-    world: World, resident_id: str, code: str
+    keep: Callable[[World, str], object], world: World, resident_id: str, code: str
 ) -> None:
     with pytest.raises(GameError) as error:
-        remember(world, resident_id, "x", "long_term")
+        keep(world, resident_id)
+
     assert error.value.code == code
-    with pytest.raises(GameError):
-        forget(world, resident_id, 1)
 
 
-def test_notes_are_timed_from_now_through_the_game_and_never_sent() -> None:
+def test_notes_through_the_game_are_timed_from_now() -> None:
     now = [0.0]
     game = Game(replace(WORLD, time=0.0), clock=lambda: now[0])
-    watcher = Outbox()
-    game.watch(watcher)
+
     now[0] = 30.0
     note = game.remember("a", "fleeting", "short_term")
+    now[0] = 30.0 + SHORT_TERM_SECONDS
+    seen = game.begin_turn("a")
+
     assert note.written_at == 30.0
     assert note.expires_at == 30.0 + SHORT_TERM_SECONDS
+    assert seen.short_term == ()
+
+
+def test_notes_are_never_sent_to_pages() -> None:
+    game = Game(WORLD)
+    watcher = Outbox()
+    game.watch(watcher)
+
     kept = game.remember("a", "keep", "long_term")
     game.forget("a", kept.id)
-    now[0] = 30.0 + SHORT_TERM_SECONDS
-    assert game.begin_turn("a").short_term == ()
+
     assert watcher.state is None
 
 

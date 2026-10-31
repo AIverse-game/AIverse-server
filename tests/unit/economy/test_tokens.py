@@ -58,11 +58,12 @@ def test_a_walk_costs_its_distance_rounded_up(end: Position, cost: int) -> None:
 
 
 def test_walking_spends_tokens_when_setting_off() -> None:
-    world = perform(WORLD, MoveTo("a", Position(3, 4)))
-    assert item_count(world, "a", TOKEN) == 5
-    world = arrive(world)
-    assert world.residents[0].position == Position(3, 4)
-    assert item_count(world, "a", TOKEN) == 5
+    walking = perform(WORLD, MoveTo("a", Position(3, 4)))
+    arrived = arrive(walking)
+
+    assert item_count(walking, "a", TOKEN) == 5
+    assert arrived.residents[0].position == Position(3, 4)
+    assert item_count(arrived, "a", TOKEN) == 5
 
 
 def test_a_walk_the_resident_cannot_pay_for_is_refused() -> None:
@@ -77,44 +78,64 @@ def test_standing_still_is_free_even_without_tokens() -> None:
 
 
 def test_spending_the_last_token_on_a_walk_takes_the_resident_out_on_arrival() -> None:
-    world = perform(WORLD, OfferToBuy("a", "b", "bread", 1, 5))
-    world = perform(world, MoveTo("a", Position(10, 0)))
-    assert not world.residents[0].left
-    world = arrive(world)
-    a = world.residents[0]
+    offered = perform(WORLD, OfferToBuy("a", "b", "bread", 1, 5))
+
+    walking = perform(offered, MoveTo("a", Position(10, 0)))
+    arrived = arrive(walking)
+
+    assert not walking.residents[0].left
+    a = arrived.residents[0]
     assert a.left
     assert a.position == Position(10, 0)
     # Leaving settles their offers: the coins set aside come back and stay.
-    assert world.events.pending == ()
+    assert arrived.events.pending == ()
     assert a.coins == 5
-    with pytest.raises(ActionRejected) as raised:
-        perform(world, MoveTo("a", Position(10, 0)))
-    assert raised.value.code == "resident_left"
 
 
 def test_tokens_trade_like_any_item() -> None:
-    world = perform(WORLD, OfferToSell("b", "c", TOKEN, 30, 1))
-    with pytest.raises(ActionRejected) as raised:
-        perform(world, RespondToEvent("c", 1, accept=True))
-    assert raised.value.code == "not_enough_coins"
-    world = perform(WORLD, OfferToBuy("b", "a", TOKEN, 4, 20))
-    world = perform(world, RespondToEvent("a", 1, accept=True))
+    offered = perform(WORLD, OfferToBuy("b", "a", TOKEN, 4, 20))
+
+    world = perform(offered, RespondToEvent("a", 1, accept=True))
+
     assert (item_count(world, "a", TOKEN), coin_balance(world, "a")) == (6, 25)
     assert (item_count(world, "b", TOKEN), coin_balance(world, "b")) == (104, 80)
 
 
-def test_selling_every_token_takes_the_seller_out_once_the_sale_completes() -> None:
+def test_a_buyer_short_of_coins_cannot_accept_a_token_offer() -> None:
+    world = perform(WORLD, OfferToSell("b", "c", TOKEN, 30, 1))
+
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, RespondToEvent("c", 1, accept=True))
+
+    assert raised.value.code == "not_enough_coins"
+
+
+def test_tokens_set_aside_in_an_offer_are_still_owned() -> None:
     world = perform(WORLD, OfferToSell("a", "b", TOKEN, 10, 40))
+
+    withdrawn = perform(world, WithdrawEvent("a", 1))
+
     # Set aside, the tokens are still a's: offering them all is not running out.
     assert item_count(world, "a", TOKEN) == 0
     assert token_total(world, "a") == 10
     assert not world.residents[0].left
+    assert item_count(withdrawn, "a", TOKEN) == 10
+
+
+def test_tokens_set_aside_in_an_offer_cannot_pay_for_a_walk() -> None:
+    world = perform(WORLD, OfferToSell("a", "b", TOKEN, 10, 40))
+
     with pytest.raises(ActionRejected) as raised:
         perform(world, MoveTo("a", Position(1, 0)))
+
     assert raised.value.code == "not_enough_tokens"
-    withdrawn = perform(world, WithdrawEvent("a", 1))
-    assert item_count(withdrawn, "a", TOKEN) == 10
+
+
+def test_selling_every_token_takes_the_seller_out_once_the_sale_completes() -> None:
+    world = perform(WORLD, OfferToSell("a", "b", TOKEN, 10, 40))
+
     sold = perform(world, RespondToEvent("b", 1, accept=True))
+
     assert sold.residents[0].left
     assert sold.residents[0].coins == 45
     assert item_count(sold, "b", TOKEN) == 110

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -87,11 +88,13 @@ def test_a_conversation_comes_back_in_order_with_the_residents_own_words() -> No
 
 def test_each_line_is_heard_once() -> None:
     world = perform(WORLD, Say("a", "once"))
+
     world, first = heard(world, "b")
     world, second = heard(world, "b")
-    assert (first, second) == ([("a", "once")], [])
     world = perform(world, Say("a", "twice"))
-    assert heard(world, "b")[1] == [("a", "twice")]
+    _, third = heard(world, "b")
+
+    assert (first, second, third) == ([("a", "once")], [], [("a", "twice")])
 
 
 def test_who_hears_is_settled_when_it_is_said() -> None:
@@ -118,32 +121,53 @@ def test_walkers_hear_and_speak_where_they_have_got_to() -> None:
     walk = next(r.walking for r in world.residents if r.id == "c")
     assert walk is not None
     early = replace(world, time=walk.departs_at + 1)
-    assert "c" not in say(early, "a", "too far").speech.entries[-1].listeners
     late = replace(world, time=walk.arrives_at - 1)
-    assert "c" in say(late, "a", "close now").speech.entries[-1].listeners
+
+    too_far = say(early, "a", "too far").speech.entries[-1]
+    close_now = say(late, "a", "close now").speech.entries[-1]
     spoken = say(late, "c", "on my way").speech.entries[-1]
+
+    assert "c" not in too_far.listeners
+    assert "c" in close_now.listeners
     assert spoken.position != Position(80, 80)
     assert spoken.position != Position(10, 20)
     assert "a" in spoken.listeners
 
 
-def test_busy_residents_can_still_talk() -> None:
-    mining = perform(WORLD, Mine("a", "p"))
-    assert perform(mining, Say("a", "digging")).speech.entries[-1].text == "digging"
-    walking = perform(WORLD, MoveTo("b", Position(50, 50)))
-    assert perform(walking, Say("b", "walking", to="c")).speech.entries[-1].to == "c"
+@pytest.mark.parametrize(
+    ("busy", "line"),
+    [
+        (perform(WORLD, Mine("a", "p")), Say("a", "digging")),
+        (perform(WORLD, MoveTo("b", Position(50, 50))), Say("b", "walking", to="c")),
+    ],
+    ids=["mining", "walking"],
+)
+def test_busy_residents_can_still_talk(busy: World, line: Say) -> None:
+    spoken = perform(busy, line).speech.entries[-1]
+
+    assert (spoken.speaker_id, spoken.text, spoken.to) == (line.resident_id, line.text, line.to)
 
 
-def test_residents_who_left_neither_speak_nor_hear() -> None:
-    world = perform(WORLD, LeaveGame("b"))
-    assert world.speech.entries == ()
-    assert perform(world, Say("a", "hello")).speech.entries[-1].listeners == ("d",)
+B_LEFT = perform(WORLD, LeaveGame("b"))
+
+
+def test_residents_who_left_hear_nothing_said_aloud() -> None:
+    assert perform(B_LEFT, Say("a", "hello")).speech.entries[-1].listeners == ("d",)
+
+
+@pytest.mark.parametrize(
+    ("line", "code"),
+    [
+        (Say("b", "let me back"), "resident_left"),
+        (Say("a", "are you there?", to="b"), "unknown_listener"),
+    ],
+    ids=["speaking", "being whispered to"],
+)
+def test_residents_who_left_neither_speak_nor_are_spoken_to(line: Say, code: str) -> None:
     with pytest.raises(ActionRejected) as refused:
-        perform(world, Say("b", "let me back"))
-    assert refused.value.code == "resident_left"
-    with pytest.raises(ActionRejected) as refused:
-        perform(world, Say("a", "are you there?", to="b"))
-    assert refused.value.code == "unknown_listener"
+        perform(B_LEFT, line)
+
+    assert refused.value.code == code
 
 
 @pytest.mark.parametrize(
@@ -174,21 +198,28 @@ def test_nobody_speaks_once_the_game_is_over() -> None:
 
 
 def test_text_that_is_not_a_string_is_the_callers_mistake() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must be a string"):
         say(WORLD, "a", 42)  # type: ignore[arg-type]
-    with pytest.raises(SpeechError):
+
+
+def test_empty_text_is_refused_as_speech_not_as_a_mistake() -> None:
+    with pytest.raises(SpeechError) as refused:
         say(WORLD, "a", "")
+
+    assert refused.value.code == "empty_speech"
 
 
 def test_the_log_keeps_only_the_latest_lines_and_numbering_goes_on() -> None:
     world = WORLD
     for i in range(SPEECH_LIMIT + 5):
         world = say(world, "a", str(i))
+
+    _, lines = heard(world, "b")
+
     entries = world.speech.entries
     assert len(entries) == SPEECH_LIMIT
     assert (entries[0].seq, entries[-1].seq, world.speech.next_seq) == (6, SPEECH_LIMIT + 5, 206)
     # b never looked, so only what is still kept reaches them.
-    _, lines = heard(world, "b")
     assert len(lines) == SPEECH_LIMIT
 
 
@@ -220,11 +251,18 @@ def test_speaking_moves_nothing_on_the_map() -> None:
 
 def test_too_few_tokens_to_speak_is_refused_and_changes_nothing() -> None:
     world = with_tokens(WORLD, "a", 1)
+
     with pytest.raises(ActionRejected) as refused:
         perform(world, Say("a", "hello all"))
+
     assert refused.value.code == "not_enough_tokens"
-    # One token is enough to whisper, and spending it takes a out of the game.
+
+
+def test_whispering_with_the_last_token_takes_the_speaker_out() -> None:
+    world = with_tokens(WORLD, "a", 1)
+
     after = perform(world, Say("a", "goodbye", to="b"))
+
     assert next(r for r in after.residents if r.id == "a").left
     assert after.speech.entries[-1].text == "goodbye"
 
@@ -237,22 +275,49 @@ def test_tokens_set_aside_in_an_offer_do_not_pay_for_speech() -> None:
     assert refused.value.code == "not_enough_tokens"
 
 
-def test_a_world_rejects_speech_it_cannot_account_for() -> None:
-    line = Speech(1, 0.0, "a", "hi", Position(0, 0), None, ("b",))
-    with pytest.raises(ValueError):
-        replace(WORLD, speech=SpeechLog((replace(line, speaker_id="ghost"),), 2))
-    with pytest.raises(ValueError):
-        replace(WORLD, speech=SpeechLog((replace(line, listeners=("ghost",)),), 2))
-    with pytest.raises(ValueError):
-        SpeechLog((replace(line, listeners=("a",)),), 2)
-    with pytest.raises(ValueError):
-        SpeechLog((replace(line, to="b", listeners=("b", "c")),), 2)
-    with pytest.raises(ValueError):
-        SpeechLog((replace(line, text=" "),), 2)
-    with pytest.raises(ValueError):
-        SpeechLog((replace(line, text="hi \udfff"),), 2)
-    with pytest.raises(ValueError):
-        SpeechLog((line,), 1)
-    resident_a = replace(WORLD.residents[0], memory=Memory(speech_seen=1))
-    with pytest.raises(ValueError):
-        replace(WORLD, residents=(resident_a, *WORLD.residents[1:]))
+LINE = Speech(1, 0.0, "a", "hi", Position(0, 0), None, ("b",))
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (
+            lambda: replace(WORLD, speech=SpeechLog((replace(LINE, speaker_id="ghost"),), 2)),
+            "unknown resident",
+        ),
+        (
+            lambda: replace(WORLD, speech=SpeechLog((replace(LINE, listeners=("ghost",)),), 2)),
+            "unknown resident",
+        ),
+        (lambda: SpeechLog((replace(LINE, listeners=("a",)),), 2), "speaker or a listener twice"),
+        (lambda: SpeechLog((replace(LINE, to="b", listeners=("b", "c")),), 2), "heard by others"),
+        (lambda: SpeechLog((replace(LINE, text=" "),), 2), "empty or too long"),
+        (lambda: SpeechLog((replace(LINE, text="hi \udfff"),), 2), "cannot be encoded"),
+        (lambda: SpeechLog((LINE,), 1), "must be an integer above 0"),
+        (
+            lambda: replace(
+                WORLD,
+                residents=(
+                    replace(WORLD.residents[0], memory=Memory(speech_seen=1)),
+                    *WORLD.residents[1:],
+                ),
+            ),
+            "heard speech not yet said",
+        ),
+    ],
+    ids=[
+        "unknown speaker",
+        "unknown listener",
+        "speaker listening",
+        "whisper overheard",
+        "blank",
+        "lone surrogate",
+        "seq not issued",
+        "heard before said",
+    ],
+)
+def test_a_world_rejects_speech_it_cannot_account_for(
+    build: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()

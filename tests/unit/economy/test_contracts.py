@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -70,23 +71,25 @@ def the_contract(world: World) -> Contract:
 
 
 def test_a_buyers_proposal_sets_aside_every_payment_at_once() -> None:
-    world, proposal = send_event(WORLD, "a", "b", BY_BUYER)
-    assert coin_balance(world, "a") == 500
-    assert contract_coins(world, "a") == 1500
-    world = accept_event(world, "b", proposal.id)
-    contract = the_contract(world)
+    proposed, proposal = send_event(WORLD, "a", "b", BY_BUYER)
+    signed_world = accept_event(proposed, "b", proposal.id)
+
+    assert coin_balance(proposed, "a") == 500
+    assert contract_coins(proposed, "a") == 1500
+    contract = the_contract(signed_world)
     assert (contract.supplier_id, contract.buyer_id) == ("b", "a")
     assert contract.escrow == 1500
-    assert coin_balance(world, "a") == 500
+    assert coin_balance(signed_world, "a") == 500
 
 
 def test_a_suppliers_proposal_takes_the_buyers_coins_on_acceptance() -> None:
-    world, proposal = send_event(WORLD, "b", "a", BY_SUPPLIER)
-    assert coin_balance(world, "a") == 2000
-    assert contract_coins(world, "a") == 0
-    world = accept_event(world, "a", proposal.id)
-    assert coin_balance(world, "a") == 500
-    assert the_contract(world).expires_at == 60
+    proposed, proposal = send_event(WORLD, "b", "a", BY_SUPPLIER)
+    signed_world = accept_event(proposed, "a", proposal.id)
+
+    assert coin_balance(proposed, "a") == 2000
+    assert contract_coins(proposed, "a") == 0
+    assert coin_balance(signed_world, "a") == 500
+    assert the_contract(signed_world).expires_at == 60
 
 
 def test_a_buyer_short_of_coins_cannot_accept_and_the_proposal_stays() -> None:
@@ -97,11 +100,14 @@ def test_a_buyer_short_of_coins_cannot_accept_and_the_proposal_stays() -> None:
     assert world.events.pending == (proposal,)
 
 
-@pytest.mark.parametrize("decline", [reject_event, withdraw_event])
-def test_declining_a_buyers_proposal_hands_the_coins_back(decline: object) -> None:
+@pytest.mark.parametrize(("decline", "answerer"), [(reject_event, "b"), (withdraw_event, "a")])
+def test_declining_a_buyers_proposal_hands_the_coins_back(
+    decline: Callable[[World, str, int], World], answerer: str
+) -> None:
     world, proposal = send_event(WORLD, "a", "b", BY_BUYER)
-    answerer = "b" if decline is reject_event else "a"
-    world = decline(world, answerer, proposal.id)  # type: ignore[operator]
+
+    world = decline(world, answerer, proposal.id)
+
     assert coin_balance(world, "a") == 2000
     assert world.contracts.active == ()
 
@@ -167,12 +173,12 @@ def test_a_supplier_without_the_items_cannot_deliver() -> None:
     assert rejection.value.code == "not_enough_items"
 
 
-def test_only_the_supplier_delivers_or_cancels() -> None:
-    world = signed()
-    for action in (Deliver("a", 1), CancelContract("a", 1)):
-        with pytest.raises(ActionRejected) as rejection:
-            perform(world, action)
-        assert rejection.value.code == "not_supplier"
+@pytest.mark.parametrize("action", [Deliver("a", 1), CancelContract("a", 1)])
+def test_only_the_supplier_delivers_or_cancels(action: Deliver | CancelContract) -> None:
+    with pytest.raises(ActionRejected) as rejection:
+        perform(signed(), action)
+
+    assert rejection.value.code == "not_supplier"
 
 
 def test_outsiders_see_no_contract() -> None:
@@ -210,12 +216,15 @@ def test_a_delivery_of_the_last_token_takes_the_supplier_out() -> None:
 
 def test_a_contract_lapses_on_time_and_the_buyer_gets_the_rest_back() -> None:
     world = perform(signed(), Deliver("b", 1))
+
+    before = settle_due(replace(world, time=59.9))
+    lapsed = settle_due(replace(world, time=60))
+
     assert next_due(world) == 60
-    assert settle_due(replace(world, time=59.9)).contracts.active != ()
-    world = settle_due(replace(world, time=60))
-    assert world.contracts.active == ()
-    assert coin_balance(world, "a") == 1500
-    assert next_due(world) is None
+    assert before.contracts.active != ()
+    assert lapsed.contracts.active == ()
+    assert coin_balance(lapsed, "a") == 1500
+    assert next_due(lapsed) is None
 
 
 def test_a_lapsed_contract_takes_no_more_deliveries_even_before_the_clock_settles() -> None:
@@ -275,33 +284,42 @@ def last_end(world: World) -> ContractEnd:
 
 
 def test_a_supplier_proposing_sets_the_deposit_aside_and_gets_it_back_if_declined() -> None:
-    world, proposal = send_event(DEPOSIT_WORLD, "b", "a", STAKED)
-    assert coin_balance(world, "b") == 0
-    assert contract_coins(world, "b") == total_coins(world, "b") == 300
-    assert coin_balance(reject_event(world, "a", proposal.id), "b") == 300
+    proposed, proposal = send_event(DEPOSIT_WORLD, "b", "a", STAKED)
+    declined = reject_event(proposed, "a", proposal.id)
+
+    assert coin_balance(proposed, "b") == 0
+    assert contract_coins(proposed, "b") == total_coins(proposed, "b") == 300
+    assert coin_balance(declined, "b") == 300
 
 
-def test_a_buyers_proposal_takes_the_deposit_on_acceptance_or_fails() -> None:
-    by_buyer = replace(STAKED, sender_supplies=False)
-    world, proposal = send_event(DEPOSIT_WORLD, "a", "b", by_buyer)
+def test_a_buyers_proposal_takes_the_deposit_on_acceptance() -> None:
+    world, proposal = send_event(DEPOSIT_WORLD, "a", "b", replace(STAKED, sender_supplies=False))
+
     signed_world = accept_event(world, "b", proposal.id)
+
     assert coin_balance(signed_world, "b") == 0
     assert the_contract(signed_world).deposit_held == 300
-    world, proposal = send_event(WORLD, "a", "b", by_buyer)
-    with pytest.raises(InventoryError):
+
+
+def test_a_supplier_short_of_the_deposit_cannot_accept_and_the_proposal_stays() -> None:
+    world, proposal = send_event(WORLD, "a", "b", replace(STAKED, sender_supplies=False))
+
+    with pytest.raises(InventoryError) as raised:
         accept_event(world, "b", proposal.id)
+
+    assert raised.value.code == "not_enough_coins"
     assert world.events.pending == (proposal,)
 
 
 def test_each_delivery_hands_back_its_deposit() -> None:
-    world = perform(staked(), Deliver("b", 1))
-    assert coin_balance(world, "b") == 600
-    assert the_contract(world).deposit_held == 200
-    assert contract_coins(world, "b") == 200
-    for _ in range(2):
-        world = perform(world, Deliver("b", 1))
-    assert holdings(world, "b") == ({TOKEN: 10}, 1800)
-    end = last_end(world)
+    once = perform(staked(), Deliver("b", 1))
+    done = perform(perform(once, Deliver("b", 1)), Deliver("b", 1))
+
+    assert coin_balance(once, "b") == 600
+    assert the_contract(once).deposit_held == 200
+    assert contract_coins(once, "b") == 200
+    assert holdings(done, "b") == ({TOKEN: 10}, 1800)
+    end = last_end(done)
     assert (end.reason, end.by, end.forfeit, end.contract.deliveries_left) == (
         "completed",
         "b",
@@ -310,31 +328,41 @@ def test_each_delivery_hands_back_its_deposit() -> None:
     )
 
 
-@pytest.mark.parametrize("ending", ["lapse", "cancel", "supplier_leaves"])
-def test_deliveries_not_made_cost_the_supplier_their_deposit(ending: str) -> None:
-    world = perform(staked(), Deliver("b", 1))
-    if ending == "lapse":
-        world = settle_due(replace(world, time=60))
-    elif ending == "cancel":
-        world = perform(world, CancelContract("b", 1))
-    else:
-        world = perform(world, LeaveGame("b"))
+@pytest.mark.parametrize(
+    ("end_contract", "reason", "by"),
+    [
+        (lambda world: settle_due(replace(world, time=60)), "lapsed", None),
+        (lambda world: perform(world, CancelContract("b", 1)), "cancelled", "b"),
+        (lambda world: perform(world, LeaveGame("b")), "party_left", "b"),
+    ],
+    ids=["lapse", "cancel", "supplier leaves"],
+)
+def test_deliveries_not_made_cost_the_supplier_their_deposit(
+    end_contract: Callable[[World], World], reason: str, by: str | None
+) -> None:
+    delivered = perform(staked(), Deliver("b", 1))
+
+    world = end_contract(delivered)
+
     # a gets the 1000 coins left of the payments and b's 200 for the 2 deliveries not made.
     assert coin_balance(world, "a") == 500 + 1000 + 200
     assert coin_balance(world, "b") == 600
     end = last_end(world)
-    reason, by = {
-        "lapse": ("lapsed", None),
-        "cancel": ("cancelled", "b"),
-        "supplier_leaves": ("party_left", "b"),
-    }[ending]
     assert (end.reason, end.by, end.forfeit, end.contract.deliveries_left) == (reason, by, 200, 2)
 
 
-@pytest.mark.parametrize("ending", ["buyer_leaves", "game_ends"])
-def test_the_deposit_goes_back_when_the_supplier_is_not_at_fault(ending: str) -> None:
-    world = perform(staked(), Deliver("b", 1))
-    world = perform(world, LeaveGame("a")) if ending == "buyer_leaves" else end_game(world)
+@pytest.mark.parametrize(
+    "end_contract",
+    [lambda world: perform(world, LeaveGame("a")), end_game],
+    ids=["buyer leaves", "game ends"],
+)
+def test_the_deposit_goes_back_when_the_supplier_is_not_at_fault(
+    end_contract: Callable[[World], World],
+) -> None:
+    delivered = perform(staked(), Deliver("b", 1))
+
+    world = end_contract(delivered)
+
     assert coin_balance(world, "a") == 1500
     assert coin_balance(world, "b") == 800
     assert last_end(world).forfeit == 0
@@ -359,45 +387,84 @@ def test_the_world_keeps_only_the_latest_endings() -> None:
 
 def test_propose_contract_sends_a_proposal_either_side_may_make() -> None:
     world = perform(WORLD, ProposeContract("a", "b", False, TOKEN, 30, 500, 3, 60))
+
     (event,) = world.events.pending
     assert event.payload == BY_BUYER
     assert coin_balance(world, "a") == 500
+
+
+@pytest.mark.parametrize(
+    ("action", "code"),
+    [
+        (ProposeContract("a", "a", True, TOKEN, 30, 500, 3, 60), "self_addressed"),
+        (ProposeContract("a", "b", False, TOKEN, 30, 1000, 3, 60), "not_enough_coins"),
+    ],
+)
+def test_proposals_that_cannot_be_sent_are_rejected(action: ProposeContract, code: str) -> None:
     with pytest.raises(ActionRejected) as rejection:
-        perform(WORLD, ProposeContract("a", "a", True, TOKEN, 30, 500, 3, 60))
-    assert rejection.value.code == "self_addressed"
-    with pytest.raises(ActionRejected) as rejection:
-        perform(WORLD, ProposeContract("a", "b", False, TOKEN, 30, 1000, 3, 60))
-    assert rejection.value.code == "not_enough_coins"
+        perform(WORLD, action)
+
+    assert rejection.value.code == code
 
 
-def test_the_world_refuses_contracts_that_cannot_be() -> None:
-    contract = the_contract(signed())
-    with pytest.raises(ValueError):
-        replace(signed(), ended=True)
-    with pytest.raises(ValueError):
-        ContractBook((replace(contract, deliveries_left=0),), 2)
-    with pytest.raises(ValueError):
-        ContractBook((replace(contract, expires_at=contract.signed_at),), 2)
-    with pytest.raises(ValueError):
-        replace(WORLD, contracts=ContractBook((replace(contract, buyer_id="b"),), 2))
-    with pytest.raises(ValueError):
-        ContractBook((replace(contract, deposit=-1),), 2)
+SIGNED = signed()
+CONTRACT = the_contract(SIGNED)
 
 
-def test_the_world_refuses_endings_that_cannot_be() -> None:
-    world = perform(staked(), CancelContract("b", 1))
-    end = last_end(world)
-    for wrong in (
-        replace(end, forfeit=end.contract.deposit_held + 1),
-        replace(end, reason="completed"),
-        replace(end, time=-1.0),
-        replace(end, contract=replace(end.contract, id=2)),
-    ):
-        with pytest.raises(ValueError):
-            replace(world.contracts, ended=(wrong,))
-    with pytest.raises(ValueError):
-        replace(world.contracts, ended=(end, end))
-    # Whoever ended it is one of the parties, or nobody.
-    with pytest.raises(ValueError):
-        replace(world, contracts=replace(world.contracts, ended=(replace(end, by="c"),)))
-    replace(world, contracts=replace(world.contracts, ended=(replace(end, by=None),)))
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: replace(SIGNED, ended=True), "outlives its game"),
+        (lambda: ContractBook((replace(CONTRACT, deliveries_left=0),), 2), "has 0, must be >= 1"),
+        (
+            lambda: ContractBook((replace(CONTRACT, expires_at=CONTRACT.signed_at),), 2),
+            "lapses before signed",
+        ),
+        (
+            lambda: replace(WORLD, contracts=ContractBook((replace(CONTRACT, buyer_id="b"),), 2)),
+            "needs two known residents",
+        ),
+        (lambda: ContractBook((replace(CONTRACT, deposit=-1),), 2), "has -1, must be >= 0"),
+    ],
+    ids=["after the end", "nothing left", "expired on signing", "self-dealing", "negative deposit"],
+)
+def test_the_world_refuses_contracts_that_cannot_be(
+    build: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()
+
+
+CANCELLED = perform(staked(), CancelContract("b", 1))
+END = last_end(CANCELLED)
+
+
+@pytest.mark.parametrize(
+    ("ended", "message"),
+    [
+        ((replace(END, forfeit=END.contract.deposit_held + 1),), "forfeited more than its deposit"),
+        ((replace(END, reason="completed"),), "completed with deliveries left"),
+        ((replace(END, time=-1.0),), "ended before signed"),
+        ((replace(END, contract=replace(END.contract, id=2)),), "was never given out"),
+        ((END, END), "recorded twice"),
+    ],
+    ids=["forfeit above held", "completed early", "before the start", "unknown id", "twice"],
+)
+def test_the_contract_book_refuses_endings_that_cannot_be(
+    ended: tuple[ContractEnd, ...], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(CANCELLED.contracts, ended=ended)
+
+
+def test_the_world_refuses_an_ending_by_someone_not_a_party() -> None:
+    contracts = replace(CANCELLED.contracts, ended=(replace(END, by="c"),))
+
+    with pytest.raises(ValueError, match="ended contract 1 needs two known residents"):
+        replace(CANCELLED, contracts=contracts)
+
+
+def test_the_world_accepts_an_ending_by_nobody() -> None:
+    contracts = replace(CANCELLED.contracts, ended=(replace(END, by=None),))
+
+    assert replace(CANCELLED, contracts=contracts).contracts.ended[0].by is None
