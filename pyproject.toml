@@ -21,6 +21,10 @@ aiverse-server = "aiverse_server.__main__:main"
 requires = ["uv_build>=0.10.10,<0.11.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+# Local config files may hold API keys; keep them, and so their examples, out of builds.
+source-exclude = ["src/aiverse_server/*/config/*.yml"]
+
 [dependency-groups]
 dev = [
     "mypy>=2.4.0",

@@ -15,5 +15,6 @@ wheels/
 .ruff_cache/
 .DS_Store
 
-# Local config, may hold API keys; see aiverse.example.yml
-aiverse.yml
+# Local config, may hold API keys; each sits beside its example in a config/ directory
+src/aiverse_server/*/config/*.yml
+!src/aiverse_server/*/config/*.example.yml

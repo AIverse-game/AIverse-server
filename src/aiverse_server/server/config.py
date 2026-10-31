@@ -1,13 +1,13 @@
-"""The server's config file, in YAML; see `aiverse.example.yml` at the repository root.
+"""The config file for the language model agents ask, in YAML; see
+`agents/config/llm.example.yml`.
 
-So far it holds one thing, overrides for the language model agents ask:
+So far it holds one thing, overrides for that model:
 
 ```yaml
-llm:
-  override:
-    base_url: https://openrouter.ai/api/v1
-    api_key: sk-...
-    model: nvidia/nemotron-3.5-lightning
+override:
+  base_url: https://openrouter.ai/api/v1
+  api_key: sk-...
+  model: nvidia/nemotron-3.5-lightning
 ```
 
 Each setting given replaces what the player chose on the page, or with `--agent
@@ -53,15 +53,11 @@ class LLMOverride(_Section):
     model: Setting | None = None
 
 
-class LLMSection(_Section):
+class Config(_Section):
     override: LLMOverride = LLMOverride()
 
-
-class Config(_Section):
-    llm: LLMSection = LLMSection()
-
     def llm_override(self) -> LLMSettings:
-        override = self.llm.override
+        override = self.override
         return LLMSettings(override.base_url, override.api_key, override.model)
 
 

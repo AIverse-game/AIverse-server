@@ -23,8 +23,8 @@ from .game.lifecycle import GAME_DURATION
 from .server.app import create_app
 from .server.config import Config, ConfigError, load_config
 
-DEFAULT_CONFIG = Path("aiverse.yml")
-"""Read when present and no `--config` is given."""
+DEFAULT_CONFIG = Path(__file__).parent / "agents" / "config" / "llm.yml"
+"""Read when present and no `--config` is given, wherever the server is started from."""
 
 
 def parse_agent(spec: str) -> tuple[str, str, str | None]:
@@ -108,7 +108,7 @@ def main() -> None:
                 settings = complete(override.over(LLMSettings(model=model)))
             except SettingsError as error:
                 parser.error(
-                    f"{spec}: {error.message}; set them under llm.override in the config file, "
+                    f"{spec}: {error.message}; set them under override in the config file, "
                     "or the model as RESIDENT=llm:MODEL"
                 )
             agents[resident_id] = ChatCompletionsBrain(*settings)

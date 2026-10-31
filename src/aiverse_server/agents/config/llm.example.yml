@@ -1,0 +1,10 @@
+# 大模型接口的配置示例。复制为同目录的 llm.yml（已被 Git 忽略）再填写，
+# 或用 --config 指定其他路径。文件可以不存在，所有项都可以省略。
+
+# 覆盖设置：填了的项代替页面上玩家填的（以及 --agent 居民=llm:模型 中的模型），
+# 对所有由模型驱动的居民生效；没填的项仍用玩家填的。
+# 接口须兼容 OpenAI 的 Chat Completions（POST {base_url}/chat/completions，支持工具调用）。
+override:
+  # base_url: https://openrouter.ai/api/v1
+  # api_key: sk-...
+  # model: nvidia/nemotron-3.5-lightning

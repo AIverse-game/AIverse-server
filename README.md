@@ -20,7 +20,7 @@ uv run aiverse-server                 # 监听 127.0.0.1:8000
 uv run aiverse-server --port 9000     # 换端口，网页端需同时改代理端口，见下
 uv run aiverse-server --duration 120  # 一局的秒数，默认 1200（20 分钟）
 uv run aiverse-server --seed 7        # 固定矿池布局；不给则每局随机（收购点总在地图中心）
-uv run aiverse-server --config my.yml # 配置文件，默认读当前目录的 aiverse.yml（可以没有），见下
+uv run aiverse-server --config my.yml # 大模型配置文件，默认读 agents/config/llm.yml（可以没有），见下
 uv run aiverse-server --agent r1=scripted --agent r2=llm:模型名   # r1、r2 由 Agent 驱动，见下
 make verify                           # ruff、ruff format --check、mypy strict、pytest
 ```
@@ -48,17 +48,16 @@ uv run aiverse-server --agent r1=scripted --agent-log game.jsonl   # 每轮决�
 
 大模型接口须兼容 OpenAI 的 Chat Completions 并支持工具调用。服务端不内置任何厂商：API 地址填到 `/v1` 一级，例如 `https://openrouter.ai/api/v1`，服务端在后面加 `/chat/completions`。
 
-配置文件是 YAML，用 `--config` 指定，不指定时读当前目录的 `aiverse.yml`（存在时）。复制 `aiverse.example.yml` 为 `aiverse.yml` 再填写；`aiverse.yml` 可能含 key，已被 Git 忽略。
+配置文件是 YAML，用 `--config` 指定，不指定时读 `src/aiverse_server/agents/config/llm.yml`（存在时；与从哪个目录启动无关）。复制同目录的 `llm.example.yml` 为 `llm.yml` 再填写；`llm.yml` 可能含 key，已被 Git 忽略，也不打进构建产物。
 
 ```yaml
-llm:
-  override:
-    base_url: https://openrouter.ai/api/v1
-    api_key: sk-...
-    model: nvidia/nemotron-3.5-lightning
+override:
+  base_url: https://openrouter.ai/api/v1
+  api_key: sk-...
+  model: nvidia/nemotron-3.5-lightning
 ```
 
-`llm.override` 下填了的项代替页面上填的值和 `--agent 居民=llm:模型` 中的模型，对所有由模型驱动的居民生效；没填的项仍用玩家给的。三项都填了时，页面上只需点“交给 AI”。`--agent 居民=llm` 的地址和 key 只能来自配置文件，模型可以来自参数或配置文件，缺项时启动报错。拼错的设置名会让启动报错，错误信息不显示设置的值。
+`override` 下填了的项代替页面上填的值和 `--agent 居民=llm:模型` 中的模型，对所有由模型驱动的居民生效；没填的项仍用玩家给的。三项都填了时，页面上只需点“交给 AI”。`--agent 居民=llm` 的地址和 key 只能来自配置文件，模型可以来自参数或配置文件，缺项时启动报错。拼错的设置名会让启动报错，错误信息不显示设置的值。
 
 key 只放在服务端内存里，用来调用接口，不写进状态、控制台、`--agent-log` 或错误信息；服务商在错误信息里回显的 key 替换为 `***`。httpx 的请求日志调到 WARNING，不打印请求地址。
 
@@ -215,9 +214,9 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/game/clock.py` | 游戏时间到点的事：发放采矿、行走到达（及到达时 token 耗尽出局）并记录活动，合约到期，下一个到点时刻 |
 | `src/aiverse_server/game/layout.py` | 固定的初始地图与居民（含初始金币与 token）、地图中心的收购点，按种子随机放置的矿池 |
 | `src/aiverse_server/server/protocol.py` | 消息模型、客户端消息解析（错误信息不回显输入）、消息到原语与世界到视图（含谁由 Agent 驱动）的转换，`start_agent` 的设置 |
-| `src/aiverse_server/server/config.py` | YAML 配置文件：`llm.override` 覆盖模型的地址、key、模型，拒绝未知的键，错误信息不含设置的值 |
+| `src/aiverse_server/server/config.py` | 读取大模型的 YAML 配置文件：`override` 覆盖模型的地址、key、模型，拒绝未知的键，错误信息不含设置的值 |
 | `src/aiverse_server/server/app.py` | FastAPI 应用与 WebSocket `/ws`：共享世界、对局计时（到点的事见 `clock.py`）、每轮开始的 `begin_turn`、写入与忘掉笔记、Agent 与网页共用的执行入口 `act`/`commit`、世界变化时唤醒 Agent 的 `subscribe`、启动、更换与停止 Agent（`start_agent`、`start_llm_agent`、`stop_agent`，后者合并配置文件的覆盖项）、握手、执行原语、广播状态 |
 | `src/aiverse_server/agents/` | AI 居民：`runner.py` 事件驱动的循环与唤醒规则，`observation.py` 每轮的观察，`tools.py` 绑定居民的工具，`scripted_brain.py` 脚本机器人，`llm_brain.py` OpenAI 兼容接口的大模型大脑与设置的合并、校验，`system_prompt.py` 给模型的系统提示（规则说明） |
+| `src/aiverse_server/agents/config/` | 大模型配置：示例 `llm.example.yml`；本地的 `llm.yml` 被 Git 忽略 |
 | `src/aiverse_server/__main__.py` | 启动入口，`--config` 读配置文件，`--agent` 指定由 Agent 驱动的居民，`--agent-log` 写每轮记录 |
-| `aiverse.example.yml` | 配置文件示例；本地的 `aiverse.yml` 被 Git 忽略 |
 | `tests/` | 世界模型、操作原语、物品栏与金币、事件、交易、合约、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民（工具、观察、唤醒、脚本机器人的快进对局、模拟 HTTP 的大模型大脑、设置的合并与校验）、配置文件、从页面启动与停止 Agent 与 WebSocket 接口测试 |

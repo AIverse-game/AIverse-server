@@ -32,7 +32,7 @@
 
 | 内容 | 规则 | 示例 |
 | --- | --- | --- |
-| 本项目的配置文件 | YAML 用 `.yml`；可提交的示例命名为 `<名称>.example.<扩展名>`，本地实际文件加入 `.gitignore` | `aiverse.example.yml` 与被忽略的 `aiverse.yml` |
+| 本项目的配置文件 | 放在所属子包的 `config/` 目录，见下文“配置文件放在哪里”；YAML 用 `.yml`，按内容命名；可提交的示例命名为 `<名称>.example.<扩展名>`，本地实际文件被 `.gitignore` 忽略 | `agents/config/llm.example.yml` 与被忽略的 `agents/config/llm.yml` |
 | 工具规定名称的文件 | 按工具要求，不改名 | `pyproject.toml`、`uv.lock`、`Makefile` |
 
 ### 文档
@@ -60,6 +60,13 @@
 2. **新建子包要有理由**：已有子包的职责明显不符，且新主题会有不止一个文件时才新建，不为单个文件建子包。新建子包时同时更新 `README.md` 的“代码结构”；改变依赖方向时先记录决策。
 3. **测试跟着源码**：测试放进与源码同名的 `tests/<子包>/`。
 4. **不进仓库的东西**：构建产物、虚拟环境、缓存、日志、本地配置与密钥，由 `.gitignore` 排除；新增此类产物时同步补忽略规则。
+
+### 配置文件放在哪里
+
+- **跟着所属子包**：某个子包的配置文件放在该子包下的 `config/` 目录，例如大模型的配置属于 `agents/`，放在 `src/aiverse_server/agents/config/`。其他子包需要配置时同样新建 `<子包>/config/`，不放在仓库根目录，也不集中到一处。
+- **`config/` 只放配置文件**：示例和本地实际文件，不放 Python 代码，不加 `__init__.py`；读取与校验的代码按职责放在 `.py` 模块里，例如 `server/config.py`。
+- **默认路径按包定位**：启动时的默认路径相对源码包确定（`Path(__file__)`），与从哪个目录启动无关；命令行参数可以另指路径。
+- **本地文件不外流**：`.gitignore` 的 `src/aiverse_server/*/config/*.yml` 忽略本地文件、保留 `*.example.yml`；`pyproject.toml` 的 `source-exclude` 把这些 YAML 排除在构建产物外。新增其他扩展名的配置时，两处一起补上。
 
 ## 新增、移动与重命名
 
