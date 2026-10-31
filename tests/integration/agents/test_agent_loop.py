@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
@@ -17,6 +18,7 @@ from aiverse_server.game.actions import (
     ProposeContract,
     RespondToEvent,
     Say,
+    SellTokens,
 )
 from aiverse_server.server.app import Game
 
@@ -235,6 +237,30 @@ class Broken:
     async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
         self.calls += 1
         raise RuntimeError("model unreachable")
+
+
+def test_an_agent_sells_at_the_price_it_saw_though_another_sold_meanwhile() -> None:
+    at_market = replace(WORLD.residents[1], position=Position(52, 50))
+    world = replace(WORLD, residents=(WORLD.residents[0], at_market))
+
+    async def scenario() -> None:
+        game, _ = make_game(world)
+        results = []
+
+        def sell(seen: Observation, tools: ResidentTools) -> None:
+            game.act(SellTokens("b", 100))
+            results.append(tools.sell_tokens(30))
+
+        brain = Recorder(lambda seen, tools: None if results else sell(seen, tools))
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: bool(results))
+        task.cancel()
+
+        # 30 tokens into an untouched market fetch 524 coins, see the market's tests.
+        assert results[0].ok
+        assert next(r for r in game.world.residents if r.id == "a").coins == 5000 + 524
+
+    asyncio.run(scenario())
 
 
 def test_a_failing_brain_is_recorded_and_asked_again() -> None:

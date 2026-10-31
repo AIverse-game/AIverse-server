@@ -31,6 +31,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
+from ..economy.market import pressure_at
 from ..game.lifecycle import GameError
 from .llm_brain import ChatCompletionsBrain
 from .observation import Observation, observe, to_json
@@ -231,7 +232,12 @@ class AgentRunner:
             observation = observe(
                 self.game.world, self.resident_id, perception, self.game.remaining()
             )
-            tools = ResidentTools(self.game, self.resident_id)
+            market = self.game.world.market
+            tools = ResidentTools(
+                self.game,
+                self.resident_id,
+                seen_pressure=pressure_at(market, self.game.world.time) if market else None,
+            )
             balance = resource_balance(self.game, self.resident_id)
             remark: str | None = None
             error: str | None = None

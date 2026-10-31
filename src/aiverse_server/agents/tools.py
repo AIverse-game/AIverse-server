@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 from ..core.inventory import item_count
 from ..core.world import Position, World
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
+from ..economy.market import pressure_at
 from ..economy.tokens import TOKEN, token_total
 from ..game.actions import (
     Action,
@@ -290,7 +291,8 @@ TOOLS = (
     ToolSpec(
         "sell_tokens",
         "Sell carried tokens to the market for coins at the market price, which falls the more "
-        "is sold. Keep at least one token: selling your last is refused.",
+        "is sold. Others' sales since your round began do not lower it. Keep at least one "
+        "token: selling your last is refused.",
         SellTokensArgs,
     ),
     ToolSpec("buy_chip", "Buy one chip at the market for its fixed price in coins.", BuyChipArgs),
@@ -362,6 +364,10 @@ class ResidentTools:
     game: Game
     resident_id: str
     calls: list[ToolCall] = field(default_factory=list)
+    seen_pressure: float | None = None
+    """Market pressure when the round began, plus the resident's own sales since: sales are
+    priced at the price the resident saw then, or the current one if higher, see
+    `market.quote`."""
 
     def call(self, name: str, arguments: Mapping[str, Any] | str) -> ToolResult:
         """Run a tool by name, as a model asks for it; arguments may be a JSON object text."""
@@ -493,7 +499,14 @@ class ResidentTools:
             case MineArgs():
                 act(Mine(me, args.pool_id))
             case SellTokensArgs():
-                act(SellTokens(me, args.quantity))
+                act(SellTokens(me, args.quantity, self.seen_pressure))
+                market = self.game.world.market
+                if self.seen_pressure is not None and market is not None:
+                    # The resident's own sale weighs on their next one, as it does on others'.
+                    self.seen_pressure = min(
+                        pressure_at(market, self.game.world.time),
+                        self.seen_pressure + args.quantity,
+                    )
             case BuyChipArgs():
                 act(BuyChip(me, args.model))
             case SayArgs():

@@ -100,6 +100,22 @@ def test_one_seller_lowers_the_price_for_everyone() -> None:
     assert coins(after, "b") < coins(alone, "b")
 
 
+def test_a_seller_is_paid_the_price_they_saw_whatever_others_sold_since() -> None:
+    after_others = perform(WORLD, SellTokens("b", 100))
+
+    world = perform(after_others, SellTokens("a", 30, seen_pressure=0.0))
+
+    assert coins(world, "a") == 100 + 524
+    assert world.market is not None
+    assert world.market.pressure == pytest.approx(130)
+
+
+def test_a_price_that_recovered_since_the_seller_looked_is_paid_in_full() -> None:
+    world = perform(WORLD, SellTokens("a", 30, seen_pressure=100.0))
+
+    assert coins(world, "a") == 100 + 524
+
+
 @pytest.mark.parametrize("parts", [[1] * 40, [10, 10, 10, 10], [7, 33], [39, 1]])
 def test_splitting_a_sale_earns_no_more_than_selling_at_once(parts: list[int]) -> None:
     at_once = coins(perform(WORLD, SellTokens("a", sum(parts))), "a")

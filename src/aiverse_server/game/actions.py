@@ -203,6 +203,9 @@ class SellTokens:
 
     resident_id: str
     quantity: int
+    seen_pressure: float | None = None
+    """Market pressure the seller saw when their round began, set by the agent tools only: the
+    sale is priced as if others had sold nothing since, see `market.quote`."""
 
 
 @dataclass(frozen=True)
@@ -339,7 +342,7 @@ def _carry_out(world: World, action: Action) -> World:
                 raise ActionRejected(error.code, error.message) from error
         case SellTokens():
             try:
-                return sell_tokens(world, action.resident_id, action.quantity)
+                return sell_tokens(world, action.resident_id, action.quantity, action.seen_pressure)
             except (MarketError, TokenError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case BuyChip():

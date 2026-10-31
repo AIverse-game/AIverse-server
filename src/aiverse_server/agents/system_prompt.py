@@ -39,7 +39,9 @@ not count as in hand.
 can sell tokens for coins and buy chips. A token fetches {MARKET_BASE_PRICE:g} coins when \
 nobody has sold lately; every token sold lowers the price for everyone ({MARKET_DEPTH:g} \
 tokens sold recently halve it), and the effect fades by half every {MARKET_HALF_LIFE:g} \
-seconds. Splitting a sale earns nothing extra; waiting for the price to recover does.
+seconds. Splitting a sale earns nothing extra; waiting for the price to recover does. \
+Within a round you sell at the token_price in your observation, or more if it has recovered: \
+others selling meanwhile does not lower it, though your own sales do.
 - Chips on sale: {chips}. You need a chip to mine; with several you mine with the best.
 - Token pools lie scattered on the map (radius {POOL_RADIUS:g}), fixed for the game, each \
 with a limited reserve. Standing in one with a chip, `mine` takes {MINE_SECONDS:g} seconds \

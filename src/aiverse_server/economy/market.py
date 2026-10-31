@@ -59,16 +59,22 @@ def unit_price(market: Market, time: float) -> float:
     return MARKET_BASE_PRICE * MARKET_DEPTH / (MARKET_DEPTH + pressure_at(market, time))
 
 
-def quote(market: Market, time: float, quantity: int) -> int:
-    """Whole coins selling `quantity` tokens at game time `time` pays."""
-    depth = MARKET_DEPTH + pressure_at(market, time)
+def quote(market: Market, time: float, quantity: int, seen: float | None = None) -> int:
+    """Whole coins selling `quantity` tokens at game time `time` pays. `seen` is the pressure
+    the seller saw earlier, if any: sales by others since then do not lower the price."""
+    pressure = pressure_at(market, time)
+    if seen is not None:
+        pressure = min(pressure, seen)
+    depth = MARKET_DEPTH + pressure
     earned = MARKET_BASE_PRICE * MARKET_DEPTH * math.log1p(quantity / depth)
     # The slack keeps float noise just under a whole number from costing a coin.
     return math.floor(earned + 1e-9)
 
 
-def sell_tokens(world: World, resident_id: str, quantity: int) -> World:
-    """Sell `quantity` tokens the resident carries to the market they stand at, for coins."""
+def sell_tokens(world: World, resident_id: str, quantity: int, seen: float | None = None) -> World:
+    """Sell `quantity` tokens the resident carries to the market they stand at, for coins,
+    priced from the pressure `seen` earlier if the market has fallen since, see `quote`. The
+    market is left with its real pressure plus this sale either way."""
     resident = _find(world, resident_id)
     market = world.market
     if market is None or not market.reaches(resident.position):
@@ -89,7 +95,7 @@ def sell_tokens(world: World, resident_id: str, quantity: int) -> World:
         ) from error
     # Priced only once the tokens are known to be there: an untrusted quantity can be too big
     # to turn into a float, but never more than the resident carries.
-    coins = quote(market, world.time, quantity)
+    coins = quote(market, world.time, quantity, seen)
     if coins < 1:
         raise MarketError(
             "price_too_low", f"{quantity} tokens would fetch less than a coin right now"
