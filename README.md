@@ -182,7 +182,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 ## 代码结构
 
-源码按领域分成几个子包，测试目录 `tests/` 按同样的子包分组。根目录的 `.agents/` 放给 Agent 的规则与 Skill，与客户端仓库相同，入口是 `AGENTS.md`。
+源码按领域分成几个子包，测试目录 `tests/` 按同样的子包分组。根目录的 `.agents/` 放给 Agent 的规则与 Skill，入口是 `AGENTS.md`。
 
 | 子包 | 内容 |
 | --- | --- |
