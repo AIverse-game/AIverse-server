@@ -1,5 +1,5 @@
 """Run the server: `uv run aiverse-server [--host HOST] [--port PORT] [--duration SECONDS]
-[--seed N] [--config FILE] [--agent RESIDENT=BRAIN ...] [--agent-log FILE]`.
+[--seed N] [--config FILE] [--agent RESIDENT=BRAIN ...] [--log-dir DIR] [--agent-log FILE]`.
 
 `--agent r1=scripted` drives resident r1 with the fixed-plan bot, `--agent r2=llm` or
 `--agent r2=llm:MODEL` with a language model, whose base URL and API key, and model when
@@ -9,19 +9,20 @@ without an agent are left to the pages, which may hand them to a model too."""
 import argparse
 import logging
 import math
-from collections.abc import Callable
 from pathlib import Path
-from typing import TextIO
 
 import uvicorn
 
 from .agents.llm_brain import ChatCompletionsBrain, LLMSettings, SettingsError, complete
-from .agents.runner import Brain, TurnRecord, record_to_json, summarize
+from .agents.runner import Brain
 from .agents.scripted_brain import ScriptedBrain
+from .agents.turn_logger import TurnLogger
 from .game.layout import create_default_world
 from .game.lifecycle import GAME_DURATION
 from .server.app import create_app
 from .server.config import Config, ConfigError, load_config
+
+DEFAULT_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 
 DEFAULT_CONFIG = Path(__file__).parent / "agents" / "config" / "llm.yml"
 """Read when present and no `--config` is given, wherever the server is started from."""
@@ -71,10 +72,17 @@ def main() -> None:
         "API key from the config file; may be repeated",
     )
     parser.add_argument(
+        "--log-dir",
+        type=Path,
+        default=DEFAULT_LOG_DIR,
+        help="directory for per-resident JSONL logs, overwritten each game "
+        "(default: logs/ in the server project)",
+    )
+    parser.add_argument(
         "--agent-log",
         default=None,
         metavar="FILE",
-        help="append every agent round to FILE as one line of JSON",
+        help="also write every agent round to FILE as JSONL, overwritten for each game",
     )
     args = parser.parse_args()
     if not (math.isfinite(args.duration) and args.duration > 0):
@@ -112,35 +120,24 @@ def main() -> None:
                     "or the model as RESIDENT=llm:MODEL"
                 )
             agents[resident_id] = ChatCompletionsBrain(*settings)
-    log_file = open(args.agent_log, "a", encoding="utf-8") if args.agent_log else None  # noqa: SIM115
-    # Pages may start agents at any time, so their rounds are always shown.
+    # Pages can start agents later, so every resident gets a file, even without --agent.
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    # Its request lines carry the base URL, which a player may have put credentials in.
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    app = create_app(
-        world,
-        duration=args.duration,
-        agents=agents,
-        record=_recorder(log_file),
-        llm_override=override,
-    )
     try:
+        recorder = TurnLogger(
+            args.log_dir, world.residents, Path(args.agent_log) if args.agent_log else None
+        )
+    except (OSError, ValueError) as error:
+        parser.error(f"cannot initialize agent logs: {error}")
+    with recorder:
+        app = create_app(
+            world,
+            duration=args.duration,
+            agents=agents,
+            record=recorder,
+            llm_override=override,
+        )
         uvicorn.run(app, host=args.host, port=args.port)
-    finally:
-        if log_file is not None:
-            log_file.close()
-
-
-def _recorder(log_file: TextIO | None) -> Callable[[TurnRecord], None]:
-    logger = logging.getLogger("aiverse_server.agents")
-
-    def record(turn: TurnRecord) -> None:
-        logger.info("%s", summarize(turn))
-        if log_file is not None:
-            log_file.write(record_to_json(turn) + "\n")
-            log_file.flush()
-
-    return record
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
@@ -202,6 +203,7 @@ class ToolCall:
     time: float = 0.0
     coins_change: int = 0
     tokens_change: int = 0
+    timestamp: str | None = None
 
 
 @dataclass(frozen=True)
@@ -313,6 +315,7 @@ class ResidentTools:
 
     def call(self, name: str, arguments: Mapping[str, Any] | str) -> ToolResult:
         """Run a tool by name, as a model asks for it; arguments may be a JSON object text."""
+        timestamp = datetime.now(UTC).isoformat()
         self.game.tick()
         if isinstance(arguments, str):
             try:
@@ -323,7 +326,13 @@ class ResidentTools:
             if not isinstance(loaded, dict):
                 result = ToolResult(False, "invalid_arguments", "arguments must be a JSON object")
                 self.calls.append(
-                    ToolCall(name, {"_raw": arguments[:300]}, result, self.game.world.time)
+                    ToolCall(
+                        name,
+                        {"_raw": "[invalid JSON omitted]"},
+                        result,
+                        self.game.world.time,
+                        timestamp=timestamp,
+                    )
                 )
                 return result
             arguments = loaded
@@ -341,6 +350,7 @@ class ResidentTools:
                 time,
                 after.coins - before.coins,
                 after.tokens - before.tokens,
+                timestamp,
             )
         )
         return result

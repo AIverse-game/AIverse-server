@@ -15,6 +15,10 @@ wheels/
 .ruff_cache/
 .DS_Store
 
+# Local game logs (observations, private conversations and memory)
+/logs/
+*.jsonl
+
 # Local config, may hold API keys; each sits beside its example in a config/ directory
 src/aiverse_server/*/config/*.yml
 !src/aiverse_server/*/config/*.example.yml

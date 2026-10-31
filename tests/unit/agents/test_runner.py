@@ -124,3 +124,19 @@ def test_page_parameters_are_redacted_before_escaping_or_truncation() -> None:
     assert ast.literal_eval(shown.calls[0].arguments) == {"***": ["***", {"nested": "***"}]}
     assert shown.calls[1].arguments == "参数不是有效 JSON，未展示原文。"
     assert "key" not in shown.model_dump_json()
+
+
+def test_redacting_a_short_key_preserves_log_routing_and_schema_fields() -> None:
+    from aiverse_server.agents.runner import redact_turn
+
+    turn = TurnRecord(
+        "jack", 0, '{"me":{"id":"jack","tokens":3},"short_term_notes":[{"text":"k"}]}', (), "k"
+    )
+
+    shown = redact_turn(turn, lambda text: text.replace("k", "***"))
+    observation = json.loads(shown.observation)
+
+    assert shown.resident_id == "jack"
+    assert observation["me"]["tokens"] == 3
+    assert observation["short_term_notes"][0]["text"] == "***"
+    assert shown.remark == "***"

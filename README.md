@@ -44,7 +44,7 @@ uv run pytest tests/unit              # 只跑单元测试；集成测试在 tes
 ```sh
 uv run aiverse-server --agent r1=scripted                    # 固定策略的脚本机器人，不花钱
 uv run aiverse-server --agent r2=llm:模型名                  # 大模型，地址和 key 来自配置文件
-uv run aiverse-server --agent r1=scripted --agent-log game.jsonl   # 每轮决策追加一行 JSON
+uv run aiverse-server --agent r1=scripted --log-dir logs    # 每名居民独立日志，每局覆盖
 ```
 
 大模型接口须兼容 OpenAI 的 Chat Completions 并支持工具调用。服务端不内置任何厂商：API 地址填到 `/v1` 一级，例如 `https://openrouter.ai/api/v1`，服务端在后面加 `/chat/completions`。
@@ -60,14 +60,14 @@ override:
 
 `override` 下填了的项代替页面上填的值和 `--agent 居民=llm:模型` 中的模型，对所有由模型驱动的居民生效；没填的项仍用玩家给的。三项都填了时，页面上只需点“交给 AI”。`--agent 居民=llm` 的地址和 key 只能来自配置文件，模型可以来自参数或配置文件，缺项时启动报错。拼错的设置名会让启动报错，错误信息不显示设置的值。
 
-key 只放在服务端内存里，用来调用接口，不写进状态、控制台、`--agent-log` 或错误信息；服务商在错误信息里回显的 key 替换为 `***`。httpx 的请求日志调到 WARNING，不打印请求地址。
+key 只放在服务端内存里，用来调用接口，不写进状态、控制台或角色/汇总日志；服务商在错误信息里回显的 key 替换为 `***`。httpx 的请求日志调到 WARNING，不打印请求地址。
 
 - 每名居民一个异步循环（`agents/runner.py`）：感知 → 大脑决策一轮并调用工具 → 等待唤醒。唤醒条件：行走或采矿结束、空闲时收到报价、空闲时自己的合约因别人或时间而结束、听到别人说话（忙碌时也唤醒）、空闲 20 秒无事。两轮开始至少相隔 3 秒，大脑出错后 10 秒。居民出局或游戏结束时停止。
 - 工具（`agents/tools.py`）绑定到一名居民，参数里没有“谁来做”：`move_to`、`mine`、`sell_tokens`、`buy_chip`、`say`、`offer_to_buy`、`offer_to_sell`、`respond_to_offer`、`withdraw_offer`、`propose_contract`、`deliver`、`cancel_contract`、`remember`、`forget`。`respond_to_offer` 与 `withdraw_offer` 也用来答复和撤回合约提议。不提供退出游戏。参数错误、未知工具、原语被拒绝都作为失败结果交回，世界不变。
 - 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价与合约提议，自己参与的合约和最近结束的几份（结束原因、没交付的次数、赔付的押金），到收购点和已知矿池的距离与走路花费。
 - 脚本机器人（`agents/scripted_brain.py`）：买得起的最好芯片 → 最近的有储量矿池（找不到就到固定点探索）→ 采到 260 个 token 回收购点卖到剩 60 → 快结束时卖到剩 1。
 - 大模型大脑（`agents/llm_brain.py`）：系统提示是规则说明（`agents/system_prompt.py`，数值取自代码常量），用户消息是观察和上一轮的行动结果；模型每轮最多请求 8 次，每局每名居民最多 400 次（停止或更换 Agent 不重置），每次最多写 2048 token。请求失败时由循环记录，10 秒后再问。停止或更换 Agent 时关闭它的 HTTP 客户端。
-- 控制台每轮打印一行摘要；`--agent-log` 另外把完整记录（观察、工具调用与结果、模型的话、错误）写成 JSONL。
+- 控制台每轮打印一行摘要；默认同时在服务端项目 `logs/` 为每名居民创建独立的 JSONL 文件，每次开新局覆盖。详见下文“角色日志”。
 
 ## 合约
 
@@ -82,16 +82,16 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 13。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 14。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 13}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 14}` | 连接后发送；多余字段忽略 |
 | 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价与合约，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
-| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 13, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
+| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 14, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
 | 服务端 → 客户端 | `{"type": "state", "world": {...}}` | 紧跟 `welcome`；世界变化后、游戏结束时也推送给每个已握手的连接。内容见下 |
 | 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`not_enough_tokens`、`busy`、`not_at_pool`、`pool_empty`、`unknown_pool`、`not_at_market`、`invalid_quantity`、`price_too_low`、`no_chip`、`unknown_chip`、`not_enough_coins`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
 | 服务端 → 客户端 | `{"type": "agent_result", "residentId": "r1", "ok": true}` | 回应发送者对 `residentId` 的 `start_agent` 或 `stop_agent`，成功后所有连接收到新的 `state`。被拒绝时 `ok` 为 `false`，附 `code`（`unknown_resident`、`resident_left`、`game_over`，与配置文件合并后缺项的 `missing_llm_setting`，地址不是 http(s) URL 或 key 不是不含空格的可打印 ASCII 的 `invalid_llm_setting`；客户端应接受未知代码）和 `message`，不含 key |
@@ -218,6 +218,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/server/config.py` | 读取大模型的 YAML 配置文件：`override` 覆盖模型的地址、key、模型，拒绝未知的键，错误信息不含设置的值 |
 | `src/aiverse_server/server/app.py` | FastAPI 应用与 WebSocket `/ws`：共享世界、对局计时（到点的事见 `clock.py`）、每轮开始的 `begin_turn`、写入与忘掉笔记、Agent 与网页共用的执行入口 `act`/`commit`、世界变化时唤醒 Agent 的 `subscribe`、启动、更换与停止 Agent（`start_agent`、`start_llm_agent`、`stop_agent`，后者合并配置文件的覆盖项）、握手、执行原语、广播状态 |
 | `src/aiverse_server/agents/` | AI 居民：`runner.py` 事件驱动的循环与唤醒规则，`observation.py` 每轮的观察，`tools.py` 绑定居民的工具，`scripted_brain.py` 脚本机器人，`llm_brain.py` OpenAI 兼容接口的大模型大脑与设置的合并、校验，`system_prompt.py` 给模型的系统提示（规则说明） |
+| `src/aiverse_server/agents/turn_logger.py` | 当前对局的按角色 JSONL 日志、独立轮号、可选汇总文件，创建/覆盖/实时写入与关闭 |
 | `src/aiverse_server/agents/config/` | 大模型配置：示例 `llm.example.yml`；本地的 `llm.yml` 被 Git 忽略 |
 | `src/aiverse_server/__main__.py` | 启动入口，`--config` 读配置文件，`--agent` 指定由 Agent 驱动的居民，`--agent-log` 写每轮记录 |
 | `tests/unit/` | 单元测试：世界模型、操作原语、物品栏与金币、事件、交易、合约、对局生命周期、token、采矿、芯片、收购点、行走、感知、记忆、对话、AI 居民的工具、观察、每轮记录与大模型设置的合并和校验、`Game` 的执行入口与发件箱、协议视图、配置文件、命令行参数 |
@@ -232,3 +233,34 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 协议版本为 14。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
 
 `agents/tools.py` 的 `ResourceBalance` 和 `resource_balance` 测量动作前后总额，`runner.py` 生成带首尾资源的 `TurnRecord`，`server/protocol.py` 转为有界的 `AgentTurnView`，`server/app.py` 按观看者发送。
+
+## 角色日志
+
+用正常启动命令即可自动记录，无需额外开关：
+
+```sh
+uv run aiverse-server --agent r1=llm --agent r2=llm
+```
+
+默认位置为服务端项目的 `logs/`，与启动时的工作目录无关。按居民 id 分别保存 `r1.jsonl`、`r2.jsonl`、`r3.jsonl`、`r4.jsonl`；未启动 AI 的居民文件为空。每次启动服务端就是新一局，因此会覆盖这些文件，同局内停止、更换 AI 继续追加，不删除目录里的其他文件。日志文件已被 Git 忽略。
+
+用 `--log-dir /绝对路径/日志目录` 改位置（相对路径相对启动目录），目录不存在时自动创建。旧的 `--agent-log FILE` 仍可额外保存所有角色的汇总记录，现在也改为每局覆盖，不能与任一角色文件同名。
+
+每行是一个 AI 决策轮的 JSON，写完立即 flush，可以边运行边读取。字段如下：
+
+| 字段 | 内容 |
+| --- | --- |
+| `resident_id`、`resident_name`、`round` | 居民 id、名字、该居民本局第几轮（停止/更换 AI 不重置） |
+| `model`、`strategy` | 模型名和经营方针；脚本机器人为 null |
+| `started_at`、`finished_at` | UTC ISO 8601 现实起止时间，含时区 |
+| `time`、`ended_at` | 自开局起的游戏秒数 |
+| `observation` | 本轮完整观察，含 `long_term_notes`、`short_term_notes`、已知矿池、收到的发言与交易 |
+| `calls` | 按调用顺序记录动作名、参数、游戏时间 `time`、现实 UTC `timestamp`、成败和状态、金币/token 净变化 |
+| `memory_after` | 本轮结束时存储的长短期笔记、已知矿池等记忆，含写入和过期时间 |
+| `outputs`、`remark` | 每次模型响应的文本输出（不含隐藏推理）、最终计划摘要；脚本只记录返回的摘要 |
+| `before`、`after` | 本轮首尾金币总额（含托管）和 token |
+| `error`、`cancelled` | 失败详情与是否在思考时被停止；已执行动作与轮后记忆仍保留 |
+
+模型返回错误、被停止或更换时的未完成轮次也写文件；取消轮次不进入页面的已完成时间线。本局已使用的 API key 在 JSON 转义前从文本、参数、笔记和输出中脱敏；非法 JSON 参数不保存原文。日志包含局内私聊与记忆，只保存在本机。
+
+本功能记录 AI 决策轮，手动操作不是独立日志行，但其造成的状态变化会出现在后续观察和资源变化中。直接嵌入 `create_app` 的程序仍可自行传 `record` 回调，默认文件记录由命令行入口创建。

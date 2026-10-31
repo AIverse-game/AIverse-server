@@ -27,9 +27,11 @@ import math
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..game.lifecycle import GameError
+from .llm_brain import ChatCompletionsBrain
 from .observation import Observation, observe, to_json
 from .tools import ResidentTools, ResourceBalance, ToolCall, resource_balance
 
@@ -83,6 +85,52 @@ class TurnRecord:
     before: ResourceBalance | None = None
     after: ResourceBalance | None = None
     ended_at: float = 0.0
+    started_at: str | None = None
+    finished_at: str | None = None
+    memory_after: dict[str, Any] | None = None
+    outputs: tuple[str, ...] = ()
+    model: str | None = None
+    strategy: str | None = None
+    cancelled: bool = False
+
+
+def redact_turn(turn: TurnRecord, redact: Callable[[str], str]) -> TurnRecord:
+    """Clean textual payloads before JSON escaping, keeping schema keys and routing intact."""
+
+    def cleaned(value: Any, argument_keys: bool = False) -> Any:
+        if isinstance(value, str):
+            return redact(value)
+        if isinstance(value, dict):
+            return {
+                redact(key) if argument_keys else key: cleaned(item, argument_keys)
+                for key, item in value.items()
+            }
+        if isinstance(value, list | tuple):
+            return [cleaned(item, argument_keys) for item in value]
+        return value
+
+    return replace(
+        turn,
+        observation=json.dumps(cleaned(json.loads(turn.observation)), ensure_ascii=False),
+        calls=tuple(
+            replace(
+                call,
+                name=redact(call.name),
+                arguments=cleaned(dict(call.arguments), True),
+                result=replace(
+                    call.result,
+                    message=redact(call.result.message),
+                    status=cleaned(call.result.status),
+                ),
+            )
+            for call in turn.calls
+        ),
+        remark=redact(turn.remark) if turn.remark is not None else None,
+        error=redact(turn.error) if turn.error is not None else None,
+        memory_after=cleaned(turn.memory_after),
+        outputs=tuple(redact(output) for output in turn.outputs),
+        strategy=redact(turn.strategy) if turn.strategy is not None else None,
+    )
 
 
 def record_to_json(turn: TurnRecord) -> str:
@@ -144,6 +192,8 @@ class AgentRunner:
         self.brain = brain
         self.pace = pace
         self._record = record
+        if isinstance(brain, ChatCompletionsBrain):
+            game.register_redactor(*brain.credential_redactor())
 
     async def run(self) -> None:
         changed = self.game.subscribe()
@@ -170,6 +220,8 @@ class AgentRunner:
         except GameError:
             # Left or over since the last look; the loop notices and stops.
             return False
+        cancelled = False
+        started_at = datetime.now(UTC).isoformat()
         try:
             observation = observe(
                 self.game.world, self.resident_id, perception, self.game.remaining()
@@ -180,9 +232,14 @@ class AgentRunner:
             error: str | None = None
             try:
                 remark = await self.brain.take_turn(observation, tools)
+            except asyncio.CancelledError:
+                cancelled = True
+                error = "agent stopped before completing the round"
             except Exception as failure:
-                logger.exception("agent for %s failed", self.resident_id)
-                error = f"{type(failure).__name__}: {failure}"[:500]
+                detail = f"{type(failure).__name__}: {failure}"
+                detail = self.game.redact(detail)
+                logger.error("agent for %s failed: %s", self.resident_id, detail[:500])
+                error = detail[:500]
             # The model may have waited without calling a tool or another world event.
             self.game.tick()
             turn = TurnRecord(
@@ -195,13 +252,35 @@ class AgentRunner:
                 balance,
                 resource_balance(self.game, self.resident_id),
                 self.game.world.time,
+                started_at=started_at,
+                finished_at=datetime.now(UTC).isoformat(),
+                memory_after=asdict(
+                    next(
+                        person.memory
+                        for person in self.game.world.residents
+                        if person.id == self.resident_id
+                    )
+                ),
+                outputs=tuple(self.brain.outputs)
+                if isinstance(self.brain, ChatCompletionsBrain)
+                else ((remark,) if remark else ()),
+                model=self.brain.model if isinstance(self.brain, ChatCompletionsBrain) else None,
+                strategy=self.brain.strategy
+                if isinstance(self.brain, ChatCompletionsBrain)
+                else None,
+                cancelled=cancelled,
             )
-            self.game.record_turn(turn)
+            turn = redact_turn(turn, self.game.redact)
+            if not cancelled:
+                self.game.record_turn(turn)
             if self._record is not None:
                 self._record(turn)
         except Exception:
             logger.exception("round for %s failed", self.resident_id)
             return True
+        finally:
+            if cancelled:
+                raise asyncio.CancelledError
         return error is not None
 
     async def _sleep(

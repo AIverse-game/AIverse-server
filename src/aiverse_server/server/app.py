@@ -241,6 +241,7 @@ class Game:
         self._llm_requests: dict[str, int] = {}
         self.agent_turns: dict[str, deque[AgentTurnView]] = {}
         self._turn_seq = 0
+        self._credential_redactors: list[tuple[int, Callable[[str], str]]] = []
 
     def remaining(self) -> float:
         return max(self._duration - (self._clock() - self._start), 0.0)
@@ -310,16 +311,21 @@ class Game:
         self.tick()
         self.world = forget(self.world, resident_id, note_id)
 
+    def register_redactor(self, key_length: int, redact: Callable[[str], str]) -> None:
+        """Retain a used credential's filter for this whole game, across agent changes."""
+        self._credential_redactors.append((key_length, redact))
+        # A short old key may be part of a newer one; mask the complete long value first.
+        self._credential_redactors.sort(key=lambda rule: rule[0], reverse=True)
+
+    def redact(self, text: str) -> str:
+        for _, redact in self._credential_redactors:
+            text = redact(text)
+        return text
+
     def record_turn(self, turn: TurnRecord) -> None:
         """Keep a bounded page projection independently of optional console/file logging."""
         self._turn_seq += 1
-        agent = self._agents.get(turn.resident_id)
-        redact = (
-            agent.brain.redact
-            if agent and isinstance(agent.brain, ChatCompletionsBrain)
-            else lambda text: text
-        )
-        shown = agent_turn_view(turn, self._turn_seq, redact)
+        shown = agent_turn_view(turn, self._turn_seq, self.redact)
         self.agent_turns.setdefault(turn.resident_id, deque(maxlen=AGENT_TURN_LIMIT)).append(shown)
         self.broadcast_world()
 

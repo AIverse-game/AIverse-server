@@ -22,6 +22,7 @@ runner records before asking again later.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -132,8 +133,10 @@ class ChatCompletionsBrain:
         self._owns_client = client is None
         self._client = client if client is not None else httpx.AsyncClient(timeout=TIMEOUT)
         self._last_round = "This is your first round."
+        self.outputs: list[str] = []
 
     async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
+        self.outputs = []
         if self.requests >= self.request_limit:
             return "request limit reached; waiting"
         messages: list[dict[str, Any]] = [
@@ -153,6 +156,8 @@ class ChatCompletionsBrain:
                     break
                 message = await self._complete(messages)
                 content = message.get("content")
+                if isinstance(content, str) and content:
+                    self.outputs.append(content)
                 calls = message.get("tool_calls")
                 if not isinstance(calls, list) or not calls:
                     remark = (
@@ -182,6 +187,11 @@ class ChatCompletionsBrain:
         finally:
             self._last_round = _summary(tools.calls, remark)
         return remark
+
+    def credential_redactor(self) -> tuple[int, Callable[[str], str]]:
+        """A game can keep filtering this key after the brain and its HTTP client close."""
+        api_key = self._api_key
+        return len(api_key), lambda text: text.replace(api_key, "***") if api_key else text
 
     def redact(self, text: str) -> str:
         """Remove a provider-echoed credential before exposing a turn on the page."""
