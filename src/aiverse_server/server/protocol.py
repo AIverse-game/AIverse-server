@@ -27,23 +27,38 @@ from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, pressure_at
+from ..economy.rigs import (
+    ENERGY_PER_100,
+    RENT_PER_100,
+    RIG_CAPACITY,
+    RIG_PRICE,
+    RIG_SECONDS,
+    cycle_amount,
+    cycle_cost,
+    rig_coins,
+    slot_status,
+)
 from ..economy.tokens import token_total
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_items
 from ..game.actions import (
     Action,
     ActionRejected,
+    BuildRig,
     BuyChip,
+    FundRig,
+    InstallChip,
     LeaveGame,
     Mine,
     MoveTo,
     RejectionCode,
+    RemoveChip,
     Say,
     SellTokens,
 )
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 
 ERROR_MAX_LENGTH = 200
 
@@ -103,8 +118,46 @@ class SayInput(_Message):
     """The one resident spoken to; left out to speak aloud to everyone within earshot."""
 
 
+class BuildRigInput(_Message):
+    type: Literal["build_rig"]
+    resident_id: str
+    pool_id: str
+
+
+class InstallChipInput(_Message):
+    type: Literal["install_chip"]
+    resident_id: str
+    rig_id: StrictInt
+    chip: str
+    deposit: StrictInt
+
+
+class FundRigInput(_Message):
+    type: Literal["fund_rig"]
+    resident_id: str
+    rig_id: StrictInt
+    slot_id: StrictInt
+    amount: StrictInt
+
+
+class RemoveChipInput(_Message):
+    type: Literal["remove_chip"]
+    resident_id: str
+    rig_id: StrictInt
+    slot_id: StrictInt
+
+
 ActionInput = Annotated[
-    MoveToInput | LeaveGameInput | MineInput | SellTokensInput | BuyChipInput | SayInput,
+    MoveToInput
+    | LeaveGameInput
+    | MineInput
+    | SellTokensInput
+    | BuyChipInput
+    | SayInput
+    | BuildRigInput
+    | InstallChipInput
+    | FundRigInput
+    | RemoveChipInput,
     Field(discriminator="type"),
 ]
 
@@ -210,6 +263,8 @@ class ResidentView(_Message):
     position: PositionView
     """Where the resident is when this was sent, on the way while walking."""
     coins: int
+    spendable_coins: int
+    rig_balance: int
     """Total coins, including those set aside by pending offers and contracts; public to
     everyone."""
     left: bool
@@ -218,6 +273,7 @@ class ResidentView(_Message):
     tokens: int
     """Tokens owned, the resident's stamina, including those set aside by pending offers."""
     chips: dict[str, int]
+    carried_chips: dict[str, int]
     """Chips owned, model to count, including those set aside by pending offers;
     models with none are left out."""
     mining: MiningView | None = None
@@ -418,11 +474,69 @@ def _redacted_arguments(value: object, redact: Callable[[str], str]) -> object:
     return value
 
 
+class RigSlotView(_Message):
+    id: int
+    resident_id: str
+    chip: str
+    balance: int
+    mined: int
+    rent_paid: int
+    status: Literal["running", "no_funds", "pool_empty"]
+    remaining_seconds: float
+    tokens_per_cycle: int
+    rent_per_cycle: int
+    energy_per_cycle: int
+
+
+class RigView(_Message):
+    id: int
+    owner_id: str
+    pool_id: str
+    slots: list[RigSlotView]
+
+
+class RigRulesView(_Message):
+    price: int = RIG_PRICE
+    capacity: int = RIG_CAPACITY
+    cycle_seconds: float = RIG_SECONDS
+    rent_per_100: int = RENT_PER_100
+    energy_per_100: int = ENERGY_PER_100
+
+
+def rig_views(world: World) -> list[RigView]:
+    return [
+        RigView(
+            id=rig.id,
+            owner_id=rig.owner_id,
+            pool_id=rig.pool_id,
+            slots=[
+                RigSlotView(
+                    id=slot.id,
+                    resident_id=slot.resident_id,
+                    chip=slot.chip,
+                    balance=slot.balance,
+                    mined=slot.mined,
+                    rent_paid=slot.rent_paid,
+                    status=slot_status(world, rig, slot),
+                    remaining_seconds=max(slot.next_at - world.time, 0.0),
+                    tokens_per_cycle=cycle_amount(world, rig, slot),
+                    rent_per_cycle=cycle_cost(rig, slot, cycle_amount(world, rig, slot))[0],
+                    energy_per_cycle=cycle_cost(rig, slot, cycle_amount(world, rig, slot))[1],
+                )
+                for slot in rig.slots
+            ],
+        )
+        for rig in world.rigs
+    ]
+
+
 class WorldView(_Message):
     map: MapView
     pools: list[PoolView]
     residents: list[ResidentView]
     game: GameView
+    rigs: list[RigView]
+    rig_rules: RigRulesView
     market: MarketView | None = None
     """Left out on a map without a market."""
     speech: list[SpeechView]
@@ -523,6 +637,8 @@ def world_view(
         if line.to is None or (viewer is not None and viewer in (line.speaker_id, line.to))
     ]
     return WorldView(
+        rigs=rig_views(world),
+        rig_rules=RigRulesView(),
         agent_timeline=AgentTimelineView(
             resident_id=viewer, turns=list((agent_turns or {}).get(viewer, ()))
         )
@@ -545,6 +661,13 @@ def world_view(
                 color=resident.color,
                 position=_position_view(position_at(resident, world.time)),
                 coins=total_coins(world, resident.id),
+                spendable_coins=resident.coins,
+                rig_balance=rig_coins(world, resident.id),
+                carried_chips={
+                    m.model: resident.inventory.count(m.model)
+                    for m in CHIP_MODELS
+                    if resident.inventory.count(m.model)
+                },
                 left=resident.left,
                 rank=places[resident.id],
                 tokens=token_total(world, resident.id),
@@ -684,6 +807,14 @@ def to_action(message: ActionMessage) -> Action:
             return SellTokens(resident_id=action.resident_id, quantity=action.quantity)
         case BuyChipInput():
             return BuyChip(resident_id=action.resident_id, model=action.model)
+        case BuildRigInput():
+            return BuildRig(action.resident_id, action.pool_id)
+        case InstallChipInput():
+            return InstallChip(action.resident_id, action.rig_id, action.chip, action.deposit)
+        case FundRigInput():
+            return FundRig(action.resident_id, action.rig_id, action.slot_id, action.amount)
+        case RemoveChipInput():
+            return RemoveChip(action.resident_id, action.rig_id, action.slot_id)
         case SayInput():
             return Say(resident_id=action.resident_id, text=action.text, to=action.to)
 

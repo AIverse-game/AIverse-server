@@ -50,7 +50,9 @@ def test_the_scripted_bot_earns_coins_on_the_default_map() -> None:
             any(resident.inventory.count(chip.model) for chip in CHIP_MODELS)
             for resident in game.world.residents
         )
-        assert all(pool.reserve < 150 for pool in game.world.pools)
+        assert sum(pool.reserve for pool in game.world.pools) < sum(
+            pool.reserve for pool in create_default_world(seed=7).pools
+        )
         assert game.world.market is not None and game.world.market.pressure > 0
         assert max(resident.coins for resident in game.world.residents) > STARTING_COINS
 

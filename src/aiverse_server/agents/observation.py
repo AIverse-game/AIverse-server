@@ -18,6 +18,17 @@ from ..core.events import Event, pending_for, pending_from
 from ..core.world import Contract, ContractEnd, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
+from ..economy.rigs import (
+    ENERGY_PER_100,
+    RENT_PER_100,
+    RIG_CAPACITY,
+    RIG_PRICE,
+    RIG_SECONDS,
+    cycle_amount,
+    cycle_cost,
+    rig_coins,
+    slot_status,
+)
 from ..economy.tokens import TOKEN, walk_cost
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
 from ..game.lifecycle import ranks, total_coins
@@ -232,6 +243,9 @@ class Observation:
     """What others did nearby since the resident last looked."""
     long_term_notes: tuple[NoteView, ...]
     short_term_notes: tuple[NoteView, ...]
+    rig_balance: int
+    rig_rules: dict[str, int | float]
+    mining_rigs: tuple[dict[str, object], ...]
 
 
 def observe(
@@ -268,6 +282,38 @@ def observe(
         key=lambda pool: pool.distance,
     )
     return Observation(
+        rig_balance=rig_coins(world, resident_id),
+        rig_rules={
+            "price": RIG_PRICE,
+            "capacity": RIG_CAPACITY,
+            "cycle_seconds": RIG_SECONDS,
+            "rent_per_100": RENT_PER_100,
+            "energy_per_100": ENERGY_PER_100,
+        },
+        mining_rigs=tuple(
+            {
+                "id": rig.id,
+                "owner_id": rig.owner_id,
+                "pool_id": rig.pool_id,
+                "position": asdict(next(p.position for p in world.pools if p.id == rig.pool_id)),
+                "slots": [
+                    {
+                        "id": s.id,
+                        "resident_id": s.resident_id,
+                        "chip": s.chip,
+                        "balance": s.balance,
+                        "mined": s.mined,
+                        "rent_paid": s.rent_paid,
+                        "status": slot_status(world, rig, s),
+                        "next_in": max(s.next_at - world.time, 0.0),
+                        "tokens_per_cycle": cycle_amount(world, rig, s),
+                        "rent_and_energy": sum(cycle_cost(rig, s, cycle_amount(world, rig, s))),
+                    }
+                    for s in rig.slots
+                ],
+            }
+            for rig in world.rigs
+        ),
         time=perception.time,
         remaining_seconds=remaining,
         me=Me(

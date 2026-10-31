@@ -22,6 +22,7 @@ from ..core.inventory import clear_items
 from ..core.world import World
 from ..economy.contracts import contract_coins, end_contracts
 from ..economy.mining import cancel_mining
+from ..economy.rigs import release_rigs, rig_coins
 from ..economy.tokens import token_total
 from ..economy.trade import reserved_coins
 from ..residents.walking import stop_walking
@@ -58,6 +59,7 @@ def leave_game(world: World, resident_id: str) -> World:
     going to the buyer, then their items are cleared. Their coins stay."""
     check_can_act(world, resident_id)
     world = cancel_mining(world, resident_id)
+    world = release_rigs(world, resident_id)
     world = stop_walking(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
     world = end_contracts(
@@ -119,6 +121,7 @@ def end_game(world: World) -> World:
         world = cancel_mining(world, resident.id)
         world = stop_walking(world, resident.id)
     world = end_contracts(_settle(world, lambda event: True), lambda contract: True, "game_ended")
+    world = release_rigs(world)
     return replace(world, ended=True)
 
 
@@ -126,7 +129,12 @@ def total_coins(world: World, resident_id: str) -> int:
     """Spendable coins plus those set aside by pending offers and contracts: what the ranking
     counts."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
-    return resident.coins + reserved_coins(world, resident_id) + contract_coins(world, resident_id)
+    return (
+        resident.coins
+        + reserved_coins(world, resident_id)
+        + contract_coins(world, resident_id)
+        + rig_coins(world, resident_id)
+    )
 
 
 def ranks(world: World) -> dict[str, int]:

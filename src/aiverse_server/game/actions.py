@@ -35,6 +35,14 @@ from ..economy.contracts import (
 )
 from ..economy.market import MarketError, MarketErrorCode, sell_tokens
 from ..economy.mining import MiningError, MiningErrorCode, check_not_busy, start_mining
+from ..economy.rigs import (
+    RigError,
+    RigErrorCode,
+    build_rig,
+    fund_slot,
+    install_chip,
+    remove_chip,
+)
 from ..economy.tokens import TokenError, TokenErrorCode, pay_for_walk
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from ..residents.perception import record_activity
@@ -55,6 +63,7 @@ RejectionCode = (
     | ChipErrorCode
     | SpeechErrorCode
     | ContractErrorCode
+    | RigErrorCode
 )
 
 
@@ -216,6 +225,35 @@ class Say:
     to: str | None = None
 
 
+@dataclass(frozen=True)
+class BuildRig:
+    resident_id: str
+    pool_id: str
+
+
+@dataclass(frozen=True)
+class InstallChip:
+    resident_id: str
+    rig_id: int
+    chip: str
+    deposit: int
+
+
+@dataclass(frozen=True)
+class FundRig:
+    resident_id: str
+    rig_id: int
+    slot_id: int
+    amount: int
+
+
+@dataclass(frozen=True)
+class RemoveChip:
+    resident_id: str
+    rig_id: int
+    slot_id: int
+
+
 Action = (
     MoveTo
     | RespondToEvent
@@ -230,6 +268,10 @@ Action = (
     | SellTokens
     | BuyChip
     | Say
+    | BuildRig
+    | InstallChip
+    | FundRig
+    | RemoveChip
 )
 
 
@@ -245,6 +287,23 @@ def perform(world: World, action: Action) -> World:
 
 def _carry_out(world: World, action: Action) -> World:
     match action:
+        case BuildRig() | InstallChip() | FundRig() | RemoveChip():
+            try:
+                match action:
+                    case BuildRig():
+                        return build_rig(world, action.resident_id, action.pool_id)
+                    case InstallChip():
+                        return install_chip(
+                            world, action.resident_id, action.rig_id, action.chip, action.deposit
+                        )
+                    case FundRig():
+                        return fund_slot(
+                            world, action.resident_id, action.rig_id, action.slot_id, action.amount
+                        )
+                    case RemoveChip():
+                        return remove_chip(world, action.resident_id, action.rig_id, action.slot_id)
+            except (RigError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
         case MoveTo():
             return _move_to(world, action)
         case RespondToEvent() | WithdrawEvent():

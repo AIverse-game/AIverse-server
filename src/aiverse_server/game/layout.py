@@ -20,7 +20,7 @@ STARTING_TOKENS = 200
 
 POOL_COUNT = 6
 POOL_RADIUS = 4.0
-POOL_RESERVE = (150, 400)
+POOL_RESERVE = (1_500, 4_000)
 """Smallest and largest number of tokens a pool starts with."""
 POOL_MARGIN = 10.0
 """Least distance from a pool's centre to the map edge."""

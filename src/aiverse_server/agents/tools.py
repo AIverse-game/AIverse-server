@@ -29,14 +29,18 @@ from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.tokens import TOKEN, token_total
 from ..game.actions import (
     ActionRejected,
+    BuildRig,
     BuyChip,
     CancelContract,
     Deliver,
+    FundRig,
+    InstallChip,
     Mine,
     MoveTo,
     OfferToBuy,
     OfferToSell,
     ProposeContract,
+    RemoveChip,
     RespondToEvent,
     Say,
     SellTokens,
@@ -75,6 +79,27 @@ class SellTokensArgs(_Args):
 
 class BuyChipArgs(_Args):
     model: str = Field(description="Chip model: MK1, MK2 or MK3.")
+
+
+class BuildRigArgs(_Args):
+    pool_id: str = Field(description="Pool you stand at; build an automatic mining rig here.")
+
+
+class InstallChipArgs(_Args):
+    rig_id: StrictInt
+    chip: str = Field(description="Carried chip model to install: MK1, MK2 or MK3.")
+    deposit: StrictInt = Field(description="Coins to prepay for rent and electricity; at least 1.")
+
+
+class FundRigArgs(_Args):
+    rig_id: StrictInt
+    slot_id: StrictInt
+    amount: StrictInt = Field(description="Additional prepaid coins for your slot; at least 1.")
+
+
+class RemoveChipArgs(_Args):
+    rig_id: StrictInt
+    slot_id: StrictInt
 
 
 class SayArgs(_Args):
@@ -225,6 +250,22 @@ class ToolSpec:
 
 
 TOOLS = (
+    ToolSpec(
+        "build_rig", "Build a rig at your pool for coins; it needs installed chips.", BuildRigArgs
+    ),
+    ToolSpec(
+        "install_chip",
+        "Install your chip at a rig you stand at; prepay rent and power, then move freely.",
+        InstallChipArgs,
+    ),
+    ToolSpec(
+        "fund_rig",
+        "Remotely top up your slot. An unfunded slot pauses without debt or catch-up.",
+        FundRigArgs,
+    ),
+    ToolSpec(
+        "remove_chip", "Remotely remove your chip and refund unused prepayment.", RemoveChipArgs
+    ),
     ToolSpec(
         "move_to",
         "Walk in a straight line to a point. Costs 1 token per map unit, paid on setting off; "
@@ -422,6 +463,14 @@ class ResidentTools:
         me = self.resident_id
         act = self.game.act
         match args:
+            case BuildRigArgs():
+                act(BuildRig(me, args.pool_id))
+            case InstallChipArgs():
+                act(InstallChip(me, args.rig_id, args.chip, args.deposit))
+            case FundRigArgs():
+                act(FundRig(me, args.rig_id, args.slot_id, args.amount))
+            case RemoveChipArgs():
+                act(RemoveChip(me, args.rig_id, args.slot_id))
             case MoveToArgs():
                 act(MoveTo(me, Position(args.x, args.y)))
             case MineArgs():

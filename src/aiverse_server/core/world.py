@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .events import EventQueue
+from .rigs import MiningRig
 
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 
@@ -533,6 +534,8 @@ class World:
     """What residents have said and who heard it, see `speech.py`."""
     contracts: ContractBook = ContractBook()
     """Standing deals between residents, see `contracts.py`."""
+    rigs: tuple[MiningRig, ...] = ()
+    next_rig_id: int = 1
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -587,6 +590,19 @@ class World:
                 raise ValueError(f"event {event.id} is addressed to its own sender")
         # Leaving and ending both settle every pending event first.
         left = {resident.id for resident in self.residents if resident.left}
+        rig_ids = [rig.id for rig in self.rigs]
+        if type(self.next_rig_id) is not int or self.next_rig_id < 1:
+            raise ValueError("invalid next rig id")
+        if len(set(rig_ids)) != len(rig_ids):
+            raise ValueError("duplicate rig id")
+        for rig in self.rigs:
+            if not 1 <= rig.id < self.next_rig_id or rig.pool_id not in pool_ids:
+                raise ValueError("unknown rig or pool")
+            if rig.owner_id not in ids or rig.owner_id in left:
+                raise ValueError("rig owner must still be in the game")
+            for slot in rig.slots:
+                if self.ended or slot.resident_id not in ids or slot.resident_id in left:
+                    raise ValueError("rig slot outlives its game or resident")
         for event in self.events.pending:
             if self.ended or {event.sender_id, event.recipient_id} & left:
                 raise ValueError(f"event {event.id} is pending after its game or resident ended")

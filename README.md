@@ -82,16 +82,16 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 14。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 15。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 14}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 15}` | 连接后发送；多余字段忽略 |
 | 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价与合约，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
-| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 14, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
+| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 15, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
 | 服务端 → 客户端 | `{"type": "state", "world": {...}}` | 紧跟 `welcome`；世界变化后、游戏结束时也推送给每个已握手的连接。内容见下 |
 | 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`not_enough_tokens`、`busy`、`not_at_pool`、`pool_empty`、`unknown_pool`、`not_at_market`、`invalid_quantity`、`price_too_low`、`no_chip`、`unknown_chip`、`not_enough_coins`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
 | 服务端 → 客户端 | `{"type": "agent_result", "residentId": "r1", "ok": true}` | 回应发送者对 `residentId` 的 `start_agent` 或 `stop_agent`，成功后所有连接收到新的 `state`。被拒绝时 `ok` 为 `false`，附 `code`（`unknown_resident`、`resident_left`、`game_over`，与配置文件合并后缺项的 `missing_llm_setting`，地址不是 http(s) URL 或 key 不是不含空格的可打印 ASCII 的 `invalid_llm_setting`；客户端应接受未知代码）和 `message`，不含 key |
@@ -130,17 +130,21 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
   "residents": [
     {
       "id": "r1", "name": "阿青", "color": "#e4572e", "position": { "x": 20.0, "y": 25.0 },
-      "coins": 9700, "left": false, "rank": 2, "tokens": 200, "chips": { "MK1": 1 },
+      "coins": 9700, "spendableCoins": 9700, "rigBalance": 0,
+      "left": false, "rank": 2, "tokens": 200, "chips": { "MK1": 1 }, "carriedChips": { "MK1": 1 },
       "mining": { "poolId": "p1", "amount": 30, "chip": "MK1", "remainingSeconds": 9.5 }
     },
     {
       "id": "r2", "name": "小麦", "color": "#f3a712", "position": { "x": 60.0, "y": 30.0 },
-      "coins": 10000, "left": false, "rank": 1, "tokens": 150, "chips": {},
+      "coins": 10000, "spendableCoins": 10000, "rigBalance": 0,
+      "left": false, "rank": 1, "tokens": 150, "chips": {}, "carriedChips": {},
       "walking": { "target": { "x": 40.0, "y": 50.0 }, "remainingSeconds": 11.3 },
       "agent": { "model": "vendor/model-name" }
     }
   ],
   "game": { "ended": false, "remainingSeconds": 1199.5 },
+  "rigs": [],
+  "rigRules": { "price": 4000, "capacity": 4, "cycleSeconds": 20, "rentPer100": 300, "energyPer100": 20 },
   "speech": [
     { "seq": 1, "time": 12.5, "speakerId": "r1", "text": "有人卖 token 吗？", "listeners": ["r3"] },
     { "seq": 2, "time": 15.0, "speakerId": "r1", "text": "我出高价", "to": "r4", "listeners": ["r4"] }
@@ -199,6 +203,8 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | --- | --- |
 | `src/aiverse_server/core/world.py` | 坐标、居民（含金币、是否出局、采矿与行走任务、记忆与笔记）、物品栏、事件队列、生效的合约（`Contract`、`ContractBook`）、矿池、收购点、活动日志、发言记录、地图与世界模型（含是否结束、游戏时间），越界、重复 id 与事件、采矿、行走、记忆和日志一致性校验 |
 | `src/aiverse_server/core/inventory.py` | 居民物品的存入、移出、计数、列出与清空，金币的收付；服务端内部接口，不是原语 |
+| `src/aiverse_server/core/rigs.py` | 不可变矿机、插槽和容量约束 |
+| `src/aiverse_server/economy/rigs.py` | 建造、安装、预存、按产量生产和租金、远程充值与拆回、出局清理 |
 | `src/aiverse_server/core/events.py` | 事件队列：可扩展的事件种类（`EventPayload` 及其发送、同意、拒绝钩子），发送、答复、撤回与收件箱查询 |
 | `src/aiverse_server/economy/tokens.py` | token 体力：物品种类、拥有量、走路消耗 |
 | `src/aiverse_server/economy/chips.py` | 芯片：三个型号的定价与产量，在收购点购买，居民携带的最好一块 |
@@ -230,7 +236,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 `start_agent` 可附带 `strategy`（最多 1000 个 Unicode 字符，留空不追加方针），传给模型系统提示；不受 YAML 的接口配置覆盖。页面按居民保存草稿，修改后需重新交给 AI。
 
-协议版本为 14。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
+协议版本为 15。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
 
 `agents/tools.py` 的 `ResourceBalance` 和 `resource_balance` 测量动作前后总额，`runner.py` 生成带首尾资源的 `TurnRecord`，`server/protocol.py` 转为有界的 `AgentTurnView`，`server/app.py` 按观看者发送。
 
@@ -264,3 +270,15 @@ uv run aiverse-server --agent r1=llm --agent r2=llm
 模型返回错误、被停止或更换时的未完成轮次也写文件；取消轮次不进入页面的已完成时间线。本局已使用的 API key 在 JSON 转义前从文本、参数、笔记和输出中脱敏；非法 JSON 参数不保存原文。日志包含局内私聊与记忆，只保存在本机。
 
 本功能记录 AI 决策轮，手动操作不是独立日志行，但其造成的状态变化会出现在后续观察和资源变化中。直接嵌入 `create_app` 的程序仍可自行传 `record` 回调，默认文件记录由命令行入口创建。
+
+## 矿机与租用芯片
+
+协议 15：在矿池内用 `build_rig(poolId)` 花 4000 金币建一台 4 槽矿机；`install_chip(rigId, chip, deposit)` 安装自己携带的一块芯片并预存金币。自动采矿每 20 秒获得该芯片的单次产量，使用原矿池有限储量，角色可以离开；手动采矿仍为 10 秒。初始矿池储量为 1500～4000。
+
+租客每产出 100 token 向矿主付 300 金币，自己使用免租；每 100 token 另消耗 20 金币电费。按实际产量逐周期向上取整，发 token、扣储量、扣费和转租金一起执行。余额不足暂停，不负债；`fund_rig(rigId, slotId, amount)` 远程充值，停产后重新等待完整周期，不补挖。`remove_chip(rigId, slotId)` 远程拆回并退回余额，只有芯片所有人可操作。四个原语同样向 Agent 开放，观察包含公开的 `mining_rigs`、规则与自己的 `rig_balance`。
+
+`state.world` 增加 `rigs`、`rigRules`；居民增加 `spendableCoins`（可用金币）、`rigBalance`（预存余额）、`carriedChips`（携带芯片）。`chips` 仍表示背包及报价中的芯片，已安装的在 `rigs[].slots` 中单列。`coins` 总额与排名包含矿机预存，预存不能支付其他购买。槽位视图包含余额、累计产量和已付租金、周期费用、倒计时，以及 `running` / `no_funds` / `pool_empty` 状态。
+
+出局前撤下该居民的芯片、退回余额，再按原有规则清空物品；矿主出局关闭全部自有矿机并退还所有租客。游戏结束清空所有槽位并退还芯片及余额。未来产出不能阻止 token 耗尽出局；时间推进按事件实际时刻结算，到达时耗尽 token 的居民在同刻矿机生产前出局，防止延迟 tick 产生出局后收益。断开页面并不出局，只有服务端继续运行且角色仍在局内才生产。
+
+新增代码：`core/rigs.py`（矿机与槽位模型）、`economy/rigs.py`（建造、安装、预存、生产、退款与出局清理）。测试入口：`tests/unit/economy/test_rigs.py`、`tests/unit/agents/test_rig_tools.py`、`tests/integration/server/test_rig_websocket.py`。完整设计与首版数值限制见客户端 `docs/design/mining-rigs.md`。
