@@ -7,9 +7,14 @@ see `server/config.py`; `LLMSettings` carries them and `over` lays one on anothe
 
 Each round is a conversation of its own: the system prompt gives the rules (`system_prompt.py`), the
 first message the observation and a summary of the previous round, and the model then calls
-tools, sees their results and calls more, until it replies without a tool call or
-`MAX_STEPS` requests have gone by. The model's own notes carry anything further between
-rounds.
+tools, sees their results and calls more, until it replies without a tool call, its tools
+leave the resident walking or mining, or `MAX_STEPS` requests have gone by. A busy resident
+can only talk and take notes, which the model does in the same reply; asking again would
+only have it wait out the job in notes, and the runner wakes it when the job ends. When a
+free resident's model has called no tool yet and replies with nothing to act on, empty or
+cut off at `MAX_TOKENS`, the round asks once more and raises `LLMError` if the second reply
+is no better, so the runner records why and retries soon. The model's own notes carry
+anything further between rounds.
 
 The API key never goes into a record, a log or an error message, and is left out of the
 settings' repr; it must be printable ASCII without spaces, as an HTTP header allows, or it
@@ -150,19 +155,33 @@ class ChatCompletionsBrain:
             },
         ]
         remark: str | None = None
+        retried = False
         try:
             for _ in range(self.max_steps):
                 if self.requests >= self.request_limit:
                     break
-                message = await self._complete(messages)
+                message, finish_reason = await self._complete(messages)
                 content = message.get("content")
                 if isinstance(content, str) and content:
                     self.outputs.append(content)
                 calls = message.get("tool_calls")
                 if not isinstance(calls, list) or not calls:
-                    remark = (
-                        content.strip() if isinstance(content, str) and content.strip() else None
-                    )
+                    text = content.strip() if isinstance(content, str) else ""
+                    # A free resident with nothing done and nothing to act on: an empty reply,
+                    # or one cut off. A busy one may well choose to let what they heard pass.
+                    if (
+                        not tools.calls
+                        and not _busy(tools.status())
+                        and (not text or finish_reason == "length")
+                    ):
+                        if retried:
+                            raise LLMError(
+                                f"the model replied without acting (finish_reason: "
+                                f"{finish_reason or 'none'})"
+                            )
+                        retried = True
+                        continue
+                    remark = text or None
                     break
                 messages.append(
                     {"role": "assistant", "content": content or "", "tool_calls": calls}
@@ -184,6 +203,11 @@ class ChatCompletionsBrain:
                             "content": result.to_json(),
                         }
                     )
+                if _busy(tools.status()):
+                    remark = (
+                        content.strip() if isinstance(content, str) and content.strip() else None
+                    )
+                    break
         finally:
             self._last_round = _summary(tools.calls, remark)
         return remark
@@ -201,8 +225,9 @@ class ChatCompletionsBrain:
         if self._owns_client:
             await self._client.aclose()
 
-    async def _complete(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        """One chat completion; returns the model's message."""
+    async def _complete(self, messages: list[dict[str, Any]]) -> tuple[dict[str, Any], str | None]:
+        """One chat completion; returns the model's message and why it stopped writing, such
+        as "length" when it ran out of tokens."""
         self.requests += 1
         try:
             response = await self._client.post(
@@ -237,7 +262,13 @@ class ChatCompletionsBrain:
         message = choices[0].get("message")
         if not isinstance(message, dict):
             raise LLMError("the response has no message")
-        return message
+        finish_reason = choices[0].get("finish_reason")
+        return message, finish_reason if isinstance(finish_reason, str) else None
+
+
+def _busy(status: dict[str, Any]) -> bool:
+    """Whether a tool's status shows the resident walking or mining."""
+    return "walking_to" in status or "mining_pool" in status
 
 
 def _summary(calls: list[ToolCall], remark: str | None) -> str:

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -11,6 +12,7 @@ from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
 from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.game.actions import MoveTo
 from aiverse_server.server.app import Game
 
 WORLD = World(
@@ -115,6 +117,131 @@ def test_the_next_round_hears_what_the_tools_did_in_this_one() -> None:
 
         next_round = json.loads(requests[2].content)["messages"][1]["content"]
         assert "buy_chip(model='MK2') -> ok" in next_round
+
+    asyncio.run(scenario())
+
+
+def test_a_round_ends_once_its_tools_leave_the_resident_walking() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        calls = [
+            {"id": "c1", "function": {"name": "move_to", "arguments": '{"x": 80, "y": 50}'}},
+            {
+                "id": "c2",
+                "function": {
+                    "name": "remember",
+                    "arguments": '{"text": "mine p1", "term": "short_term"}',
+                },
+            },
+        ]
+        replies = [
+            httpx.Response(200, json=_reply({"content": "Off to p1.", "tool_calls": calls})),
+        ]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+        tools = ResidentTools(game, "a")
+
+        remark = await brain.take_turn(look(game, "a"), tools)
+
+        assert remark == "Off to p1."
+        assert len(requests) == 1
+        assert [call.result.ok for call in tools.calls] == [True, True]
+        assert me(game, "a").walking is not None
+
+    asyncio.run(scenario())
+
+
+def test_a_round_ends_once_its_tools_leave_the_resident_mining() -> None:
+    tokens_and_chip = Inventory(((TOKEN, 100), ("MK1", 1)))
+    miner = replace(WORLD.residents[0], position=Position(80, 50), inventory=tokens_and_chip)
+    world = replace(WORLD, residents=(miner, WORLD.residents[1]))
+
+    async def scenario() -> None:
+        game, _ = make_game(world)
+        call = {"id": "c1", "function": {"name": "mine", "arguments": '{"pool_id": "p1"}'}}
+        replies = [httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]}))]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert len(requests) == 1
+        assert me(game, "a").mining is not None
+
+    asyncio.run(scenario())
+
+
+def test_an_empty_reply_after_acting_ends_the_round() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        replies = [
+            httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
+            httpx.Response(200, json=_reply({"content": ""})),
+        ]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        remark = await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert remark is None
+        assert len(requests) == 2
+
+    asyncio.run(scenario())
+
+
+def test_a_busy_resident_may_let_a_round_pass_without_a_word() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        game.act(MoveTo("a", Position(80, 50)))
+        replies = [httpx.Response(200, json=_reply({"content": ""}))]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        remark = await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert remark is None
+        assert len(requests) == 1
+
+    asyncio.run(scenario())
+
+
+def test_an_empty_reply_is_asked_again() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        replies = [
+            httpx.Response(200, json=_reply({"content": ""})),
+            httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
+            httpx.Response(200, json=_reply({"content": "Bought MK2."})),
+        ]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        remark = await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert remark == "Bought MK2."
+        assert len(requests) == 3
+        assert me(game, "a").inventory.count("MK2") == 1
+
+    asyncio.run(scenario())
+
+
+def test_a_round_that_gets_nothing_to_act_on_twice_raises_why() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        cut_off = {"message": {"content": "I'm at the pool and"}, "finish_reason": "length"}
+        replies = [
+            httpx.Response(200, json=_reply({"content": None})),
+            httpx.Response(200, json={"choices": [cut_off]}),
+        ]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        with pytest.raises(LLMError, match="finish_reason: length"):
+            await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert len(requests) == 2
 
     asyncio.run(scenario())
 

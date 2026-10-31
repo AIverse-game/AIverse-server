@@ -252,6 +252,21 @@ def test_a_failing_brain_is_recorded_and_asked_again() -> None:
     asyncio.run(scenario())
 
 
+def test_a_failing_brain_of_a_free_resident_is_asked_again_before_the_idle_wait() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        brain = Broken()
+        pace = Pace(interval=0.0, retry=0.0, idle=60.0)
+
+        task = asyncio.create_task(AgentRunner(game, "a", brain, pace).run())
+        await _until(lambda: brain.calls >= 2, limit=1.0)
+        task.cancel()
+
+        assert brain.calls >= 2
+
+    asyncio.run(scenario())
+
+
 def test_a_failing_record_is_logged_and_the_loop_goes_on() -> None:
     def full_disk(turn: TurnRecord) -> None:
         raise OSError("no space left on device")
@@ -265,6 +280,24 @@ def test_a_failing_record_is_logged_and_the_loop_goes_on() -> None:
 
         assert not task.done()
         task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_failing_record_does_not_wake_an_idle_resident_early() -> None:
+    def full_disk(turn: TurnRecord) -> None:
+        raise OSError("no space left on device")
+
+    async def scenario() -> None:
+        game, _ = make_game()
+        brain = Recorder()
+        pace = Pace(interval=0.0, retry=0.0, idle=60.0)
+
+        task = asyncio.create_task(AgentRunner(game, "a", brain, pace, full_disk).run())
+        await asyncio.sleep(0.2)
+        task.cancel()
+
+        assert len(brain.seen) == 1
 
     asyncio.run(scenario())
 

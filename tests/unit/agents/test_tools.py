@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -76,6 +77,12 @@ def test_no_tool_takes_the_resident_who_acts(spec: ToolSpec) -> None:
         ("mine", {"pool_id": "p1"}, "no_chip"),
         ("buy_chip", {"model": "MK9"}, "unknown_chip"),
         ("forget", {"note_id": 3}, "unknown_note"),
+        ("sell_tokens", {"quantity": 100}, "last_token"),
+        (
+            "offer_to_sell",
+            {"buyer_id": "b", "kind": "token", "quantity": 100, "price": 1},
+            "last_token",
+        ),
     ],
 )
 def test_bad_calls_come_back_as_failures_and_change_nothing(
@@ -92,6 +99,40 @@ def test_bad_calls_come_back_as_failures_and_change_nothing(
     assert game.world == before
     assert len(tools.calls) == 1
     assert json.loads(result.to_json())["ok"] is False
+
+
+def test_a_walk_that_would_spend_the_last_token_is_refused() -> None:
+    poor = replace(WORLD.residents[0], inventory=Inventory(((TOKEN, 10),)))
+    game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
+    before = game.world
+
+    # From (50, 50) to (60, 50) costs 10 tokens, all the resident has.
+    result = ResidentTools(game, "a").call("move_to", {"x": 60, "y": 50})
+
+    assert result.code == "last_token"
+    assert game.world == before
+
+
+def test_a_whisper_on_the_way_that_would_spend_the_last_token_is_refused() -> None:
+    poor = replace(WORLD.residents[0], inventory=Inventory(((TOKEN, 11),)))
+    game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
+    tools = ResidentTools(game, "a")
+    assert tools.call("move_to", {"x": 60, "y": 50}).ok
+
+    result = tools.call("say", {"text": "hi", "to": "b"})
+
+    assert result.code == "last_token"
+    assert me(game, "a").inventory.count(TOKEN) == 1
+
+
+def test_selling_all_but_one_token_keeps_the_resident_in_the_game() -> None:
+    game, _ = make_game()
+
+    result = ResidentTools(game, "a").call("sell_tokens", {"quantity": 99})
+
+    assert result.ok
+    assert me(game, "a").inventory.count(TOKEN) == 1
+    assert not me(game, "a").left
 
 
 def test_tools_take_arguments_as_json_text_as_models_send_them() -> None:

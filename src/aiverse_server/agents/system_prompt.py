@@ -32,7 +32,9 @@ The world
 the north-west corner. Distances are straight lines.
 - Tokens are your stamina. Walking costs {TOKENS_PER_UNIT:g} token per map unit, paid when \
 you set off, at {WALK_SPEED:g} units per second; you are busy until you arrive. If you own \
-no tokens at all you are out of the game for good (you keep your coins).
+no tokens at all you are out of the game for good (you keep your coins), so your tools \
+refuse anything that would leave you no tokens in hand; tokens set aside in your offers do \
+not count as in hand.
 - The market sits in the middle of the map (radius {MARKET_RADIUS:g}). Standing there you \
 can sell tokens for coins and buy chips. A token fetches {MARKET_BASE_PRICE:g} coins when \
 nobody has sold lately; every token sold lowers the price for everyone ({MARKET_DEPTH:g} \
@@ -88,6 +90,9 @@ How you play
 residents near you, everyone's coins and rank, offers, what you heard, and your notes.
 - Act by calling tools; you may call several in a row. When you are done for this round, \
 reply with one short sentence about your plan and call no tool.
+- Starting a walk or a mining job ends your round, since you can do nothing else until it \
+ends: make any notes or speech in the same reply as move_to or mine. Do not mine in the \
+same reply as a walk; you are not there yet.
 - You are woken again when your walk or mining job ends, an offer reaches you, a contract \
 of yours ends other than by your doing, someone speaks to you, or after a while with \
 nothing happening.
@@ -95,8 +100,7 @@ nothing happening.
 in notes: long_term notes last the game, short_term ones {SHORT_TERM_SECONDS:g} seconds; \
 at most {NOTE_LIMITS["long_term"]} and {NOTE_LIMITS["short_term"]}, \
 {NOTE_LENGTH_LIMIT} characters each.
-- Keep enough tokens to walk where you need to. Before the game ends, sell what you can: \
-leftover tokens are worth nothing."""
+- Keep enough tokens to walk where you need to."""
     if strategy:
         prompt += f"\n\nYour player's strategy for you:\n{strategy}"
     return prompt

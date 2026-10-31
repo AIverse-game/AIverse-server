@@ -2,11 +2,13 @@
 
 None of the tools names who acts: `ResidentTools` holds the resident, so an agent can only
 ever move its own, as change 0015 in the client repository asks. Each tool is a primitive
-from `actions.py` carried out through `Game.act`, or a note through `Game.remember` and
-`Game.forget`, so agents and pages go through the same rules and broadcasts.
+from `actions.py` performed and kept through `Game.commit`, as `Game.act` does, or a note
+through `Game.remember` and `Game.forget`, so agents and pages go through the same rules and
+broadcasts.
 
 Leaving the game is not a tool: it gains a resident nothing, and a model could only do it by
-mistake.
+mistake. For the same reason no tool spends a resident's last token, which would take them
+out as well: a call that would leave them none in hand is refused with `last_token`.
 
 A tool's arguments come from a pydantic model, which both checks what a model sends and
 gives the JSON Schema a model is shown (`tool_specs`). `call` never raises for anything a
@@ -24,10 +26,12 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
-from ..core.world import Position
+from ..core.inventory import item_count
+from ..core.world import Position, World
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.tokens import TOKEN, token_total
 from ..game.actions import (
+    Action,
     ActionRejected,
     BuildRig,
     BuyChip,
@@ -45,6 +49,7 @@ from ..game.actions import (
     Say,
     SellTokens,
     WithdrawEvent,
+    perform,
 )
 from ..game.lifecycle import GameError, total_coins
 from ..residents.memory import NoteError
@@ -53,7 +58,11 @@ if TYPE_CHECKING:
     from ..server.app import Game
 
 # What a failed call reports: a rejection code from the game, or one of these.
-CALL_ERRORS = ("unknown_tool", "invalid_arguments")
+CALL_ERRORS = ("unknown_tool", "invalid_arguments", "last_token")
+
+
+class _LastToken(Exception):
+    """A primitive would have left the resident no tokens, taking them out of the game."""
 
 
 class _Args(BaseModel):
@@ -281,7 +290,7 @@ TOOLS = (
     ToolSpec(
         "sell_tokens",
         "Sell carried tokens to the market for coins at the market price, which falls the more "
-        "is sold. Selling your last token takes you out of the game.",
+        "is sold. Keep at least one token: selling your last is refused.",
         SellTokensArgs,
     ),
     ToolSpec("buy_chip", "Buy one chip at the market for its fixed price in coins.", BuyChipArgs),
@@ -455,13 +464,21 @@ class ResidentTools:
             self._run(args)
         except ActionRejected as rejection:
             return ToolResult(False, rejection.code, rejection.message, self.status())
+        except _LastToken:
+            return ToolResult(
+                False,
+                "last_token",
+                "that would leave you no tokens in hand (those set aside in offers do not "
+                "count) and could take you out of the game; keep at least one",
+                self.status(),
+            )
         except (GameError, NoteError) as error:
             return ToolResult(False, error.code, error.message, self.status())
         return ToolResult(True, status=self.status())
 
     def _run(self, args: _Args) -> None:
         me = self.resident_id
-        act = self.game.act
+        act = self._act
         match args:
             case BuildRigArgs():
                 act(BuildRig(me, args.pool_id))
@@ -515,6 +532,17 @@ class ResidentTools:
             case _:
                 raise AssertionError(f"tool arguments without a handler: {type(args).__name__}")
 
+    def _act(self, action: Action) -> None:
+        """Carry out a primitive as `Game.act` does, unless it would spend the resident's last
+        token. Raises `ActionRejected` or `_LastToken`, leaving the world as it was."""
+        self.game.tick()
+        before = self.game.world
+        after = perform(before, action)
+        me = self.resident_id
+        if _tokens_in_hand(before, me) > 0 and _tokens_in_hand(after, me) == 0:
+            raise _LastToken
+        self.game.commit(after)
+
     def status(self) -> dict[str, Any]:
         """A short summary of the resident right now, handed back after every call."""
         world = self.game.world
@@ -534,3 +562,11 @@ class ResidentTools:
         if world.ended:
             shown["game_over"] = True
         return shown
+
+
+def _tokens_in_hand(world: World, resident_id: str) -> int:
+    """Tokens the resident carries or is digging out, so can still spend; those set aside in
+    a sale offer are not, since the buyer may take them."""
+    resident = next(resident for resident in world.residents if resident.id == resident_id)
+    mined = resident.mining.amount if resident.mining is not None else 0
+    return item_count(world, resident_id, TOKEN) + mined

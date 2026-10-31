@@ -14,8 +14,9 @@ happens, see decision 0003 in the client repository:
 Rounds start at least `Pace.interval` apart, `Pace.retry` after a brain failed, which bounds
 how often a model is asked and blunts the edge of a fast one. The loop stops when the
 resident leaves or the game ends, or when its task is cancelled because the agent was
-stopped; a brain holding connections is then closed. A brain that raises is recorded and
-asked again later; it never stops the game or other agents.
+stopped; a brain holding connections is then closed. A brain that raises is recorded and,
+once the resident is free, asked again after `Pace.retry`; it never stops the game or other
+agents.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from ..game.lifecycle import GameError
 from .llm_brain import ChatCompletionsBrain
@@ -164,6 +165,10 @@ def summarize(turn: TurnRecord) -> str:
     return text
 
 
+_Outcome = Literal["done", "brain_failed", "round_failed"]
+"""How a round went: the brain raised, or something else in the round, such as its record."""
+
+
 @dataclass(frozen=True)
 class _Attention:
     """What the runner compares to decide whether to wake the resident."""
@@ -204,22 +209,22 @@ class AgentRunner:
                 # arriving while the brain thinks still wake it, a walk that also ended
                 # meanwhile included; free or busy as the brain left the resident.
                 before = self._attention()
-                failed = await self._take_turn()
+                outcome = await self._take_turn()
                 seen = replace(before, free=self._attention().free)
-                await self._sleep(changed, started, failed, seen)
+                await self._sleep(changed, started, outcome, seen)
         finally:
             self.game.unsubscribe(changed)
             if isinstance(self.brain, Closable):
                 await self.brain.aclose()
 
-    async def _take_turn(self) -> bool:
-        """One round; returns whether it failed. Nothing raised here stops the loop: a failure
-        is logged and the resident asked again after `Pace.retry`."""
+    async def _take_turn(self) -> _Outcome:
+        """One round; returns how it went. Nothing raised here stops the loop: a failure is
+        logged and the next round waits at least `Pace.retry`."""
         try:
             perception = self.game.begin_turn(self.resident_id)
         except GameError:
             # Left or over since the last look; the loop notices and stops.
-            return False
+            return "done"
         cancelled = False
         started_at = datetime.now(UTC).isoformat()
         try:
@@ -277,18 +282,23 @@ class AgentRunner:
                 self._record(turn)
         except Exception:
             logger.exception("round for %s failed", self.resident_id)
-            return True
+            return "round_failed"
         finally:
             if cancelled:
                 raise asyncio.CancelledError
-        return error is not None
+        return "done" if error is None else "brain_failed"
 
     async def _sleep(
-        self, changed: asyncio.Event, started: float, failed: bool, seen: _Attention
+        self, changed: asyncio.Event, started: float, outcome: _Outcome, seen: _Attention
     ) -> None:
         loop = asyncio.get_running_loop()
+        failed = outcome != "done"
         earliest = started + (self.pace.retry if failed else self.pace.interval)
         idle_until = max(loop.time() + self.pace.idle, earliest)
+        if failed:
+            # Awaited even when no time is left, so a brain failing at once cannot hold the
+            # event loop while it is asked again and again.
+            await asyncio.sleep(max(earliest - loop.time(), 0.0))
         while True:
             # Cleared before looking, so a change made while waiting is never missed.
             changed.clear()
@@ -300,7 +310,9 @@ class AgentRunner:
                 if current.heard > seen.heard:
                     return
                 if current.free and (
-                    not seen.free
+                    # Only the brain failing: a round whose record failed got its answer.
+                    outcome == "brain_failed"
+                    or not seen.free
                     or current.done > seen.done
                     or current.offers - seen.offers
                     or current.ended - seen.ended
