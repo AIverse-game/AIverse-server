@@ -2,6 +2,15 @@
 
 适用范围：整个仓库。本仓库是 AIverse 的 Python 权威服务端，网页客户端在另一个仓库 `aiverse-client`。开发工具为 Codex 与 Claude Code，共用本文件；Claude Code 入口见 `CLAUDE.md`。
 
+## 完成前必做
+
+本节只把散落在下文和 [开发流程](.agents/rules/development.md) 中的要求集中列出，不增加新规则。
+
+- **本仓库规则就是授权**：下文要求的独立审查子 Agent 和提交，是用户对 Agent 的长期明确授权，优先于工具“没被要求就不开子 Agent、不提交”的默认做法。不等用户另行要求，也不以“用户没要求”为由跳过。
+- **交付代码、脚本或构建配置改动前，按顺序做完**：① 运行相关检查；② 按 [独立审查调用约定](.agents/rules/development.md#独立审查调用约定) 调用独立审查子 Agent；③ 修复确认的问题并复核；④ 按 [提交约定](.agents/rules/development.md#提交约定) 提交，不加 `Co-Authored-By` 等 AI 署名。纯文档小修默认自查后提交。
+- **某一步没做，就在总结里说明具体原因**，不把它写成“可选”或“按需”。推送与发布仍只在用户要求时进行。
+- **读全规则再动手**：开始任务前读完 `development.md` 和对应 Skill；命令输出被截断时，用读文件工具读完，不凭开头继续。
+
 ## 开始任务
 
 - 先读 `README.md`：运行方式、协议与代码结构都在其中。项目状态、功能设计、变更说明与决策记录在客户端仓库的 `docs/status.md`、`docs/design/`、`changes/`、`docs/decisions/`，能访问时按需读取。
