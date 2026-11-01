@@ -14,7 +14,7 @@ from ..core.world import Pool, World
 from .chips import CHIP_MODELS
 from .tokens import TOKEN
 
-RIG_PRICE = 8_000
+RIG_PRICE = 9_000
 RIG_SECONDS = 20.0
 RIG_YIELD = 2
 """A chip in a rig mines this many times its tokens per job each cycle."""

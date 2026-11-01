@@ -154,7 +154,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
   ],
   "game": { "ended": false, "remainingSeconds": 1199.5 },
   "rigs": [],
-  "rigRules": { "price": 8000, "capacity": 4, "cycleSeconds": 20, "yieldMultiplier": 2, "rentPer100": 50, "energyPer100": 20 },
+  "rigRules": { "price": 9000, "capacity": 4, "cycleSeconds": 20, "yieldMultiplier": 2, "rentPer100": 50, "energyPer100": 20 },
   "speech": [
     { "seq": 1, "time": 12.5, "speakerId": "r1", "text": "有人卖 token 吗？", "listeners": ["r3"] },
     { "seq": 2, "time": 15.0, "speakerId": "r1", "text": "我出高价", "to": "r4", "listeners": ["r4"] }
@@ -285,7 +285,7 @@ uv run aiverse-server --agent r1=llm --agent r2=llm
 
 ## 矿机与租用芯片
 
-协议 15：在矿池内用 `build_rig(poolId)` 花 8000 金币（协议 15 时为 4000）建一台 4 槽矿机；`install_chip(rigId, chip, deposit)` 安装自己携带的一块芯片并预存金币。自动采矿每 20 秒获得芯片的产量，使用原矿池有限储量，角色可以离开；手动采矿仍为 10 秒一次。初始矿池储量为 1500～4000。
+协议 15：在矿池内用 `build_rig(poolId)` 花 9000 金币（协议 15 时为 4000，变更 0037 起 8000）建一台 4 槽矿机；`install_chip(rigId, chip, deposit)` 安装自己携带的一块芯片并预存金币。自动采矿每 20 秒获得芯片的产量，使用原矿池有限储量，角色可以离开；手动采矿仍为 10 秒一次。初始矿池储量为 1500～4000。
 
 协议 16：机内产量为芯片单次产量的 2 倍（`rigRules.yieldMultiplier`），即每块芯片产能与手动相同，且 4 个槽位并行；租金降为每 100 token 50 金币。Agent 的 `build_rig` 成功结果告诉它新矿机的编号；在别处的矿机上安装时，拒绝原因说明该矿机所在的矿池（Agent 工具只对看得到的矿机这样回答，没见过的矿机和矿池一律按“不存在”拒绝）。
 

@@ -123,7 +123,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                 "contracts": [],
                 "rigs": [],
                 "rigRules": {
-                    "price": 8000,
+                    "price": 9000,
                     "capacity": 4,
                     "cycleSeconds": 20,
                     "yieldMultiplier": 2,

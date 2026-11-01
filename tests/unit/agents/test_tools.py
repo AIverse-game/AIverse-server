@@ -115,7 +115,7 @@ def test_a_pool_in_sight_is_known_even_before_it_is_remembered() -> None:
 
 
 def test_rigs_never_seen_are_refused_alike_whether_or_not_they_exist() -> None:
-    miner = Resident("c", "丙", "#778899", Position(80, 50), Inventory((("MK1", 1),)), coins=9000)
+    miner = Resident("c", "丙", "#778899", Position(80, 50), Inventory((("MK1", 1),)), coins=10000)
     game, _ = make_game(replace(WORLD, residents=(*WORLD.residents, miner)))
     ResidentTools(game, "c").call("build_rig", {"pool_id": "p1"})
     tools = ResidentTools(game, "a")
@@ -137,8 +137,8 @@ def away_from_a_shared_rig() -> tuple[Game, FakeClock]:
     at_pool = Position(80, 50)
     residents = (
         WORLD.residents[0],
-        Resident("b", "乙", "#445566", at_pool, stock, coins=9000),
-        Resident("c", "丙", "#778899", at_pool, stock, coins=9000),
+        Resident("b", "乙", "#445566", at_pool, stock, coins=10000),
+        Resident("c", "丙", "#778899", at_pool, stock, coins=10000),
     )
     world = perform(replace(WORLD, residents=residents), BuildRig("c", "p1"))
     world = perform(

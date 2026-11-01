@@ -59,7 +59,7 @@ def test_observation_shows_self_market_pools_offers_and_ranking() -> None:
 
 def rig_world() -> World:
     """A rig with one MK1 slot on p1, which is in sight of "b" but not of "a"."""
-    miner = Resident("c", "丙", "#778899", Position(80, 50), Inventory((("MK1", 1),)), coins=9000)
+    miner = Resident("c", "丙", "#778899", Position(80, 50), Inventory((("MK1", 1),)), coins=10000)
     world = replace(WORLD, residents=(*WORLD.residents, miner))
     return perform(perform(world, BuildRig("c", "p1")), InstallChip("c", 1, "MK1", 500))
 
@@ -104,8 +104,8 @@ def shared_rig_world() -> World:
     at_pool = Position(80, 50)
     residents = (
         WORLD.residents[0],
-        Resident("b", "乙", "#445566", at_pool, stock, coins=9000),
-        Resident("c", "丙", "#778899", at_pool, stock, coins=9000),
+        Resident("b", "乙", "#445566", at_pool, stock, coins=10000),
+        Resident("c", "丙", "#778899", at_pool, stock, coins=10000),
     )
     world = perform(replace(WORLD, residents=residents), BuildRig("c", "p1"))
     return perform(perform(world, InstallChip("c", 1, "MK1", 500)), InstallChip("b", 1, "MK1", 500))
