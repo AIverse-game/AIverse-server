@@ -22,16 +22,16 @@ END_MARGIN = 20.0
 """Seconds before the end, beyond the walk, to be back at the market."""
 
 EXPLORE = (
-    (25.0, 25.0),
-    (75.0, 25.0),
-    (75.0, 75.0),
-    (25.0, 75.0),
-    (50.0, 12.0),
-    (88.0, 50.0),
-    (50.0, 88.0),
-    (12.0, 50.0),
+    (37.5, 37.5),
+    (112.5, 37.5),
+    (112.5, 112.5),
+    (37.5, 112.5),
+    (75.0, 18.0),
+    (132.0, 75.0),
+    (75.0, 132.0),
+    (18.0, 75.0),
 )
-"""Spots to look around from, on a map of size 100, until a pool is found."""
+"""Spots to look around from, on a map of size 150, until a pool is found."""
 
 
 class ScriptedBrain:

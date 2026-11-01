@@ -138,7 +138,7 @@ def test_default_app_serves_the_fixed_layout() -> None:
         ws.send_text(json.dumps(HELLO))
         ws.receive_json()
         world = ws.receive_json()["world"]
-    assert world["map"]["size"] == 100
+    assert world["map"]["size"] == 150
     assert [r["id"] for r in world["residents"]] == ["r1", "r2", "r3", "r4"]
     assert {r["coins"] for r in world["residents"]} == {10_000}
 
@@ -709,7 +709,7 @@ def test_a_quantity_too_big_for_a_float_is_refused_and_the_socket_stays_usable(
 def test_default_world_has_a_market_in_the_middle() -> None:
     with TestClient(create_app()).websocket_connect("/ws") as ws:
         world = greet(ws)
-    assert world["market"]["position"] == {"x": 50, "y": 50}
+    assert world["market"]["position"] == {"x": 75, "y": 75}
     # The real clock has barely moved the pressure since the world was made: about 2.3 tokens
     # a second at first, so a few seconds of slack.
     assert world["market"]["pressure"] == pytest.approx(0, abs=10)

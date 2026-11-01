@@ -22,7 +22,7 @@ def game_at_market() -> Game:
     world = create_default_world(7)
     world = replace(
         world,
-        residents=(replace(world.residents[0], position=Position(50, 50)), *world.residents[1:]),
+        residents=(replace(world.residents[0], position=Position(75, 75)), *world.residents[1:]),
     )
     return Game(world, clock=lambda: 0)
 

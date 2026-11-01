@@ -12,7 +12,7 @@ from ..core.world import Inventory, Market, Pool, Position, Resident, World, Wor
 from ..economy.market import MARKET_RADIUS
 from ..economy.tokens import TOKEN
 
-MAP_SIZE = 100.0
+MAP_SIZE = 150.0
 
 STARTING_COINS = 10_000
 
@@ -22,11 +22,11 @@ POOL_COUNT = 6
 POOL_RADIUS = 4.0
 POOL_RESERVE = (1_500, 4_000)
 """Smallest and largest number of tokens a pool starts with."""
-POOL_MARGIN = 10.0
+POOL_MARGIN = 15.0
 """Least distance from a pool's centre to the map edge."""
-POOL_SPACING = 15.0
+POOL_SPACING = 30.0
 """Least distance between two pools' centres, so they do not overlap."""
-MARKET_CLEARANCE = 20.0
+MARKET_CLEARANCE = 30.0
 """Least distance from a pool's centre to the market's, so selling takes a walk from mining."""
 
 _STARTING_INVENTORY = Inventory(((TOKEN, STARTING_TOKENS),))
@@ -45,10 +45,10 @@ def _resident(id: str, name: str, color: str, x: float, y: float) -> Resident:
 
 # Demo residents; spread out so the coordinate system is easy to check on screen.
 DEFAULT_RESIDENTS = (
-    _resident("r1", "阿青", "#e4572e", 20, 25),
-    _resident("r2", "小麦", "#f3a712", 72, 18),
-    _resident("r3", "松木", "#5fb49c", 35, 70),
-    _resident("r4", "白露", "#8e9aed", 82, 84),
+    _resident("r1", "阿青", "#e4572e", 30, 37.5),
+    _resident("r2", "小麦", "#f3a712", 108, 27),
+    _resident("r3", "松木", "#5fb49c", 52.5, 105),
+    _resident("r4", "白露", "#8e9aed", 123, 126),
 )
 
 

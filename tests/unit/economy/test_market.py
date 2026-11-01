@@ -251,7 +251,7 @@ def test_perception_shows_no_market_in_a_world_without_one() -> None:
 def test_the_default_world_has_a_market_in_the_middle() -> None:
     world = create_default_world(3)
     assert world.market == Market(market_position(), MARKET_RADIUS)
-    assert world.market.position == Position(50, 50)
+    assert world.market.position == Position(75, 75)
 
 
 @pytest.mark.parametrize("seed", range(20))
