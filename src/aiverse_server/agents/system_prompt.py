@@ -29,6 +29,7 @@ from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.perception import PERCEPTION_RADIUS
 from ..residents.speech import HEARING_RADIUS, SPEECH_COSTS
 from ..residents.walking import WALK_SPEED
+from .tools import PRICE_HOLD_SECONDS
 
 
 def system_prompt(name: str, resident_id: str, strategy: str | None = None) -> str:
@@ -54,8 +55,9 @@ when sales are steady; every token sold lowers the price for everyone ({MARKET_D
 tokens sold recently halve it), and the effect fades by half every {MARKET_HALF_LIFE:g} \
 seconds. The longer nobody sells, the more the market pays, up to {MARKET_TOP_PRICE:g} \
 coins a token. Splitting a sale earns nothing extra; waiting for the price to recover does. \
-Within a round you sell at the token_price in your observation, or more if it has recovered: \
-others selling meanwhile does not lower it, though your own sales do.
+For {PRICE_HOLD_SECONDS:g} seconds after your round begins you sell at the token_price in \
+your observation, or more if it has recovered: others selling meanwhile does not lower it, \
+though your own sales do. Sell within that time, or the price you get is the market's by then.
 - Chips on sale: {chips}. You need a chip to mine; with several you mine with the best.
 - Token pools lie scattered on the map (radius {POOL_RADIUS:g}), fixed for the game, each \
 with a limited reserve. Standing in one with a chip, `mine` takes {MINE_SECONDS:g} seconds \

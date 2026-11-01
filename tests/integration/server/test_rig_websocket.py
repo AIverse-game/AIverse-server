@@ -5,6 +5,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from aiverse_server.core.world import Inventory
+from aiverse_server.economy.rigs import RIG_PRICE
 from aiverse_server.game.layout import create_default_world
 from aiverse_server.server.app import create_app
 from aiverse_server.server.protocol import PROTOCOL_VERSION
@@ -67,7 +68,7 @@ def test_rig_actions_flow_through_websocket_and_broadcast_production() -> None:
     assert installed["residents"][1]["rigBalance"] == 500
     # Twice an MK1's 30 a job, for 30 rent and 12 electricity, as in the rig unit tests.
     assert paid["residents"][1]["tokens"] == 160
-    assert paid["residents"][0]["coins"] == 6030
+    assert paid["residents"][0]["coins"] == 10_000 - RIG_PRICE + 30
     assert removed["rigs"][0]["slots"] == []
     assert removed["residents"][1]["spendableCoins"] == 9958
     assert refused["type"] == "error" and refused["code"] == "bad_message"

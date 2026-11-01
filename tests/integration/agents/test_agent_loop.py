@@ -9,6 +9,7 @@ from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord, record_to_json
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
+from aiverse_server.economy.market import quote
 from aiverse_server.economy.tokens import TOKEN
 from aiverse_server.game.actions import (
     CancelContract,
@@ -239,12 +240,20 @@ class Broken:
         raise RuntimeError("model unreachable")
 
 
-def test_an_agent_sells_at_the_price_it_saw_though_another_sold_meanwhile() -> None:
+@pytest.mark.parametrize("begins_at", [0.0, 100.0])
+def test_an_agent_sells_at_the_price_it_saw_though_another_sold_meanwhile(
+    begins_at: float,
+) -> None:
     at_market = replace(WORLD.residents[1], position=Position(52, 50))
     world = replace(WORLD, residents=(WORLD.residents[0], at_market))
 
     async def scenario() -> None:
-        game, _ = make_game(world)
+        game, clock = make_game(world)
+        clock.now = begins_at
+        market = game.world.market
+        assert market is not None
+        # What 30 tokens fetch at the round's start; it holds whenever in the game that is.
+        seen_price = quote(market, begins_at, 30)
         results = []
 
         def sell(seen: Observation, tools: ResidentTools) -> None:
@@ -256,9 +265,8 @@ def test_an_agent_sells_at_the_price_it_saw_though_another_sold_meanwhile() -> N
         await _until(lambda: bool(results))
         task.cancel()
 
-        # 30 tokens into an untouched market fetch 578 coins, see the market's tests.
         assert results[0].ok
-        assert next(r for r in game.world.residents if r.id == "a").coins == 5000 + 578
+        assert next(r for r in game.world.residents if r.id == "a").coins == 5000 + seen_price
 
     asyncio.run(scenario())
 

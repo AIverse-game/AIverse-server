@@ -7,7 +7,9 @@ import pytest
 from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.tools import TOOLS, ResidentTools, ToolSpec, tool_specs
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
+from aiverse_server.economy.market import quote
 from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.game.actions import SellTokens
 from aiverse_server.server.app import Game
 
 WORLD = World(
@@ -148,6 +150,29 @@ def test_splitting_a_sale_within_a_round_earns_no_more_than_selling_at_once(
     # 30 tokens sold at once into an untouched market fetch 578 coins, see the market's tests;
     # parts round down on their own.
     assert 5000 + 578 - len(parts) < me(game, "a").coins <= 5000 + 578
+
+
+@pytest.mark.parametrize(("waited", "held"), [(29.0, True), (30.0, True), (31.0, False)])
+def test_a_sale_keeps_the_price_the_agent_saw_for_thirty_seconds_only(
+    waited: float, held: bool
+) -> None:
+    dumper = replace(
+        WORLD.residents[1], position=Position(52, 50), inventory=Inventory(((TOKEN, 1000),))
+    )
+    game, clock = make_game(replace(WORLD, residents=(WORLD.residents[0], dumper)))
+    tools = ResidentTools(game, "a", seen_pressure=0.0, seen_at=0.0)
+    game.act(SellTokens("b", 1000))
+    market = game.world.market
+    assert market is not None
+    clock.now = waited
+    at_the_market_price = quote(market, waited, 30)
+
+    result = tools.call("sell_tokens", {"quantity": 30})
+
+    assert result.ok
+    # 30 tokens into an untouched market fetch 578 coins, see the market's tests.
+    assert at_the_market_price < 578
+    assert me(game, "a").coins == 5000 + (578 if held else at_the_market_price)
 
 
 def test_tools_take_arguments_as_json_text_as_models_send_them() -> None:

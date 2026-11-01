@@ -11,6 +11,7 @@ from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
+from aiverse_server.economy.rigs import RIG_PRICE
 from aiverse_server.economy.tokens import TOKEN
 from aiverse_server.game.actions import MoveTo
 from aiverse_server.server.app import Game
@@ -122,7 +123,7 @@ def test_the_next_round_hears_what_the_tools_did_in_this_one() -> None:
 
 
 def test_the_next_round_hears_what_a_tool_told_the_model() -> None:
-    at_pool = replace(WORLD.residents[0], position=Position(80, 50))
+    at_pool = replace(WORLD.residents[0], position=Position(80, 50), coins=RIG_PRICE)
     world = replace(WORLD, residents=(at_pool, WORLD.residents[1]))
 
     async def scenario() -> None:

@@ -68,11 +68,13 @@ def test_renter_receives_tokens_and_pays_owner_only_for_actual_production() -> N
     # An MK1 mines 30 a job, twice that in a rig.
     assert paid.residents[1].inventory.count("token") == 160
     assert paid.pools[0].reserve == 940
-    assert paid.residents[0].coins == 6030  # 60 * 0.5 rent, from the renter's escrow.
+    assert (
+        paid.residents[0].coins == 10_000 - RIG_PRICE + 30
+    )  # 60 * 0.5 rent, from the renter's escrow.
     assert paid.rigs[0].slots[0].balance == 458  # 30 rent + 12 electricity.
     assert paid.rigs[0].slots[0].rent_paid == 30
     assert total_coins(paid, "b") == 9958
-    assert sum(total_coins(paid, r.id) for r in paid.residents) == 26_000 - 12
+    assert sum(total_coins(paid, r.id) for r in paid.residents) == 30_000 - RIG_PRICE - 12
 
 
 def test_owners_chips_only_pay_electricity_and_do_not_keep_them_busy() -> None:
@@ -136,7 +138,7 @@ def test_insufficient_balance_pauses_without_charging_or_consuming_the_pool() ->
     assert paused.residents[1].inventory.count("token") == 100
     assert paused.pools[0].reserve == 1000
     assert paused.rigs[0].slots[0].balance == 41
-    assert paused.residents[0].coins == 6000
+    assert paused.residents[0].coins == 10_000 - RIG_PRICE
     assert slot_status(paused, paused.rigs[0], paused.rigs[0].slots[0]) == "no_funds"
 
 
@@ -181,7 +183,7 @@ def test_renter_leaving_stops_their_chip_and_keeps_the_machine_open() -> None:
     assert later.residents[1].left
     assert later.residents[1].inventory.stacks == ()
     assert later.residents[1].coins == 10_000
-    assert later.residents[0].coins == 6000
+    assert later.residents[0].coins == 10_000 - RIG_PRICE
     assert later.rigs[0].slots == ()
 
 
@@ -195,7 +197,7 @@ def test_owner_leaving_closes_the_machine_and_refunds_other_players() -> None:
     assert later.residents[1].inventory.count("MK1") == 5
     assert later.residents[1].inventory.count("token") == 160
     assert later.residents[1].coins == 9958
-    assert later.residents[0].coins == 6030
+    assert later.residents[0].coins == 10_000 - RIG_PRICE + 30
 
 
 @pytest.mark.parametrize("who", ["a", "b"])
@@ -213,7 +215,7 @@ def test_spending_the_last_token_stops_rigs_even_with_future_income(who: str) ->
     later = advance(left, 200)
 
     assert next(r for r in later.residents if r.id == who).left
-    assert later.residents[0].coins == 6000
+    assert later.residents[0].coins == 10_000 - RIG_PRICE
     assert later.residents[1].inventory.count("token") == (0 if who == "b" else 100)
 
 
@@ -228,7 +230,7 @@ def test_a_large_time_jump_does_not_mine_after_an_exhausted_walker_leaves() -> N
 
     assert later.residents[1].left
     assert later.residents[1].coins == 10_000
-    assert later.residents[0].coins == 6000
+    assert later.residents[0].coins == 10_000 - RIG_PRICE
     assert later.rigs[0].slots == ()
 
 
@@ -247,7 +249,7 @@ def test_production_at_the_same_instant_as_exhausted_arrival_does_not_revive() -
     later = advance(world, 100)
 
     assert later.residents[1].left
-    assert later.residents[0].coins == 6000
+    assert later.residents[0].coins == 10_000 - RIG_PRICE
 
 
 def test_game_end_refunds_prepayments_and_never_pays_after_the_deadline() -> None:
@@ -272,7 +274,7 @@ def test_last_partial_cycle_charges_only_for_available_tokens() -> None:
     paid = advance(world, 200)
 
     assert paid.residents[1].inventory.count("token") == 107
-    assert paid.residents[0].coins == 6004
+    assert paid.residents[0].coins == 10_000 - RIG_PRICE + 4
     assert paid.rigs[0].slots[0].balance == 494  # ceil(7 * .5) rent + ceil(7 * .2) energy.
     assert paid.pools[0].reserve == 0
 

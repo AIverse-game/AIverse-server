@@ -240,6 +240,7 @@ class AgentRunner:
                 self.game,
                 self.resident_id,
                 seen_pressure=pressure_at(market, self.game.world.time) if market else None,
+                seen_at=self.game.world.time,
             )
             balance = resource_balance(self.game, self.resident_id)
             remark: str | None = None
