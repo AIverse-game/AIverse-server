@@ -9,7 +9,7 @@ from aiverse_server.agents.tools import TOOLS, ResidentTools, ToolSpec, tool_spe
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
 from aiverse_server.economy.market import quote
 from aiverse_server.economy.tokens import TOKEN
-from aiverse_server.game.actions import SellTokens
+from aiverse_server.game.actions import BuildRig, InstallChip, MoveTo, SellTokens, perform
 from aiverse_server.server.app import Game
 
 WORLD = World(
@@ -76,7 +76,9 @@ def test_no_tool_takes_the_resident_who_acts(spec: ToolSpec) -> None:
         ("sell_tokens", '{"quantity": ' + "9" * 5000 + "}", "invalid_arguments"),
         ("sell_tokens", {"quantity": "5"}, "invalid_arguments"),
         ("move_to", {"x": 500, "y": 2}, "out_of_bounds"),
-        ("mine", {"pool_id": "p1"}, "no_chip"),
+        ("mine", {"pool_id": "p1"}, "unknown_pool"),
+        ("build_rig", {"pool_id": "p1"}, "unknown_pool"),
+        ("install_chip", {"rig_id": 1, "chip": "MK1", "deposit": 10}, "unknown_rig"),
         ("buy_chip", {"model": "MK9"}, "unknown_chip"),
         ("forget", {"note_id": 3}, "unknown_note"),
         ("sell_tokens", {"quantity": 100}, "last_token"),
@@ -101,6 +103,74 @@ def test_bad_calls_come_back_as_failures_and_change_nothing(
     assert game.world == before
     assert len(tools.calls) == 1
     assert json.loads(result.to_json())["ok"] is False
+
+
+def test_a_pool_in_sight_is_known_even_before_it_is_remembered() -> None:
+    game, _ = make_game()
+    tools = ResidentTools(game, "b")
+
+    result = tools.call("mine", {"pool_id": "p1"})
+
+    assert result.code == "no_chip"  # Refused for the chip, not as an unknown pool.
+
+
+def test_rigs_never_seen_are_refused_alike_whether_or_not_they_exist() -> None:
+    miner = Resident("c", "丙", "#778899", Position(80, 50), Inventory((("MK1", 1),)), coins=9000)
+    game, _ = make_game(replace(WORLD, residents=(*WORLD.residents, miner)))
+    ResidentTools(game, "c").call("build_rig", {"pool_id": "p1"})
+    tools = ResidentTools(game, "a")
+
+    calls = [
+        tools.call("install_chip", {"rig_id": rig_id, "chip": "MK1", "deposit": 10})
+        for rig_id in (1, 2)
+    ] + [
+        tools.call("fund_rig", {"rig_id": rig_id, "slot_id": 1, "amount": 10}) for rig_id in (1, 2)
+    ]
+    calls += [tools.call("remove_chip", {"rig_id": rig_id, "slot_id": 1}) for rig_id in (1, 2)]
+
+    assert {(call.code, call.message) for call in calls} == {("unknown_rig", "unknown rig")}
+
+
+def away_from_a_shared_rig() -> tuple[Game, FakeClock]:
+    """Owner "c" (slot 1) and tenant "b" (slot 2) share rig 1 on p1, then both walk off."""
+    stock = Inventory((("MK1", 1), (TOKEN, 100)))
+    at_pool = Position(80, 50)
+    residents = (
+        WORLD.residents[0],
+        Resident("b", "乙", "#445566", at_pool, stock, coins=9000),
+        Resident("c", "丙", "#778899", at_pool, stock, coins=9000),
+    )
+    world = perform(replace(WORLD, residents=residents), BuildRig("c", "p1"))
+    world = perform(
+        perform(world, InstallChip("c", 1, "MK1", 500)), InstallChip("b", 1, "MK1", 500)
+    )
+    game, clock = make_game(world)
+    look(game, "b")
+    look(game, "c")
+    game.act(MoveTo("b", Position(50, 50)))
+    game.act(MoveTo("c", Position(50, 50)))
+    clock.now = 20
+    return game, clock
+
+
+def test_tenant_and_owner_can_fund_and_remove_their_slots_from_afar() -> None:
+    game, _ = away_from_a_shared_rig()
+    tenant, owner = ResidentTools(game, "b"), ResidentTools(game, "c")
+
+    funded = tenant.call("fund_rig", {"rig_id": 1, "slot_id": 2, "amount": 50})
+    removed_by_tenant = tenant.call("remove_chip", {"rig_id": 1, "slot_id": 2})
+    removed_by_owner = owner.call("remove_chip", {"rig_id": 1, "slot_id": 1})
+
+    assert funded.ok and removed_by_tenant.ok and removed_by_owner.ok
+    assert me(game, "b").inventory.count("MK1") == 1
+
+
+def test_a_pool_once_seen_is_not_unknown_after_walking_away() -> None:
+    game, _ = away_from_a_shared_rig()
+
+    result = ResidentTools(game, "b").call("build_rig", {"pool_id": "p1"})
+
+    assert result.code == "not_at_pool"
 
 
 def test_a_walk_that_would_spend_the_last_token_is_refused() -> None:

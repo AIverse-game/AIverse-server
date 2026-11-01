@@ -204,6 +204,13 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
     return replace(world, residents=residents_after), perception
 
 
+def pools_in_sight(world: World, resident_id: str) -> frozenset[str]:
+    """Ids of the pools within `PERCEPTION_RADIUS` of where the resident stands right now."""
+    me = next(resident for resident in world.residents if resident.id == resident_id)
+    here = position_at(me, world.time)
+    return frozenset(pool.id for pool in world.pools if _in_range(here, pool.position))
+
+
 def record_activity(before: World, after: World) -> World:
     """Log, at `after.time`, what residents did between the two worlds: set off on a walk,
     moved (arrived, or stopped on the way), started or finished mining, or left the game.

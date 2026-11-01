@@ -4,7 +4,7 @@ from dataclasses import replace
 from aiverse_server.agents.observation import Observation, observe, to_json
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
 from aiverse_server.economy.tokens import TOKEN
-from aiverse_server.game.actions import BuildRig, InstallChip, MoveTo, OfferToSell, perform
+from aiverse_server.game.actions import BuildRig, InstallChip, Mine, MoveTo, OfferToSell, perform
 from aiverse_server.server.app import Game
 
 WORLD = World(
@@ -86,6 +86,68 @@ def test_pool_out_of_sight_keeps_its_old_reserve_and_hides_the_draw() -> None:
     assert not seen.in_sight and seen.seen_ago == 45
     assert seen.reserve == 300
     assert seen.rig_draw_per_second is None and seen.seconds_to_empty is None
+
+
+def test_rigs_on_a_pool_never_seen_are_not_listed() -> None:
+    game, _ = make_game(rig_world())
+
+    unaware = look(game, "a")
+    aware = look(game, "b")
+
+    assert unaware.known_pools == () and unaware.mining_rigs == ()
+    assert [rig["pool_id"] for rig in aware.mining_rigs] == ["p1"]
+
+
+def shared_rig_world() -> World:
+    """Owner "c" and tenant "b" each have a slot in rig 1 on p1; "a" knows nothing of it."""
+    stock = Inventory((("MK1", 1), (TOKEN, 100)))
+    at_pool = Position(80, 50)
+    residents = (
+        WORLD.residents[0],
+        Resident("b", "乙", "#445566", at_pool, stock, coins=9000),
+        Resident("c", "丙", "#778899", at_pool, stock, coins=9000),
+    )
+    world = perform(replace(WORLD, residents=residents), BuildRig("c", "p1"))
+    return perform(perform(world, InstallChip("c", 1, "MK1", 500)), InstallChip("b", 1, "MK1", 500))
+
+
+def slot_holders(seen: Observation) -> list[list[object]]:
+    return [[slot["resident_id"] for slot in rig["slots"]] for rig in seen.mining_rigs]  # type: ignore[attr-defined]
+
+
+def test_an_owner_away_from_the_pool_still_sees_every_slot_of_their_rig() -> None:
+    game, clock = make_game(shared_rig_world())
+    game.act(MoveTo("c", Position(50, 50)))
+    clock.now = 20
+
+    owner = look(game, "c")
+
+    assert not owner.known_pools or owner.known_pools[0].in_sight is False
+    assert slot_holders(owner) == [["c", "b"]]
+
+
+def test_a_tenant_away_from_the_pool_sees_only_their_own_slot() -> None:
+    game, clock = make_game(shared_rig_world())
+    game.act(MoveTo("b", Position(50, 50)))
+    clock.now = 20
+
+    tenant = look(game, "b")
+
+    assert tenant.known_pools[0].in_sight is False
+    assert slot_holders(tenant) == [["b"]]
+
+
+def test_a_neighbour_mining_at_a_pool_never_seen_does_not_name_it() -> None:
+    watcher = replace(WORLD.residents[0], position=Position(58, 50))  # 22 from p1.
+    miner = Resident("c", "丙", "#778899", Position(76.5, 50), Inventory((("MK1", 1),)), coins=9000)
+    game, _ = make_game(replace(WORLD, residents=(watcher, WORLD.residents[1], miner)))
+    game.act(Mine("c", "p1"))
+
+    seen = look(game, "a")
+
+    assert seen.known_pools == ()
+    assert [(r.id, r.mining_pool) for r in seen.nearby_residents if r.id == "c"] == [("c", None)]
+    assert [(h.kind, h.pool_id) for h in seen.activity] == [("started_mining", None)]
 
 
 def test_pool_without_rigs_has_no_time_to_empty() -> None:

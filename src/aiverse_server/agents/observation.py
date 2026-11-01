@@ -15,6 +15,7 @@ import math
 from dataclasses import asdict, dataclass
 
 from ..core.events import Event, pending_for, pending_from
+from ..core.rigs import MiningRig, RigSlot
 from ..core.world import Contract, ContractEnd, PoolSighting, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
@@ -275,7 +276,9 @@ def observe(
         (pool.id for pool in world.pools if pool.reaches(here) and walk is None),
         None,
     )
-    in_sight = {sighting.pool_id for sighting in perception.pools}
+    in_sight = frozenset(sighting.pool_id for sighting in perception.pools)
+    # A neighbour's or a happening's pool is named only if the resident has seen that pool.
+    known_ids = {sighting.pool_id for sighting in perception.known_pools}
     pools = sorted(
         (
             _pool_view(world, sighting, here, sighting.pool_id in in_sight)
@@ -293,30 +296,7 @@ def observe(
             "rent_per_100": RENT_PER_100,
             "energy_per_100": ENERGY_PER_100,
         },
-        mining_rigs=tuple(
-            {
-                "id": rig.id,
-                "owner_id": rig.owner_id,
-                "pool_id": rig.pool_id,
-                "position": asdict(next(p.position for p in world.pools if p.id == rig.pool_id)),
-                "slots": [
-                    {
-                        "id": s.id,
-                        "resident_id": s.resident_id,
-                        "chip": s.chip,
-                        "balance": s.balance,
-                        "mined": s.mined,
-                        "rent_paid": s.rent_paid,
-                        "status": slot_status(world, rig, s),
-                        "next_in": max(s.next_at - world.time, 0.0),
-                        "tokens_per_cycle": cycle_amount(world, rig, s),
-                        "rent_and_energy": sum(cycle_cost(rig, s, cycle_amount(world, rig, s))),
-                    }
-                    for s in rig.slots
-                ],
-            }
-            for rig in world.rigs
-        ),
+        mining_rigs=_rig_views(world, resident_id, in_sight),
         time=perception.time,
         remaining_seconds=remaining,
         me=Me(
@@ -359,7 +339,9 @@ def observe(
                 id=sighting.resident_id,
                 name=sighting.name,
                 position=sighting.position,
-                mining_pool=sighting.mining_pool_id,
+                mining_pool=sighting.mining_pool_id
+                if sighting.mining_pool_id in known_ids
+                else None,
                 walking_to=sighting.walking_to,
             )
             for sighting in perception.residents
@@ -394,7 +376,13 @@ def observe(
             Line(line.time, line.speaker_id, line.text, line.to) for line in perception.speech
         ),
         activity=tuple(
-            Happening(entry.time, entry.resident_id, entry.kind, entry.position, entry.pool_id)
+            Happening(
+                entry.time,
+                entry.resident_id,
+                entry.kind,
+                entry.position,
+                entry.pool_id if entry.pool_id in known_ids else None,
+            )
             for entry in perception.activity
         ),
         long_term_notes=tuple(NoteView(note.id, note.text, None) for note in perception.long_term),
@@ -489,6 +477,53 @@ def _ended(end: ContractEnd, resident_id: str, now: float) -> EndedContractView:
         deposit_forfeited=end.forfeit,
         ended_ago=max(now - end.time, 0.0),
     )
+
+
+def known_slots(
+    rig: MiningRig, resident_id: str, in_sight: frozenset[str]
+) -> tuple[RigSlot, ...] | None:
+    """The slots of a machine the resident can know of: all of them when its pool is in sight
+    or the resident owns it, else only their own; None when they know nothing of it. A machine
+    on a pool they have not seen would give the pool's state away."""
+    if rig.pool_id in in_sight or rig.owner_id == resident_id:
+        return rig.slots
+    mine = tuple(slot for slot in rig.slots if slot.resident_id == resident_id)
+    return mine or None
+
+
+def _rig_views(
+    world: World, resident_id: str, in_sight: frozenset[str]
+) -> tuple[dict[str, object], ...]:
+    """The machines the resident can know of, see `known_slots`."""
+    views: list[dict[str, object]] = []
+    for rig in world.rigs:
+        slots = known_slots(rig, resident_id, in_sight)
+        if slots is None:
+            continue
+        views.append(
+            {
+                "id": rig.id,
+                "owner_id": rig.owner_id,
+                "pool_id": rig.pool_id,
+                "position": asdict(next(p.position for p in world.pools if p.id == rig.pool_id)),
+                "slots": [
+                    {
+                        "id": s.id,
+                        "resident_id": s.resident_id,
+                        "chip": s.chip,
+                        "balance": s.balance,
+                        "mined": s.mined,
+                        "rent_paid": s.rent_paid,
+                        "status": slot_status(world, rig, s),
+                        "next_in": max(s.next_at - world.time, 0.0),
+                        "tokens_per_cycle": cycle_amount(world, rig, s),
+                        "rent_and_energy": sum(cycle_cost(rig, s, cycle_amount(world, rig, s))),
+                    }
+                    for s in slots
+                ],
+            }
+        )
+    return tuple(views)
 
 
 def _pool_view(world: World, sighting: PoolSighting, here: Position, in_sight: bool) -> PoolView:

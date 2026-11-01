@@ -54,6 +54,8 @@ from ..game.actions import (
 )
 from ..game.lifecycle import GameError, total_coins
 from ..residents.memory import NoteError
+from ..residents.perception import pools_in_sight
+from .observation import known_slots
 
 if TYPE_CHECKING:
     from ..server.app import Game
@@ -495,19 +497,24 @@ class ResidentTools:
         act = self._act
         match args:
             case BuildRigArgs():
+                self._require_known_pool(args.pool_id)
                 act(BuildRig(me, args.pool_id))
                 # Rigs are numbered as they are built; the model needs the number to install.
                 rig_id = self.game.world.next_rig_id - 1
                 return f"built rig {rig_id}; install chips into it with rig_id {rig_id}"
             case InstallChipArgs():
+                self._require_known_rig(args.rig_id)
                 act(InstallChip(me, args.rig_id, args.chip, args.deposit))
             case FundRigArgs():
+                self._require_known_rig(args.rig_id)
                 act(FundRig(me, args.rig_id, args.slot_id, args.amount))
             case RemoveChipArgs():
+                self._require_known_rig(args.rig_id)
                 act(RemoveChip(me, args.rig_id, args.slot_id))
             case MoveToArgs():
                 act(MoveTo(me, Position(args.x, args.y)))
             case MineArgs():
+                self._require_known_pool(args.pool_id)
                 act(Mine(me, args.pool_id))
             case SellTokensArgs():
                 held = (
@@ -561,6 +568,24 @@ class ResidentTools:
             case _:
                 raise AssertionError(f"tool arguments without a handler: {type(args).__name__}")
         return ""
+
+    def _require_known_pool(self, pool_id: str) -> None:
+        """Refuse a pool the resident has never seen as if it did not exist, so that asking
+        for ids does not turn up pools they have not found."""
+        world = self.game.world
+        me = next(resident for resident in world.residents if resident.id == self.resident_id)
+        known = {sighting.pool_id for sighting in me.memory.known_pools}
+        if pool_id not in known | pools_in_sight(world, self.resident_id):
+            raise ActionRejected("unknown_pool", "unknown pool")
+
+    def _require_known_rig(self, rig_id: int) -> None:
+        """Refuse a rig the resident cannot know of, see `observation.known_slots`, as if it
+        did not exist, so that asking for ids does not turn up rigs or the pools they stand on."""
+        world = self.game.world
+        in_sight = pools_in_sight(world, self.resident_id)
+        rig = next((rig for rig in world.rigs if rig.id == rig_id), None)
+        if rig is None or known_slots(rig, self.resident_id, in_sight) is None:
+            raise ActionRejected("unknown_rig", "unknown rig")
 
     def _act(self, action: Action) -> None:
         """Carry out a primitive as `Game.act` does, unless it would spend the resident's last

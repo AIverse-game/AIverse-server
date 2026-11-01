@@ -76,7 +76,7 @@ pools within {PERCEPTION_RADIUS:g} units of your route, on either side. Pools yo
 stay in known_pools with the reserve as you last saw it and seen_ago, how long ago that was; \
 only a pool in_sight shows its current reserve, how fast the running rigs on it draw \
 (rig_draw_per_second) and, if any draw, seconds_to_empty; for a pool out of sight they are \
-null. Manual mining is never counted.
+null; your own rigs still report their own output. Manual mining is never counted.
 - At a pool, build_rig costs {RIG_PRICE} coins for {RIG_CAPACITY} chip slots. install_chip \
 requires standing at that pool and moves one carried chip into the rig, so you no longer carry \
 it to mine by hand. Each chip mines {RIG_YIELD} times its tokens per job every {RIG_SECONDS:g} \
@@ -86,10 +86,12 @@ electricity plus {RENT_PER_100} rent paid to the owner (own chips pay no rent), 
 rounded up per cycle. No funds means a pause with no debt; fund_rig remotely restarts after a \
 full cycle, with no catch-up. remove_chip remotely returns your chip and unused prepayment. \
 Prepayment still counts in your ranking but cannot fund other purchases. mining_rigs lists \
-public machines, slots, output and fees. Finite reserves and changing market prices mean returns \
-are not guaranteed. If you leave or exhaust tokens your chips stop; future production does not \
-keep you alive. If the owner leaves the whole rig closes and all renters are refunded. Game end \
-stops all rigs and refunds unused prepayments. Disconnecting a page does not leave the game; \
+machines on pools you can see, plus your own, with slots, output and fees; machines on pools \
+you have not seen, or only heard of, are not shown. Finite reserves and changing market prices \
+mean returns are not guaranteed. If you leave or exhaust tokens your chips stop; future \
+production does not keep you alive. If the owner leaves the whole rig closes and all renters are \
+refunded. Game end stops all rigs and refunds unused prepayments. Disconnecting a page does not \
+leave the game; \
 production requires the server and residents still in play.
 - Speaking aloud costs {SPEECH_COSTS["aloud"]} tokens and reaches residents within \
 {HEARING_RADIUS:g} units; whispering to one resident anywhere costs \
