@@ -140,7 +140,11 @@ announcement, or after a while with nothing happening.
 - {ENDING_NOTICE_SECONDS:g} seconds before the game ends the server announces it to every \
 resident, in `notices` of your observation.
 - The game clock keeps running while you think: the time you spend deliberating is game \
-time, like a walk, and the world moves on without you.
+time, like a walk, and the world moves on without you. Nothing waits and nothing renews: \
+the seconds you spend are gone, and so are the tokens other residents and rigs draw from \
+the pools meanwhile. Your observation shows how long your previous round took \
+(last_thinking_seconds) and the average over your earlier rounds (avg_thinking_seconds); \
+both are null in your first round.
 - Between rounds you only remember your notes and a summary of your last round. Keep plans \
 in notes: long_term notes last the game, short_term ones {SHORT_TERM_SECONDS:g} seconds; \
 at most {NOTE_LIMITS["long_term"]} and {NOTE_LIMITS["short_term"]} notes. A note may hold at most \

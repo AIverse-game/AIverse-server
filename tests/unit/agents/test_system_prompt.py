@@ -9,6 +9,12 @@ def test_the_prompt_tells_a_model_that_thinking_time_is_game_time() -> None:
     assert "The game clock keeps running while you think" in prompt
 
 
+def test_the_prompt_names_the_thinking_time_fields_of_the_observation() -> None:
+    prompt = system_prompt("甲", "a")
+
+    assert "last_thinking_seconds" in prompt and "avg_thinking_seconds" in prompt
+
+
 def test_the_prompt_says_a_longer_note_is_refused() -> None:
     prompt = system_prompt("甲", "a")
 

@@ -413,3 +413,44 @@ def test_a_round_ends_at_the_time_the_brain_finishes_without_acting() -> None:
         assert game.agent_turns["a"][0].ended_at == 25
 
     asyncio.run(scenario())
+
+
+def test_each_round_is_shown_how_long_the_earlier_rounds_took() -> None:
+    async def scenario() -> None:
+        game, clock = make_game()
+        durations = iter((20.0, 40.0))
+
+        def think(seen: Observation, tools: ResidentTools) -> None:
+            clock.now += next(durations, 0.0)
+
+        brain = Recorder(think)
+
+        task = asyncio.create_task(AgentRunner(game, "a", brain, QUICK).run())
+        await _until(lambda: len(brain.seen) >= 3)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+        shown = [(seen.last_thinking_seconds, seen.avg_thinking_seconds) for seen in brain.seen]
+        assert shown[:3] == [(None, None), (20.0, 20.0), (40.0, 30.0)]
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_round_counts_toward_the_thinking_time_shown() -> None:
+    async def scenario() -> None:
+        game, clock = make_game()
+        brain = Recorder()
+
+        def fail_after_thinking(observation: Observation, tools: ResidentTools) -> None:
+            clock.now += 50.0
+            raise RuntimeError("model unreachable")
+
+        brain.act = fail_after_thinking
+        task = asyncio.create_task(AgentRunner(game, "a", brain, QUICK).run())
+        await _until(lambda: len(brain.seen) >= 2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert brain.seen[1].last_thinking_seconds == 50.0
+
+    asyncio.run(scenario())

@@ -12,6 +12,7 @@ arithmetic. `to_json` turns an observation into compact JSON for a model.
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
 from ..core.events import Event, pending_for, pending_from
@@ -280,13 +281,23 @@ class Observation:
     mining_rigs: tuple[dict[str, object], ...]
     notices: tuple[NoticeView, ...] = ()
     """What the server announced to everyone since the resident last looked."""
+    last_thinking_seconds: float | None = None
+    """Game seconds the resident's previous round took, from its look to the end of the
+    round, whether it went well or not; None in the first round."""
+    avg_thinking_seconds: float | None = None
+    """The same, averaged over all the resident's previous rounds; None in the first round."""
 
 
 def observe(
-    world: World, resident_id: str, perception: Perception, remaining: float
+    world: World,
+    resident_id: str,
+    perception: Perception,
+    remaining: float,
+    thinking: Sequence[float] = (),
 ) -> Observation:
     """Put the resident's perception together with what they know of themselves and the public
-    ranking; `remaining` is the game time left."""
+    ranking; `remaining` is the game time left, `thinking` the game seconds each of the
+    resident's earlier rounds took, oldest first."""
     me = next(resident for resident in world.residents if resident.id == resident_id)
     here = perception.position
     chip_models = {chip.model for chip in CHIP_MODELS}
@@ -321,6 +332,8 @@ def observe(
         mining_rigs=_rig_views(world, resident_id, in_sight),
         time=perception.time,
         remaining_seconds=remaining,
+        last_thinking_seconds=thinking[-1] if thinking else None,
+        avg_thinking_seconds=sum(thinking) / len(thinking) if thinking else None,
         me=Me(
             id=me.id,
             name=me.name,

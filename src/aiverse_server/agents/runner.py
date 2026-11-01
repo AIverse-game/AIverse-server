@@ -203,6 +203,8 @@ class AgentRunner:
         self.brain = brain
         self.pace = pace
         self._record = record
+        self._thinking: list[float] = []
+        """Game seconds each finished round took, oldest first, shown to the brain."""
         if isinstance(brain, ChatCompletionsBrain):
             game.register_redactor(*brain.credential_redactor())
 
@@ -235,7 +237,11 @@ class AgentRunner:
         started_at = datetime.now(UTC).isoformat()
         try:
             observation = observe(
-                self.game.world, self.resident_id, perception, self.game.remaining()
+                self.game.world,
+                self.resident_id,
+                perception,
+                self.game.remaining(),
+                self._thinking,
             )
             market = self.game.world.market
             tools = ResidentTools(
@@ -259,6 +265,8 @@ class AgentRunner:
                 error = detail[:500]
             # The model may have waited without calling a tool or another world event.
             self.game.tick()
+            if not cancelled:
+                self._thinking.append(self.game.world.time - observation.time)
             turn = TurnRecord(
                 self.resident_id,
                 observation.time,

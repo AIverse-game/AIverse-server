@@ -57,6 +57,18 @@ def test_observation_shows_self_market_pools_offers_and_ranking() -> None:
     assert them.known_pools[0].walk_cost == 10
 
 
+def test_observation_reports_how_long_earlier_rounds_took() -> None:
+    game, _ = make_game()
+    perception = game.begin_turn("a")
+
+    first = observe(game.world, "a", perception, game.remaining())
+    later = observe(game.world, "a", perception, game.remaining(), (30.0, 90.0))
+
+    assert (first.last_thinking_seconds, first.avg_thinking_seconds) == (None, None)
+    assert (later.last_thinking_seconds, later.avg_thinking_seconds) == (90.0, 60.0)
+    assert json.loads(to_json(later))["avg_thinking_seconds"] == 60.0
+
+
 def rig_world() -> World:
     """A rig with one MK1 slot on p1, which is in sight of "b" but not of "a"."""
     miner = Resident("c", "丙", "#778899", Position(80, 50), Inventory((("MK1", 1),)), coins=10000)
