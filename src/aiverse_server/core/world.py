@@ -123,6 +123,9 @@ class Memory:
 
     known_pools: tuple[PoolSighting, ...] = ()
     """Every pool the resident has discovered, at its latest sighting, ordered by pool id."""
+    found_on_walks: tuple[str, ...] = ()
+    """Ids of the pools first noticed from a finished walk and not yet reported by a look,
+    see `perception.record_discoveries`; each is also in `known_pools`."""
     activity_seen: int = 0
     """Sequence number of the last activity entry already looked at; 0 before the first look."""
     long_term: tuple[Note, ...] = ()
@@ -139,6 +142,10 @@ class Memory:
         ids = [sighting.pool_id for sighting in self.known_pools]
         if len(set(ids)) != len(ids):
             raise ValueError("known pools must be unique")
+        if not set(self.found_on_walks) <= set(ids) or len(set(self.found_on_walks)) != len(
+            self.found_on_walks
+        ):
+            raise ValueError("pools found on walks must be unique known pools")
         object.__setattr__(
             self, "known_pools", tuple(sorted(self.known_pools, key=lambda s: s.pool_id))
         )

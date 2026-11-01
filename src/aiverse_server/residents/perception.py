@@ -10,7 +10,14 @@ of where they stand and notices:
 - what others did in range since the resident last looked, from the world's activity log.
 
 Seeing a pool discovers it: the resident remembers where it is, and its reserve as last
-seen, after walking away (`Resident.memory`). Other residents are not remembered, since
+seen, after walking away (`Resident.memory`). That holds on the way too: a walk discovers
+every pool within `PERCEPTION_RADIUS` of the line walked, on either side, not only those near
+where it starts or ends. A resident who looks while still walking has seen the stretch
+walked so far; the whole line is settled when the walk ends, see `record_discoveries`, and
+what it turned up is reported by the next look in `Perception.discovered`. Passing a pool
+already known refreshes nothing, as what it held at that moment is not known. Only pools are
+found this way: residents and their activity are noticed from where one stands, since the
+world keeps no history of where they were. Other residents are not remembered, since
 their positions are public anyway (see the observation rules in the design document of the
 client repository). Range is measured from where the perceiver stands now, not where they
 stood when something happened; a move is in range when either end is.
@@ -96,7 +103,8 @@ class Perception:
     activity: tuple[Activity, ...]
     """What others did in range since the resident last looked, oldest first."""
     discovered: tuple[str, ...]
-    """Ids of the pools seen for the first time this round."""
+    """Ids of the pools seen for the first time since the last look, from where the resident
+    stands, along the stretch walked, or on walks finished meanwhile."""
     known_pools: tuple[PoolSighting, ...]
     """Every pool discovered so far, including this round's, at its latest sighting."""
     long_term: tuple[Note, ...]
@@ -151,11 +159,21 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         and (line.speaker_id == resident_id or resident_id in line.listeners)
     )
     known = {sighting.pool_id: sighting for sighting in me.memory.known_pools}
-    discovered = tuple(sighting.pool_id for sighting in pools if sighting.pool_id not in known)
-    known.update((sighting.pool_id, sighting) for sighting in pools)
+    # The stretch walked so far, if walking, may turn up pools not seen before.
+    passed = _unknown_along(world, known, me.position, here)
+    discovered = tuple(
+        dict.fromkeys(
+            (
+                *me.memory.found_on_walks,
+                *(s.pool_id for s in (*passed, *pools) if s.pool_id not in known),
+            )
+        )
+    )
+    known.update((sighting.pool_id, sighting) for sighting in (*passed, *pools))
     memory = replace(
         forget_expired(me.memory, world.time),
         known_pools=tuple(known.values()),
+        found_on_walks=(),
         activity_seen=world.activity.next_seq - 1,
         speech_seen=world.speech.next_seq - 1,
     )
@@ -218,6 +236,55 @@ def record_activity(before: World, after: World) -> World:
     numbered = tuple(replace(entry, seq=log.next_seq + i) for i, entry in enumerate(found))
     entries = (*log.entries, *numbered)[-ACTIVITY_LIMIT:]
     return replace(after, activity=ActivityLog(entries, log.next_seq + len(numbered)))
+
+
+def record_discoveries(before: World, after: World) -> World:
+    """Discover, for each resident whose walk ended between the two worlds, the pools within
+    `PERCEPTION_RADIUS` of the line they walked that they did not know: they are remembered
+    as of `after.time` and held for the resident's next look to report. Residents who left
+    are skipped. Returns `after` itself when nothing was found."""
+    previous = {resident.id: resident for resident in before.residents}
+    residents = list(after.residents)
+    for index, resident in enumerate(residents):
+        old = previous.get(resident.id)
+        if old is None or old.walking is None or resident.walking is not None or resident.left:
+            continue
+        memory = resident.memory
+        known = {sighting.pool_id: sighting for sighting in memory.known_pools}
+        sighted = _unknown_along(after, known, old.position, resident.position)
+        if not sighted:
+            continue
+        known.update((sighting.pool_id, sighting) for sighting in sighted)
+        found = (*memory.found_on_walks, *(sighting.pool_id for sighting in sighted))
+        memory = replace(memory, known_pools=tuple(known.values()), found_on_walks=found)
+        residents[index] = replace(resident, memory=memory)
+    if all(new is old for new, old in zip(residents, after.residents, strict=True)):
+        return after
+    return replace(after, residents=tuple(residents))
+
+
+def _unknown_along(
+    world: World, known: dict[str, PoolSighting], start: Position, end: Position
+) -> tuple[PoolSighting, ...]:
+    """The pools within range of the segment from `start` to `end` that are not in `known`,
+    as they are now. Known pools are left as last seen: passing one on the way refreshes
+    nothing, since what it held at that moment is not known."""
+    return tuple(
+        PoolSighting(pool.id, pool.position, pool.radius, pool.reserve, world.time)
+        for pool in world.pools
+        if pool.id not in known
+        and _distance_to_segment(pool.position, start, end) <= PERCEPTION_RADIUS
+    )
+
+
+def _distance_to_segment(point: Position, start: Position, end: Position) -> float:
+    dx, dy = end.x - start.x, end.y - start.y
+    length_squared = dx * dx + dy * dy
+    if length_squared == 0:
+        return math.dist((point.x, point.y), (start.x, start.y))
+    share = ((point.x - start.x) * dx + (point.y - start.y) * dy) / length_squared
+    share = min(max(share, 0.0), 1.0)
+    return math.dist((point.x, point.y), (start.x + dx * share, start.y + dy * share))
 
 
 def _in_range(here: Position, there: Position) -> bool:

@@ -62,7 +62,8 @@ though your own sales do. Sell within that time, or the price you get is the mar
 - Token pools lie scattered on the map (radius {POOL_RADIUS:g}), fixed for the game, each \
 with a limited reserve. Standing in one with a chip, `mine` takes {MINE_SECONDS:g} seconds \
 and pays the chip's tokens per job. You are busy while mining.
-- You notice pools and residents within {PERCEPTION_RADIUS:g} units. Pools you have seen \
+- You notice pools and residents within {PERCEPTION_RADIUS:g} units. Walking also finds the \
+pools within {PERCEPTION_RADIUS:g} units of your route, on either side. Pools you have seen \
 stay in known_pools.
 - At a pool, build_rig costs {RIG_PRICE} coins for {RIG_CAPACITY} chip slots. install_chip \
 requires standing at that pool and moves one carried chip into the rig, so you no longer carry \

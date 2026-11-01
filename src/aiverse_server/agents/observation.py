@@ -228,7 +228,8 @@ class Observation:
     known_pools: tuple[PoolView, ...]
     """Every pool discovered so far, nearest first."""
     discovered: tuple[str, ...]
-    """Pools seen for the first time this round."""
+    """Pools seen for the first time since the last round: from where the resident stands, or
+    on the way there."""
     nearby_residents: tuple[NearbyResident, ...]
     residents: tuple[Standing, ...]
     offers_to_me: tuple[OfferView, ...]

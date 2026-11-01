@@ -14,7 +14,7 @@ from ..economy.contracts import expire_contracts, next_expiry
 from ..economy.market import next_sample, sample_price
 from ..economy.mining import finish_mining, next_finish
 from ..economy.rigs import finish_rigs, next_cycle
-from ..residents.perception import record_activity
+from ..residents.perception import record_activity, record_discoveries
 from ..residents.walking import finish_walks, next_arrival
 from .lifecycle import knock_out_arrivals
 
@@ -22,8 +22,9 @@ from .lifecycle import knock_out_arrivals
 def settle_due(world: World) -> World:
     """Pay out the mining jobs that have ended by `world.time` and bring in the walkers who
     have arrived, taking out of the game those left without tokens, all logged for others
-    nearby to notice; end the contracts that have lapsed and note the market price when it is
-    time. Returns `world` itself when nothing is due."""
+    nearby to notice; the walkers discover the pools along their way, see
+    `perception.record_discoveries`. End the contracts that have lapsed and note the market
+    price when it is time. Returns `world` itself when nothing is due."""
     target = world.time
     after = world
     while (due := next_due(after)) is not None and due <= target:
@@ -31,7 +32,9 @@ def settle_due(world: World) -> World:
         paid = finish_mining(timed)
         # An exhausted walker leaves before rigs at the same instant can pay them.
         arrived = knock_out_arrivals(paid, finish_walks(paid))
-        after = sample_price(finish_rigs(expire_contracts(record_activity(timed, arrived))))
+        logged = record_activity(timed, arrived)
+        found = record_discoveries(paid, logged)
+        after = sample_price(finish_rigs(expire_contracts(found)))
     return world if after is world else replace(after, time=target)
 
 

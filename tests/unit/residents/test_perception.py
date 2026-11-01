@@ -18,10 +18,11 @@ from aiverse_server.core.world import (
 )
 from aiverse_server.economy.chips import CHIP_MODELS
 from aiverse_server.economy.mining import MINE_SECONDS
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.economy.tokens import TOKEN, walk_cost
 from aiverse_server.game.actions import LeaveGame, Mine, MoveTo, OfferToBuy, RespondToEvent, perform
 from aiverse_server.game.clock import settle_due
 from aiverse_server.game.lifecycle import GameError, end_game
+from aiverse_server.residents.memory import remember
 from aiverse_server.residents.perception import PERCEPTION_RADIUS, begin_turn, record_activity
 from aiverse_server.residents.walking import WALK_SPEED, next_arrival
 from aiverse_server.server.app import Game
@@ -308,6 +309,7 @@ MINED_GONE = Activity(1, 0.0, "a", "started_mining", Position(1, 1), pool_id="go
             lambda: replace(WORLD, residents=(replace(A, memory=Memory(activity_seen=1)),)),
             "not yet logged",
         ),
+        (lambda: Memory(found_on_walks=("near",)), "found on walks"),
         (lambda: replace(WORLD, activity=ActivityLog((STRAY,), 2)), "unknown resident"),
         (lambda: replace(WORLD, activity=ActivityLog((MINED_GONE,), 2)), "unknown pool"),
         (lambda: ActivityLog((replace(STRAY, resident_id="a"),), 1), "above 0"),
@@ -325,3 +327,92 @@ def test_a_world_rejects_memories_and_activity_it_cannot_account_for(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         build()
+
+
+# a walks the line x = 10 from y = 10 to y = 90. "beside" is 15 from it, more than
+# PERCEPTION_RADIUS from both ends; "wide" is 30 from it; "behind" is 15 past the end.
+ROAD = replace(
+    WORLD,
+    residents=(resident("a", 10, 10),),
+    pools=(
+        Pool("beside", Position(25, 50), radius=4, reserve=70),
+        Pool("wide", Position(40, 50), radius=4, reserve=60),
+        Pool("behind", Position(10, 99), radius=4, reserve=50),
+    ),
+)
+ROAD_END = Position(10, 90)
+
+
+def test_a_walk_discovers_the_pools_within_range_of_its_line_and_no_others() -> None:
+    world = arrive(perform(ROAD, MoveTo("a", ROAD_END)))
+    _, seen = begin_turn(world, "a")
+
+    assert seen.pools == (PoolSighting("behind", Position(10, 99), 4, 50, seen.time),)
+    assert [sighting.pool_id for sighting in seen.known_pools] == ["behind", "beside"]
+    assert seen.discovered == ("beside", "behind")
+
+
+def test_a_pool_found_on_a_walk_is_reported_once_and_remembered_as_of_arrival() -> None:
+    world = arrive(perform(ROAD, MoveTo("a", ROAD_END)))
+    world, first = begin_turn(world, "a")
+    _, second = begin_turn(world, "a")
+
+    beside = next(s for s in first.known_pools if s.pool_id == "beside")
+    assert beside == PoolSighting("beside", Position(25, 50), 4, 70, world.time)
+    assert second.discovered == ()
+
+
+def test_a_resident_who_looks_mid_walk_has_seen_the_stretch_walked_so_far() -> None:
+    world = perform(ROAD, MoveTo("a", ROAD_END))
+    early = replace(world, time=world.time + 1.0)  # 2.5 units on: y = 12.5
+    late = replace(world, time=world.time + 24.0)  # 60 units on: y = 70, 25 from "beside"
+
+    _, early_look = begin_turn(early, "a")
+    _, late_look = begin_turn(late, "a")
+
+    assert early_look.discovered == ()
+    assert late_look.pools == ()
+    assert late_look.discovered == ("beside",)
+    assert [sighting.pool_id for sighting in late_look.known_pools] == ["beside"]
+
+
+def test_a_walk_that_only_passes_a_known_pool_discovers_nothing_new() -> None:
+    world, _ = begin_turn(arrive(perform(ROAD, MoveTo("a", Position(10, 40)))), "a")
+
+    world = arrive(perform(world, MoveTo("a", ROAD_END)))
+    _, seen = begin_turn(world, "a")
+
+    assert seen.discovered == ("behind",)
+
+
+def test_passing_a_known_pool_leaves_its_sighting_as_it_was() -> None:
+    world, _ = begin_turn(arrive(perform(ROAD, MoveTo("a", Position(10, 40)))), "a")
+    first = next(s for s in world.residents[0].memory.known_pools if s.pool_id == "beside")
+    world = replace(world, pools=(replace(world.pools[0], reserve=1), *world.pools[1:]))
+
+    world = arrive(perform(world, MoveTo("a", ROAD_END)))
+    _, seen = begin_turn(world, "a")
+
+    assert next(s for s in seen.known_pools if s.pool_id == "beside") == first
+
+
+def test_pools_found_on_walks_are_all_reported_by_the_next_look_and_only_once() -> None:
+    world = arrive(perform(ROAD, MoveTo("a", Position(10, 40))))
+    world, _ = remember(world, "a", "walking on", "long_term")
+
+    world = arrive(perform(world, MoveTo("a", ROAD_END)))
+    world, seen = begin_turn(world, "a")
+    _, again = begin_turn(world, "a")
+
+    assert seen.discovered == ("beside", "behind")
+    assert again.discovered == ()
+
+
+def test_a_walker_who_runs_out_of_tokens_on_arrival_discovers_nothing() -> None:
+    cost = walk_cost(Position(10, 10), ROAD_END)
+    broke = replace(ROAD, residents=(resident("a", 10, 10, tokens=cost),))
+
+    world = arrive(perform(broke, MoveTo("a", ROAD_END)))
+
+    assert world.residents[0].left
+    assert world.residents[0].memory == Memory()
