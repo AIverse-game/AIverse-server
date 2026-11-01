@@ -230,6 +230,47 @@ def test_a_busy_resident_may_let_a_round_pass_without_a_word() -> None:
     asyncio.run(scenario())
 
 
+def test_the_brain_keeps_why_each_request_stopped_and_the_tokens_it_wrote() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        cut_off = {
+            "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+            "usage": {
+                "completion_tokens": 8192,
+                "completion_tokens_details": {"reasoning_tokens": 8100},
+            },
+        }
+        done = {
+            "choices": [{"message": {"content": "Waiting."}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 40},
+        }
+        replies = [httpx.Response(200, json=cut_off), httpx.Response(200, json=done)]
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, []))
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert brain.completions == [
+            {"finish_reason": "length", "completion_tokens": 8192, "reasoning_tokens": 8100},
+            {"finish_reason": "stop", "completion_tokens": 40},
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_a_request_caps_the_answer_at_8192_tokens() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        requests: list[httpx.Request] = []
+        replies = [httpx.Response(200, json=_reply({"content": "Waiting."}))]
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert json.loads(requests[0].content)["max_tokens"] == 8192
+
+    asyncio.run(scenario())
+
+
 def test_an_empty_reply_is_asked_again() -> None:
     async def scenario() -> None:
         game, _ = make_game()

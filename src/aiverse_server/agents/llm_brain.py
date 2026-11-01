@@ -44,10 +44,12 @@ MAX_STEPS = 8
 REQUEST_LIMIT = 400
 """Model requests one resident may make in a game."""
 
-MAX_TOKENS = 2048
-"""Tokens a model may write per request, so one answer cannot run up the bill."""
+MAX_TOKENS = 8192
+"""Tokens a model may write per request, so one answer cannot run up the bill. A reasoning
+model spends most of them thinking before it calls a tool; at 2048 more than half the
+rounds of a logged game ended cut off with nothing done."""
 
-TIMEOUT = 60.0
+TIMEOUT = 180.0
 """Seconds to wait for one request."""
 
 LLMSetting = Literal["base_url", "api_key", "model"]
@@ -139,9 +141,13 @@ class ChatCompletionsBrain:
         self._client = client if client is not None else httpx.AsyncClient(timeout=TIMEOUT)
         self._last_round = "This is your first round."
         self.outputs: list[str] = []
+        self.completions: list[dict[str, Any]] = []
+        """One entry per request of the last round: why it stopped and the tokens it wrote,
+        so a log shows whether the model ran out of room."""
 
     async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
         self.outputs = []
+        self.completions = []
         if self.requests >= self.request_limit:
             return "request limit reached; waiting"
         messages: list[dict[str, Any]] = [
@@ -263,7 +269,25 @@ class ChatCompletionsBrain:
         if not isinstance(message, dict):
             raise LLMError("the response has no message")
         finish_reason = choices[0].get("finish_reason")
+        self.completions.append(_completion_record(finish_reason, body.get("usage")))
         return message, finish_reason if isinstance(finish_reason, str) else None
+
+
+def _completion_record(finish_reason: object, usage: object) -> dict[str, Any]:
+    """What a log keeps of one completion: why it stopped, tokens written and, when the
+    provider says, how many of them went on reasoning."""
+    record: dict[str, Any] = {
+        "finish_reason": finish_reason if isinstance(finish_reason, str) else None
+    }
+    if isinstance(usage, dict):
+        written = usage.get("completion_tokens")
+        if isinstance(written, int) and not isinstance(written, bool):
+            record["completion_tokens"] = written
+        details = usage.get("completion_tokens_details")
+        reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+        if isinstance(reasoning, int) and not isinstance(reasoning, bool):
+            record["reasoning_tokens"] = reasoning
+    return record
 
 
 def _busy(status: dict[str, Any]) -> bool:

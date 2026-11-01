@@ -91,6 +91,8 @@ class TurnRecord:
     finished_at: str | None = None
     memory_after: dict[str, Any] | None = None
     outputs: tuple[str, ...] = ()
+    completions: tuple[dict[str, Any], ...] = ()
+    """Per model request: why it stopped and the tokens it wrote, see `ChatCompletionsBrain`."""
     model: str | None = None
     strategy: str | None = None
     cancelled: bool = False
@@ -130,6 +132,7 @@ def redact_turn(turn: TurnRecord, redact: Callable[[str], str]) -> TurnRecord:
         remark=redact(turn.remark) if turn.remark is not None else None,
         error=redact(turn.error) if turn.error is not None else None,
         memory_after=cleaned(turn.memory_after),
+        completions=tuple(cleaned(turn.completions)),
         outputs=tuple(redact(output) for output in turn.outputs),
         strategy=redact(turn.strategy) if turn.strategy is not None else None,
     )
@@ -275,6 +278,9 @@ class AgentRunner:
                 outputs=tuple(self.brain.outputs)
                 if isinstance(self.brain, ChatCompletionsBrain)
                 else ((remark,) if remark else ()),
+                completions=tuple(self.brain.completions)
+                if isinstance(self.brain, ChatCompletionsBrain)
+                else (),
                 model=self.brain.model if isinstance(self.brain, ChatCompletionsBrain) else None,
                 strategy=self.brain.strategy
                 if isinstance(self.brain, ChatCompletionsBrain)

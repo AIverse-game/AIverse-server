@@ -90,7 +90,11 @@ def test_model_text_and_private_memory_are_redacted_before_writing(tmp_path: Pat
                         }
                     ],
                 }
-            return httpx.Response(200, json={"choices": [{"message": message}]})
+            body = {
+                "choices": [{"message": message, "finish_reason": f"stop {key}"}],
+                "usage": {"completion_tokens": 7},
+            }
+            return httpx.Response(200, json=body)
 
         game = game_at_market()
         game.remember("r1", key, "short_term")
@@ -111,6 +115,8 @@ def test_model_text_and_private_memory_are_redacted_before_writing(tmp_path: Pat
     row = asyncio.run(scenario())
 
     assert row["outputs"] == ["先记住 ***", "下一步 ***"]
+    # A provider echoing the key in a finish reason is masked like its other text.
+    assert row["completions"] == [{"finish_reason": "stop ***", "completion_tokens": 7}] * 2
     assert row["remark"] == "下一步 ***"
     assert row["strategy"] == "***" and row["model"] == "model"
     assert row["observation"]["short_term_notes"][0]["text"] == "***"
