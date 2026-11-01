@@ -142,8 +142,8 @@ class ChatCompletionsBrain:
         self._last_round = "This is your first round."
         self.outputs: list[str] = []
         self.completions: list[dict[str, Any]] = []
-        """One entry per request of the last round: why it stopped and the tokens it wrote,
-        so a log shows whether the model ran out of room."""
+        """One entry per request of the last round: why it stopped and the tokens the API
+        counted, so a log shows what a round cost and whether the model ran out of room."""
 
     async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
         self.outputs = []
@@ -274,20 +274,32 @@ class ChatCompletionsBrain:
 
 
 def _completion_record(finish_reason: object, usage: object) -> dict[str, Any]:
-    """What a log keeps of one completion: why it stopped, tokens written and, when the
-    provider says, how many of them went on reasoning."""
+    """What a log keeps of one completion: why it stopped and the token counts the provider
+    gives: tokens read (`prompt_tokens`, of which `cached_tokens` came from its cache), tokens
+    written (`completion_tokens`, of which `reasoning_tokens` went on reasoning) and the
+    `total_tokens`. A count that is missing or not a number is left out."""
     record: dict[str, Any] = {
         "finish_reason": finish_reason if isinstance(finish_reason, str) else None
     }
     if isinstance(usage, dict):
-        written = usage.get("completion_tokens")
-        if isinstance(written, int) and not isinstance(written, bool):
-            record["completion_tokens"] = written
-        details = usage.get("completion_tokens_details")
-        reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
-        if isinstance(reasoning, int) and not isinstance(reasoning, bool):
-            record["reasoning_tokens"] = reasoning
+        counts = (
+            ("prompt_tokens", usage.get("prompt_tokens")),
+            ("cached_tokens", _detail(usage.get("prompt_tokens_details"), "cached_tokens")),
+            ("completion_tokens", usage.get("completion_tokens")),
+            (
+                "reasoning_tokens",
+                _detail(usage.get("completion_tokens_details"), "reasoning_tokens"),
+            ),
+            ("total_tokens", usage.get("total_tokens")),
+        )
+        for name, count in counts:
+            if isinstance(count, int) and not isinstance(count, bool):
+                record[name] = count
     return record
+
+
+def _detail(details: object, key: str) -> object:
+    return details.get(key) if isinstance(details, dict) else None
 
 
 def _busy(status: dict[str, Any]) -> bool:

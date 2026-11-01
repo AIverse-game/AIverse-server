@@ -231,14 +231,17 @@ def test_a_busy_resident_may_let_a_round_pass_without_a_word() -> None:
     asyncio.run(scenario())
 
 
-def test_the_brain_keeps_why_each_request_stopped_and_the_tokens_it_wrote() -> None:
+def test_the_brain_keeps_why_each_request_stopped_and_the_api_tokens_it_used() -> None:
     async def scenario() -> None:
         game, _ = make_game()
         cut_off = {
             "choices": [{"message": {"content": None}, "finish_reason": "length"}],
             "usage": {
+                "prompt_tokens": 3000,
+                "prompt_tokens_details": {"cached_tokens": 2500},
                 "completion_tokens": 8192,
                 "completion_tokens_details": {"reasoning_tokens": 8100},
+                "total_tokens": 11192,
             },
         }
         done = {
@@ -251,9 +254,44 @@ def test_the_brain_keeps_why_each_request_stopped_and_the_tokens_it_wrote() -> N
         await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
         assert brain.completions == [
-            {"finish_reason": "length", "completion_tokens": 8192, "reasoning_tokens": 8100},
+            {
+                "finish_reason": "length",
+                "prompt_tokens": 3000,
+                "cached_tokens": 2500,
+                "completion_tokens": 8192,
+                "reasoning_tokens": 8100,
+                "total_tokens": 11192,
+            },
             {"finish_reason": "stop", "completion_tokens": 40},
         ]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        "12 tokens",
+        {"prompt_tokens": True, "total_tokens": "12", "completion_tokens": 1.5},
+        {"prompt_tokens_details": "none", "completion_tokens_details": None},
+        {"prompt_tokens_details": {}, "completion_tokens_details": {"reasoning_tokens": False}},
+    ],
+)
+def test_the_brain_ignores_token_counts_the_api_does_not_give_as_numbers(usage: object) -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        reply = {
+            "choices": [{"message": {"content": "Waiting."}, "finish_reason": "stop"}],
+            "usage": usage,
+        }
+        brain = ChatCompletionsBrain(
+            "http://llm", "k", "m", client=_http([httpx.Response(200, json=reply)], [])
+        )
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert brain.completions == [{"finish_reason": "stop"}]
 
     asyncio.run(scenario())
 

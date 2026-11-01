@@ -275,7 +275,7 @@ uv run aiverse-server --agent r1=llm --agent r2=llm
 | `calls` | 按调用顺序记录动作名、参数、游戏时间 `time`、现实 UTC `timestamp`、成败和状态、金币/token 净变化 |
 | `memory_after` | 本轮结束时存储的长短期笔记、已知矿池等记忆，含写入和过期时间 |
 | `outputs`、`remark` | 每次模型响应的文本输出（不含隐藏推理）、最终计划摘要；脚本只记录返回的摘要 |
-| `completions` | 每次模型请求的 `finish_reason`（如 `length` 表示输出用尽被截断）、写出的 token 数，以及服务商给出时其中用于推理的 token 数；只含得到回答的请求，失败的请求只在 `error` 里；脚本为空 |
+| `completions` | 每次模型请求的 `finish_reason`（如 `length` 表示输出用尽被截断）和服务商返回的 AI API token 用量（不是游戏里的 token）：读入 `prompt_tokens`（其中命中缓存的 `cached_tokens`）、写出 `completion_tokens`（其中用于推理的 `reasoning_tokens`）、合计 `total_tokens`，服务商未给出的字段省略；一轮的消耗是各条相加；只含得到回答的请求，失败的请求只在 `error` 里；脚本为空 |
 | `before`、`after` | 本轮首尾金币总额（含托管）和 token |
 | `error`、`cancelled` | 失败详情与是否在思考时被停止；已执行动作与轮后记忆仍保留 |
 

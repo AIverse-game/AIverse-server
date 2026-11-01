@@ -92,7 +92,7 @@ class TurnRecord:
     memory_after: dict[str, Any] | None = None
     outputs: tuple[str, ...] = ()
     completions: tuple[dict[str, Any], ...] = ()
-    """Per model request: why it stopped and the tokens it wrote, see `ChatCompletionsBrain`."""
+    """Per model request: why it stopped and the API tokens it used, see `ChatCompletionsBrain`."""
     model: str | None = None
     strategy: str | None = None
     cancelled: bool = False
