@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from aiverse_server.agents.llm_brain import LLMSettings
+from aiverse_server.agents.llm_brain import MAX_TOKENS, LLMSettings
 from aiverse_server.server.config import Config, ConfigError, load_config
 
 EXAMPLE = (
@@ -35,6 +35,13 @@ def test_the_example_overrides_nothing() -> None:
     assert load_config(EXAMPLE) == Config()
 
 
+def test_a_positive_output_limit_is_read_from_the_override(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, "override:\n  max_tokens: 16384\n"))
+
+    assert config.override.max_tokens == 16384
+    assert Config().override.max_tokens == MAX_TOKENS
+
+
 @pytest.mark.parametrize(
     ("text", "problem"),
     [
@@ -45,6 +52,10 @@ def test_the_example_overrides_nothing() -> None:
         ("llm:\n  override:\n    api_key: sk-secret\n", "llm"),
         ("- sk-secret\n", "(root)"),
         ("override: {api_key: sk-secret\n", "not valid YAML"),
+        ("override:\n  max_tokens: 0\n", "override.max_tokens"),
+        ("override:\n  max_tokens: -1\n", "override.max_tokens"),
+        ("override:\n  max_tokens: '16384'\n", "override.max_tokens"),
+        ("override:\n  max_tokens: null\n", "override.max_tokens"),
     ],
 )
 def test_bad_files_name_the_problem_without_their_values(

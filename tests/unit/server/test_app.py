@@ -7,7 +7,7 @@ from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
 from aiverse_server.economy.tokens import TOKEN
 from aiverse_server.game.actions import ActionRejected, MoveTo
-from aiverse_server.game.lifecycle import ENDING_NOTICE_SECONDS
+from aiverse_server.game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from aiverse_server.server.app import Game, Outbox, create_app
 
 WORLD = World(
@@ -100,33 +100,47 @@ def test_a_burst_of_moves_does_not_overflow_other_connections() -> None:
     assert watcher.state is not None
 
 
-def test_the_server_tells_every_resident_a_minute_before_the_game_ends() -> None:
+def test_the_server_tells_every_resident_three_minutes_and_one_minute_before_end() -> None:
     game, clock = make_game(duration=600)
-    clock.now = 539.0
+    clock.now = 419.0
     game.tick()
     unannounced = game.world.notices.entries
 
+    clock.now = 420.0
+    game.tick()
+    early_a = game.begin_turn("a")
+    early_b = game.begin_turn("b")
+    early_again = game.begin_turn("a")
+    clock.now = 539.0
+    game.tick()
     clock.now = 540.0
     game.tick()
-    first = game.begin_turn("a")
-    second = game.begin_turn("b")
-    again = game.begin_turn("a")
+    final_a = game.begin_turn("a")
+    final_b = game.begin_turn("b")
+    final_again = game.begin_turn("a")
 
     assert unannounced == ()
-    assert [notice.text for notice in first.notices] == ["The game ends in 60 seconds."]
-    assert first.notices[0].time == 540.0
-    assert second.notices == first.notices
-    assert again.notices == ()
+    assert [notice.text for notice in early_a.notices] == ["The game ends within 3 minutes."]
+    assert early_a.notices[0].time == 420.0
+    assert early_b.notices == early_a.notices
+    assert early_again.notices == ()
+    assert [notice.text for notice in final_a.notices] == ["The game ends in 60 seconds."]
+    assert final_a.notices[0].time == 540.0
+    assert final_b.notices == final_a.notices
+    assert final_again.notices == ()
 
 
 def test_the_ending_is_announced_once_however_often_the_clock_ticks() -> None:
     game, clock = make_game(duration=600)
 
-    for now in (540.0, 560.0, 580.0):
+    for now in (420.0, 440.0, 540.0, 560.0, 580.0):
         clock.now = now
         game.tick()
 
-    assert len(game.world.notices.entries) == 1
+    assert [notice.text for notice in game.world.notices.entries] == [
+        "The game ends within 3 minutes.",
+        "The game ends in 60 seconds.",
+    ]
 
 
 def test_the_announcement_wakes_a_waiting_agent() -> None:
@@ -134,10 +148,21 @@ def test_the_announcement_wakes_a_waiting_agent() -> None:
     changed = game.subscribe()
     changed.clear()
 
-    clock.now = 540.0
+    clock.now = 420.0
     game.tick()
 
     assert changed.is_set()
+
+
+def test_a_delayed_tick_only_sends_the_latest_ending_notice() -> None:
+    game, clock = make_game(duration=600)
+
+    clock.now = 540.0
+    game.tick()
+
+    assert [notice.text for notice in game.world.notices.entries] == [
+        "The game ends in 60 seconds."
+    ]
 
 
 def test_a_game_no_longer_than_the_warning_announces_nothing() -> None:
@@ -147,6 +172,17 @@ def test_a_game_no_longer_than_the_warning_announces_nothing() -> None:
     game.tick()
 
     assert game.world.notices.entries == ()
+
+
+def test_a_short_game_only_sends_warnings_that_fit_its_duration() -> None:
+    game, clock = make_game(duration=EARLY_ENDING_NOTICE_SECONDS)
+
+    clock.now = 120.0
+    game.tick()
+
+    assert [notice.text for notice in game.world.notices.entries] == [
+        "The game ends in 60 seconds."
+    ]
 
 
 def test_the_clock_announces_the_ending_on_its_own_when_nothing_else_happens() -> None:

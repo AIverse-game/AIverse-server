@@ -33,6 +33,7 @@ from ..game.actions import Action, ActionRejected, perform
 from ..game.clock import next_due, settle_due
 from ..game.layout import create_default_world
 from ..game.lifecycle import (
+    EARLY_ENDING_NOTICE_SECONDS,
     ENDING_NOTICE_SECONDS,
     GAME_DURATION,
     GameError,
@@ -234,8 +235,12 @@ class Game:
         self._clock = clock
         self._start = clock()
         self._duration = duration
-        # A game no longer than the warning has no time to give it.
-        self._notice_pending = duration > ENDING_NOTICE_SECONDS
+        # A game no longer than a warning has no time to give it.
+        self._pending_notices = tuple(
+            seconds
+            for seconds in (EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS)
+            if duration > seconds
+        )
         self._pace = pace
         self._record = record
         self._llm_brain = llm_brain
@@ -270,9 +275,20 @@ class Game:
         after = settle_due(timed)
         if elapsed >= self._duration:
             after = end_game(after)
-        elif self._notice_pending and elapsed >= self._duration - ENDING_NOTICE_SECONDS:
-            self._notice_pending = False
-            after = announce(after, f"The game ends in {ENDING_NOTICE_SECONDS:g} seconds.")
+        else:
+            while self._pending_notices and elapsed >= self._duration - self._pending_notices[0]:
+                seconds = self._pending_notices[0]
+                self._pending_notices = self._pending_notices[1:]
+                # A delayed tick may cross both thresholds at once. Only the latest
+                # warning is useful then; do not announce that three minutes remain.
+                if self._pending_notices and elapsed >= self._duration - self._pending_notices[0]:
+                    continue
+                text = (
+                    "The game ends within 3 minutes."
+                    if seconds == EARLY_ENDING_NOTICE_SECONDS
+                    else f"The game ends in {seconds:g} seconds."
+                )
+                after = announce(after, text)
         self.world = after
         if after is not timed:
             self.broadcast_world()
@@ -420,8 +436,8 @@ class Game:
         """Seconds until the game ends, the ending is announced, or the next mining job or walk
         is due, whichever comes first."""
         wait = self.remaining()
-        if self._notice_pending:
-            wait = min(wait, self.remaining() - ENDING_NOTICE_SECONDS)
+        if self._pending_notices:
+            wait = min(wait, self.remaining() - self._pending_notices[0])
         due = next_due(self.world)
         if due is not None:
             wait = min(wait, due - (self._clock() - self._start))

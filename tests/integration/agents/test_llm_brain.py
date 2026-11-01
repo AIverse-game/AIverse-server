@@ -296,16 +296,19 @@ def test_the_brain_ignores_token_counts_the_api_does_not_give_as_numbers(usage: 
     asyncio.run(scenario())
 
 
-def test_a_request_caps_the_answer_at_8192_tokens() -> None:
+@pytest.mark.parametrize("max_tokens", [8192, 16384])
+def test_a_request_uses_the_configured_output_limit(max_tokens: int) -> None:
     async def scenario() -> None:
         game, _ = make_game()
         requests: list[httpx.Request] = []
         replies = [httpx.Response(200, json=_reply({"content": "Waiting."}))]
-        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+        brain = ChatCompletionsBrain(
+            "http://llm", "k", "m", client=_http(replies, requests), max_tokens=max_tokens
+        )
 
         await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
-        assert json.loads(requests[0].content)["max_tokens"] == 8192
+        assert json.loads(requests[0].content)["max_tokens"] == max_tokens
 
     asyncio.run(scenario())
 

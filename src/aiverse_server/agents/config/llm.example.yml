@@ -8,3 +8,4 @@ override:
   # base_url: https://openrouter.ai/api/v1
   # api_key: sk-...
   # model: nvidia/nemotron-3.5-lightning
+  # max_tokens: 8192  # 每次模型回复的 token 上限，必须是正整数

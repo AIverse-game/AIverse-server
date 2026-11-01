@@ -12,8 +12,8 @@ leave the resident walking or mining, or `MAX_STEPS` requests have gone by. A bu
 can only talk and take notes, which the model does in the same reply; asking again would
 only have it wait out the job in notes, and the runner wakes it when the job ends. When a
 free resident's model has called no tool yet and replies with nothing to act on, empty or
-cut off at `MAX_TOKENS`, the round asks once more and raises `LLMError` if the second reply
-is no better, so the runner records why and retries soon. The model's own notes carry
+cut off at its configured token limit, the round asks once more and raises `LLMError` if
+the second reply is no better, so the runner records why and retries soon. The model's notes carry
 anything further between rounds.
 
 The API key never goes into a record, a log or an error message, and is left out of the
@@ -128,6 +128,7 @@ class ChatCompletionsBrain:
         client: httpx.AsyncClient | None = None,
         request_limit: int = REQUEST_LIMIT,
         max_steps: int = MAX_STEPS,
+        max_tokens: int = MAX_TOKENS,
     ) -> None:
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.model = model
@@ -135,6 +136,7 @@ class ChatCompletionsBrain:
         self.requests = 0
         self.request_limit = request_limit
         self.max_steps = max_steps
+        self.max_tokens = max_tokens
         self._api_key = api_key
         # Only a client made here is closed here; one passed in belongs to the caller.
         self._owns_client = client is None
@@ -244,7 +246,7 @@ class ChatCompletionsBrain:
                     "messages": messages,
                     "tools": tool_specs(),
                     "tool_choice": "auto",
-                    "max_tokens": MAX_TOKENS,
+                    "max_tokens": self.max_tokens,
                 },
             )
         except httpx.HTTPError as error:

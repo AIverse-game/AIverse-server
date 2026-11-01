@@ -1,16 +1,18 @@
 """The config file for the language model agents ask, in YAML; see
 `agents/config/llm.example.yml`.
 
-So far it holds one thing, overrides for that model:
+It holds overrides for that model and a server-wide output limit:
 
 ```yaml
 override:
   base_url: https://openrouter.ai/api/v1
   api_key: sk-...
   model: nvidia/nemotron-3.5-lightning
+  max_tokens: 16384
 ```
 
-Each setting given replaces what the player chose on the page, or with `--agent
+The output limit applies to every model agent, including ones started from the page.
+Each connection setting given replaces what the player chose on the page, or with `--agent
 RESIDENT=llm[:MODEL]` on the command line, for every resident a model drives; those left out
 come from the player. The file may hold a key, so it stays out of the repository. Unknown
 keys are refused, so a misspelt setting is not silently ignored.
@@ -29,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from ..agents.llm_brain import LLMSettings
+from ..agents.llm_brain import MAX_TOKENS, LLMSettings
 
 Setting = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -43,7 +45,11 @@ class _Section(BaseModel):
         """A key with nothing after it, such as a section whose settings are all commented
         out, is null in YAML; take it as left out."""
         if isinstance(data, dict):
-            return {key: value for key, value in data.items() if value is not None}
+            return {
+                key: value
+                for key, value in data.items()
+                if value is not None or key == "max_tokens"
+            }
         return data
 
 
@@ -51,6 +57,7 @@ class LLMOverride(_Section):
     base_url: Setting | None = None
     api_key: Setting | None = Field(default=None, repr=False)
     model: Setting | None = None
+    max_tokens: int = Field(default=MAX_TOKENS, strict=True, gt=0)
 
 
 class Config(_Section):

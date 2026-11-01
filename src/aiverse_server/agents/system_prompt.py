@@ -25,7 +25,7 @@ from ..economy.rigs import (
 )
 from ..economy.tokens import TOKENS_PER_UNIT
 from ..game.layout import MAP_SIZE, POOL_RADIUS
-from ..game.lifecycle import ENDING_NOTICE_SECONDS
+from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.perception import PERCEPTION_RADIUS
 from ..residents.speech import HEARING_RADIUS, SPEECH_COSTS
@@ -137,8 +137,9 @@ same reply as a walk; you are not there yet.
 - You are woken again when your walk or mining job ends, an offer reaches you, a contract \
 of yours ends other than by your doing, someone speaks to you, the server makes an \
 announcement, or after a while with nothing happening.
-- {ENDING_NOTICE_SECONDS:g} seconds before the game ends the server announces it to every \
-resident, in `notices` of your observation.
+- If the game lasts longer than the warning's lead time, the server announces the ending \
+{EARLY_ENDING_NOTICE_SECONDS / 60:g} minutes and {ENDING_NOTICE_SECONDS:g} seconds before it \
+happens. You read each announcement in `notices` of your next observation.
 - The game clock keeps running while you think: the time you spend deliberating is game \
 time, like a walk, and the world moves on without you. Nothing waits and nothing renews: \
 the seconds you spend are gone, and so are the tokens other residents and rigs draw from \

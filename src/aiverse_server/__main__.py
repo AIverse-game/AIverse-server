@@ -9,6 +9,7 @@ without an agent are left to the pages, which may hand them to a model too."""
 import argparse
 import logging
 import math
+from functools import partial
 from pathlib import Path
 
 import uvicorn
@@ -95,6 +96,7 @@ def main() -> None:
     except ConfigError as error:
         parser.error(str(error))
     override = config.llm_override()
+    llm_brain = partial(ChatCompletionsBrain, max_tokens=config.override.max_tokens)
     world = create_default_world(args.seed)
     resident_ids = {resident.id for resident in world.residents}
     agents: dict[str, Brain] = {}
@@ -119,7 +121,7 @@ def main() -> None:
                     f"{spec}: {error.message}; set them under override in the config file, "
                     "or the model as RESIDENT=llm:MODEL"
                 )
-            agents[resident_id] = ChatCompletionsBrain(*settings)
+            agents[resident_id] = llm_brain(*settings)
     # Pages can start agents later, so every resident gets a file, even without --agent.
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -136,6 +138,7 @@ def main() -> None:
             agents=agents,
             record=recorder,
             llm_override=override,
+            llm_brain=llm_brain,
         )
         uvicorn.run(app, host=args.host, port=args.port)
 

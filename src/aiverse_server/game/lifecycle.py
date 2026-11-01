@@ -33,6 +33,9 @@ GAME_DURATION = 20 * 60.0
 ENDING_NOTICE_SECONDS = 60.0
 """How long before the game ends the server tells every resident it is about to."""
 
+EARLY_ENDING_NOTICE_SECONDS = 180.0
+"""Earlier warning so a slow model can still act before the final minute."""
+
 GameErrorCode = Literal["unknown_resident", "resident_left", "game_over"]
 
 
