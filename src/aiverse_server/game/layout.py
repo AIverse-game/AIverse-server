@@ -8,8 +8,17 @@ whole game.
 import math
 import random
 
-from ..core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
-from ..economy.market import MARKET_RADIUS
+from ..core.world import (
+    Inventory,
+    Market,
+    Pool,
+    Position,
+    PricePoint,
+    Resident,
+    World,
+    WorldMap,
+)
+from ..economy.market import MARKET_BASE_PRICE, MARKET_RADIUS
 from ..economy.tokens import TOKEN
 
 MAP_SIZE = 150.0
@@ -89,5 +98,7 @@ def create_default_world(seed: int | None = None) -> World:
         map=WorldMap(size=MAP_SIZE),
         residents=DEFAULT_RESIDENTS,
         pools=scatter_pools(seed),
-        market=Market(market_position(), MARKET_RADIUS),
+        market=Market(
+            market_position(), MARKET_RADIUS, history=(PricePoint(0.0, MARKET_BASE_PRICE),)
+        ),
     )

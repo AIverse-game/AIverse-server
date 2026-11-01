@@ -473,6 +473,20 @@ class Pool:
 
 
 @dataclass(frozen=True)
+class PricePoint:
+    """What one more token fetched at the market at a game time, before rounding."""
+
+    time: float
+    price: float
+
+    def __post_init__(self) -> None:
+        if not (math.isfinite(self.time) and self.time >= 0):
+            raise ValueError(f"price time must be finite and >= 0: {self.time}")
+        if not (math.isfinite(self.price) and self.price > 0):
+            raise ValueError(f"price must be a positive finite number, got {self.price}")
+
+
+@dataclass(frozen=True)
 class Market:
     """Where residents sell tokens for coins, see `market.py`. It never moves; only the
     pressure of recent sales, which sets the price, changes."""
@@ -485,10 +499,16 @@ class Market:
     zero once nobody has sold for a while, see `market.py`."""
     pressure_at: float = 0.0
     """Game time of the last sale, see `World.time`."""
+    history: tuple[PricePoint, ...] = ()
+    """The price over the game, oldest first, noted at every sale and at regular intervals
+    in between, see `market.py`; empty when nobody keeps it."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.radius) and self.radius > 0):
             raise ValueError(f"market has radius {self.radius}, must be positive")
+        for earlier, later in zip(self.history, self.history[1:], strict=False):
+            if later.time < earlier.time:
+                raise ValueError("the market's price history must not go back in time")
         if not math.isfinite(self.pressure):
             raise ValueError(f"market pressure must be a finite number, got {self.pressure}")
         if not (math.isfinite(self.pressure_at) and self.pressure_at >= 0):
@@ -546,6 +566,8 @@ class World:
                 raise ValueError(f"the market is outside the map: {self.market.position}")
             if self.market.pressure_at > self.time:
                 raise ValueError("the market was last sold to after the current time")
+            if self.market.history and self.market.history[-1].time > self.time:
+                raise ValueError("the market's price history reaches past the current time")
         pool_ids = [pool.id for pool in self.pools]
         if len(set(pool_ids)) != len(pool_ids):
             raise ValueError("pool ids must be unique")

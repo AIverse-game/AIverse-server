@@ -12,6 +12,7 @@ from aiverse_server.core.world import (
     MiningJob,
     Pool,
     Position,
+    PricePoint,
     Resident,
     World,
     WorldMap,
@@ -620,7 +621,29 @@ def test_states_show_the_market_and_its_prices(clock: FakeClock) -> None:
             {"model": "MK2", "price": 1200, "tokensPerJob": 60},
             {"model": "MK3", "price": 3000, "tokensPerJob": 100},
         ],
+        "priceHistory": [],
     }
+
+
+def test_states_show_the_price_noted_through_a_quiet_stretch_and_a_sale(clock: FakeClock) -> None:
+    noted = Market(Position(12, 7), radius=5, history=(PricePoint(0.0, MARKET_BASE_PRICE),))
+    client = TestClient(create_app(replace(MARKET_WORLD, market=noted), clock=clock))
+    with client.websocket_connect("/ws") as ws:
+        greet(ws)
+
+        clock.now = 12.0
+        ws.send_text(sell("b", 30))
+        assert ws.receive_json()["ok"] is True
+        world = ws.receive_json()["world"]
+
+    history = world["market"]["priceHistory"]
+    times = [point["time"] for point in history]
+    prices = [point["price"] for point in history]
+    # Noted at 0, 5 and 10 s with no sale, then before and after the sale at 12 s.
+    assert times == [0.0, 5.0, 10.0, 12.0, 12.0]
+    assert prices[0] == MARKET_BASE_PRICE
+    assert prices[0] < prices[1] < prices[2] < prices[3]
+    assert prices[4] < prices[3]
 
 
 def test_selling_tokens_pays_coins_and_lowers_the_price_for_everyone(clock: FakeClock) -> None:

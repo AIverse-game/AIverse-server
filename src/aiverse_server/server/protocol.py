@@ -65,7 +65,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 16
+PROTOCOL_VERSION = 17
 
 ERROR_MAX_LENGTH = 200
 
@@ -307,6 +307,13 @@ class ChipModelView(_Message):
     """Tokens one mining job digs out while the pool has that many left."""
 
 
+class PricePointView(_Message):
+    time: float
+    """Game seconds since the start."""
+    price: float
+    """Coins one more token fetched then, before rounding."""
+
+
 class MarketView(_Message):
     """The market and what sets its price, so clients can follow the price as it moves
     between states: one more token fetches `base_price * depth / (depth + p)` coins, where
@@ -326,6 +333,9 @@ class MarketView(_Message):
     """Recent sales in tokens when this was sent; below zero after a quiet while."""
     chips: list[ChipModelView]
     """Chips on sale here at fixed prices, worst first."""
+    price_history: list[PricePointView]
+    """The token price over the game so far, oldest first: noted at every sale and every few
+    seconds in between, so a market nobody sells to still shows its price climbing."""
 
 
 class SpeechView(_Message):
@@ -722,6 +732,9 @@ def world_view(
                     model=model.model, price=model.price, tokens_per_job=model.tokens_per_job
                 )
                 for model in CHIP_MODELS
+            ],
+            price_history=[
+                PricePointView(time=point.time, price=point.price) for point in world.market.history
             ],
         ),
         speech=[

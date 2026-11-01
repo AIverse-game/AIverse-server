@@ -82,16 +82,16 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 16。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 17。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 16}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 17}` | 连接后发送；多余字段忽略 |
 | 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价与合约，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
-| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 16, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
+| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 17, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
 | 服务端 → 客户端 | `{"type": "state", "world": {...}}` | 紧跟 `welcome`；世界变化后、游戏结束时也推送给每个已握手的连接。内容见下 |
 | 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`not_enough_tokens`、`busy`、`not_at_pool`、`pool_empty`、`unknown_pool`、`not_at_market`、`invalid_quantity`、`price_too_low`、`no_chip`、`unknown_chip`、`not_enough_coins`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
 | 服务端 → 客户端 | `{"type": "agent_result", "residentId": "r1", "ok": true}` | 回应发送者对 `residentId` 的 `start_agent` 或 `stop_agent`，成功后所有连接收到新的 `state`。被拒绝时 `ok` 为 `false`，附 `code`（`unknown_resident`、`resident_left`、`game_over`，与配置文件合并后缺项的 `missing_llm_setting`，地址不是 http(s) URL 或 key 不是不含空格的可打印 ASCII 的 `invalid_llm_setting`；客户端应接受未知代码）和 `message`，不含 key |
@@ -177,7 +177,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 - `position` 是发送时所在的位置，行走中即途中的位置。`walking` 只在行走期间出现：居民从 `position` 沿直线匀速走向 `target`，`remainingSeconds` 后到达，客户端据此本地播放走路动画。
 - `agent` 只在居民由 Agent 驱动时出现，`model` 是所用的模型，脚本机器人没有这一项。居民出局、游戏结束或 Agent 被停止后消失。
 - `tokens` 是拥有的 token：携带的加出售报价中预留的。`chips` 是拥有的芯片，型号到块数，同样含出售报价中预留的，没有的型号省略。`mining` 只在采矿期间出现，`chip` 是干活的芯片型号，`remainingSeconds` 是发送时该次采矿的剩余秒数。`pools` 的位置和半径整局不变，`reserve` 是剩余储量。
-- `market` 是收购点；没有收购点的地图省略它。`basePrice`、`depth`、`halfLifeSeconds`、`restingPressure` 是定价参数，`pressure` 是发送时的近期卖出压力：单价为 `basePrice × depth ÷ (depth + pressure)`，`pressure` 与 `restingPressure` 的差每 `halfLifeSeconds` 减半；`restingPressure` 为负，所以长时间无人卖出时卖压降到 0 以下、单价高于 `basePrice`。`chips` 是出售的芯片型号，按从差到好排列，`price` 是固定价格，`tokensPerJob` 是每次采矿的产量。客户端可以按收到时刻起经过的时间推算当前单价，只用于显示，成交以服务端为准。
+- `market` 是收购点；没有收购点的地图省略它。`basePrice`、`depth`、`halfLifeSeconds`、`restingPressure` 是定价参数，`pressure` 是发送时的近期卖出压力：单价为 `basePrice × depth ÷ (depth + pressure)`，`pressure` 与 `restingPressure` 的差每 `halfLifeSeconds` 减半；`restingPressure` 为负，所以长时间无人卖出时卖压降到 0 以下、单价高于 `basePrice`。`chips` 是出售的芯片型号，按从差到好排列，`price` 是固定价格，`tokensPerJob` 是每次采矿的产量。客户端可以按收到时刻起经过的时间推算当前单价，只用于显示，成交以服务端为准。`priceHistory` 是价格历史（协议 17），按时间从旧到新排列的 `{time, price}`，`time` 是游戏秒数、`price` 是当时再卖一个 token 的单价（未取整）：每次卖出记下卖出前和卖出后两个点（同一 `time`，折线上是台阶），其余时间每 5 秒记一点，所以无人卖出时的回升也有记录；最多 600 点，超出丢弃最旧的。
 - `speech` 是这个连接可见的最近 50 句，按先后排列：所有当众说的话，加上 `view_as` 所选居民发出或收到的私聊；没选居民时没有私聊。`time` 是开局以来的游戏秒数，`to` 只在私聊时出现，`listeners` 是听到的居民（不含说话人）。居民本人只从感知中拿到自己听到的。
 - `offers`、`contractProposals`、`contracts` 是 `view_as` 所选居民参与的待答复报价、待答复合约提议和生效的合约，按先后排列；和私聊一样，没选居民时为空，别人的交易不发给这个连接。报价的 `side` 为 `sell` 时发件人卖、为 `buy` 时发件人买，`price` 是整批总价；合约的 `price` 是每次交付的价款，`deposit` 是供货方每次的押金（0 为不押），`escrow` 是托管的余款（`price × deliveriesLeft`），`depositHeld` 是托管的押金（`deposit × deliveriesLeft`），`remainingSeconds` 是发送时距到期的秒数。页面还不能发起或答复它们。
 - `remainingSeconds` 是发送时的剩余秒数，结束后为 0。状态只在变化时推送，客户端应以收到时刻为起点本地倒计时，到点后以服务端的 `ended` 为准。
@@ -209,7 +209,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/economy/tokens.py` | token 体力：物品种类、拥有量、走路消耗 |
 | `src/aiverse_server/economy/chips.py` | 芯片：三个型号的定价与产量，在收购点购买，居民携带的最好一块 |
 | `src/aiverse_server/economy/mining.py` | 矿池采矿：需要芯片、按最好的一块定产量，开始、按游戏时间发放、取消、忙碌检查（含行走） |
-| `src/aiverse_server/economy/market.py` | 收购点：随卖出下跌、随时间回升的市场价，卖出 token 换金币 |
+| `src/aiverse_server/economy/market.py` | 收购点：随卖出下跌、随时间回升的市场价，卖出 token 换金币，记录价格历史（卖出时与每 5 秒采样） |
 | `src/aiverse_server/economy/trade.py` | 交易事件：购买报价 `PurchaseOffer` 与出售报价 `SaleOffer`，条款校验、预留与互换 |
 | `src/aiverse_server/economy/contracts.py` | 合约：提议事件 `ContractProposal`，签订时预留买方全部货款，交付 `deliver` 自动付款，供货方取消、到期、出局与结束时退回余款 |
 | `src/aiverse_server/residents/walking.py` | 行走：速度、所需时间、途中位置、出发、到达、中途停下、下一次到达时刻 |
@@ -236,7 +236,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 `start_agent` 可附带 `strategy`（最多 1000 个 Unicode 字符，留空不追加方针），传给模型系统提示；不受 YAML 的接口配置覆盖。页面按居民保存草稿，修改后需重新交给 AI。
 
-协议版本为 16。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
+协议版本为 17。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
 
 `agents/tools.py` 的 `ResourceBalance` 和 `resource_balance` 测量动作前后总额，`runner.py` 生成带首尾资源的 `TurnRecord`，`server/protocol.py` 转为有界的 `AgentTurnView`，`server/app.py` 按观看者发送。
 

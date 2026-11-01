@@ -17,6 +17,12 @@ to recover does.
 Pressure at any time follows from the last sale alone, so nothing has to happen on the clock:
 `Market` records the pressure and the game time it was measured at.
 
+The price history is the exception, since a price that only drifts upward leaves no sale to
+note it by. `Market.history` gets a point at every sale (the price just before and just after)
+and, as the clock reaches `next_sample`, one every `MARKET_SAMPLE_INTERVAL` seconds after the
+latest point, so quiet stretches are recorded too. A market whose history is empty keeps none,
+sales included.
+
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
 """
@@ -26,7 +32,7 @@ from dataclasses import replace
 from typing import Literal
 
 from ..core.inventory import InventoryError, add_coins, take_item
-from ..core.world import Market, Resident, World
+from ..core.world import Market, PricePoint, Resident, World
 from .tokens import TOKEN, TokenError
 
 MARKET_BASE_PRICE = 20.0
@@ -45,6 +51,12 @@ MARKET_HALF_LIFE = 60.0
 """Game seconds for the pressure's distance from `MARKET_RESTING_PRESSURE` to halve."""
 
 MARKET_RADIUS = 5.0
+
+MARKET_SAMPLE_INTERVAL = 5.0
+"""Game seconds after the latest price point until the next one is noted, sale or not."""
+
+MARKET_HISTORY_LIMIT = 600
+"""Most points kept; past that the oldest are dropped."""
 
 MarketErrorCode = Literal["unknown_resident", "not_at_market", "invalid_quantity", "price_too_low"]
 
@@ -111,8 +123,44 @@ def sell_tokens(world: World, resident_id: str, quantity: int, seen: float | Non
             "price_too_low", f"{quantity} tokens would fetch less than a coin right now"
         )
     world = add_coins(world, resident_id, coins)
+    before = unit_price(market, world.time)
     pressure = pressure_at(market, world.time) + quantity
-    return replace(world, market=replace(market, pressure=pressure, pressure_at=world.time))
+    market = replace(market, pressure=pressure, pressure_at=world.time)
+    if market.history:
+        # The drop is noted as a step: the price before the sale, unless already noted, then after.
+        if market.history[-1].time < world.time:
+            market = _note(market, world.time, before)
+        market = _note(market, world.time, unit_price(market, world.time))
+    return replace(world, market=market)
+
+
+def next_sample(world: World) -> float | None:
+    """Game time when the price is next noted without a sale, or None when the market keeps
+    no history."""
+    market = world.market
+    if market is None or not market.history:
+        return None
+    return market.history[-1].time + MARKET_SAMPLE_INTERVAL
+
+
+def sample_price(world: World) -> World:
+    """Note the price at `world.time` if `next_sample` has come; otherwise return `world`
+    itself."""
+    due = next_sample(world)
+    if due is None or due > world.time or world.market is None:
+        return world
+    market = _note(world.market, world.time, unit_price(world.market, world.time))
+    return replace(world, market=market)
+
+
+def _note(market: Market, time: float, price: float) -> Market:
+    """The market with a point added to its history. A sale's drop is two points at the same
+    time, before and after; a further sale at that time moves the second."""
+    history = market.history
+    if len(history) >= 2 and history[-1].time == history[-2].time == time:
+        history = history[:-1]
+    history = (*history, PricePoint(time, price))[-MARKET_HISTORY_LIMIT:]
+    return replace(market, history=history)
 
 
 def _find(world: World, resident_id: str) -> Resident:

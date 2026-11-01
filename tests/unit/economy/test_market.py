@@ -11,6 +11,7 @@ from aiverse_server.core.world import (
     MiningJob,
     Pool,
     Position,
+    PricePoint,
     Resident,
     World,
     WorldMap,
@@ -19,11 +20,15 @@ from aiverse_server.economy.market import (
     MARKET_BASE_PRICE,
     MARKET_DEPTH,
     MARKET_HALF_LIFE,
+    MARKET_HISTORY_LIMIT,
     MARKET_RADIUS,
     MARKET_RESTING_PRESSURE,
+    MARKET_SAMPLE_INTERVAL,
     MARKET_TOP_PRICE,
+    next_sample,
     pressure_at,
     quote,
+    sample_price,
     unit_price,
 )
 from aiverse_server.economy.tokens import TOKEN
@@ -34,6 +39,7 @@ from aiverse_server.game.actions import (
     SellTokens,
     perform,
 )
+from aiverse_server.game.clock import settle_due
 from aiverse_server.game.layout import MARKET_CLEARANCE, create_default_world, market_position
 from aiverse_server.game.lifecycle import end_game
 from aiverse_server.residents.perception import begin_turn
@@ -71,7 +77,8 @@ def test_selling_pays_the_price_summed_over_the_sale() -> None:
     assert expected == 578
     assert coins(world, "a") == 100 + expected
     assert item_count(world, "a", TOKEN) == 470
-    assert world.market == Market(Position(50, 50), 5, pressure=30, pressure_at=7.0)
+    assert world.market is not None
+    assert (world.market.pressure, world.market.pressure_at) == (30, 7.0)
 
 
 def test_the_price_falls_with_sales_and_recovers_with_time() -> None:
@@ -250,8 +257,16 @@ def test_perception_shows_no_market_in_a_world_without_one() -> None:
 
 def test_the_default_world_has_a_market_in_the_middle() -> None:
     world = create_default_world(3)
-    assert world.market == Market(market_position(), MARKET_RADIUS)
+    assert world.market is not None
+    assert (world.market.position, world.market.radius) == (market_position(), MARKET_RADIUS)
     assert world.market.position == Position(75, 75)
+
+
+def test_the_default_market_starts_its_history_at_the_base_price() -> None:
+    market = create_default_world(3).market
+
+    assert market is not None
+    assert market.history == (PricePoint(0.0, MARKET_BASE_PRICE),)
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -293,5 +308,131 @@ def test_mining_and_selling_happen_in_different_places() -> None:
     ids=["off the map", "no radius", "negative", "infinite", "no sale time", "sale in future"],
 )
 def test_the_world_refuses_an_impossible_market(build: Callable[[], object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()
+
+
+# A market that keeps a history, last noted now at the base price.
+NOTED = replace(
+    WORLD,
+    market=Market(Position(50, 50), radius=5, pressure_at=7.0, history=(PricePoint(7.0, 20.0),)),
+)
+
+
+def history(world: World) -> list[tuple[float, float]]:
+    assert world.market is not None
+    return list((point.time, point.price) for point in world.market.history)
+
+
+def test_a_sale_notes_the_price_before_and_after_it_as_a_step() -> None:
+    later = replace(NOTED, time=8.0)
+
+    sold = perform(later, SellTokens("a", 400))
+
+    # The pressure has drifted a little below zero by 8 s, so the price before the sale is a
+    # touch above the base price; the sale of the depth then halves it.
+    before = unit_price(NOTED.market, 8.0)  # type: ignore[arg-type]
+    assert history(sold) == [
+        (7.0, 20.0),
+        (8.0, pytest.approx(before)),
+        (8.0, pytest.approx(MARKET_BASE_PRICE * MARKET_DEPTH / (MARKET_DEPTH + 399.6), rel=0.01)),
+    ]
+    assert before > MARKET_BASE_PRICE
+
+
+def test_sales_at_the_same_instant_share_one_step() -> None:
+    first = perform(NOTED, SellTokens("a", 100))
+
+    second = perform(first, SellTokens("b", 100))
+
+    # The price before the first sale (at 7 s) is the same as the one already noted.
+    assert history(second) == [
+        (7.0, 20.0),
+        (7.0, pytest.approx(MARKET_BASE_PRICE * MARKET_DEPTH / (MARKET_DEPTH + 200))),
+    ]
+
+
+def test_a_market_without_history_is_not_sampled() -> None:
+    quiet = replace(WORLD, time=100.0)
+
+    assert next_sample(quiet) is None
+    assert sample_price(quiet) is quiet
+
+
+def test_a_market_without_history_keeps_none_through_a_sale() -> None:
+    sold = perform(WORLD, SellTokens("a", 100))
+
+    assert history(sold) == []
+    assert next_sample(sold) is None
+
+
+def test_the_price_is_next_sampled_an_interval_after_the_latest_point() -> None:
+    assert next_sample(NOTED) == 7.0 + MARKET_SAMPLE_INTERVAL
+
+
+def test_the_price_is_not_sampled_before_the_interval_has_passed() -> None:
+    early = replace(NOTED, time=7.0 + MARKET_SAMPLE_INTERVAL - 0.1)
+
+    assert sample_price(early) is early
+
+
+def test_the_price_is_sampled_when_the_interval_has_passed() -> None:
+    due = replace(NOTED, time=7.0 + MARKET_SAMPLE_INTERVAL)
+
+    sampled = sample_price(due)
+
+    assert [time for time, _ in history(sampled)] == [7.0, due.time]
+    assert next_sample(sampled) == due.time + MARKET_SAMPLE_INTERVAL
+
+
+def test_a_quiet_market_is_sampled_at_every_interval_with_a_rising_price() -> None:
+    # No one sells for a minute: the price drifts up from 20 towards 40 and is still noted.
+    quiet = settle_due(replace(NOTED, time=7.0 + MARKET_HALF_LIFE))
+
+    times = [time for time, _ in history(quiet)]
+    prices = [price for _, price in history(quiet)]
+    assert times == [7.0 + i * MARKET_SAMPLE_INTERVAL for i in range(13)]
+    assert prices == sorted(prices)
+    assert prices[0] == MARKET_BASE_PRICE
+    # Halfway from 0 to the resting -200: 20 * 400 / 300.
+    assert prices[-1] == pytest.approx(80 / 3)
+    assert prices[-1] < MARKET_TOP_PRICE
+
+
+def test_the_history_keeps_only_the_latest_points() -> None:
+    points = tuple(PricePoint(7.0 + i, 20.0) for i in range(MARKET_HISTORY_LIMIT))
+    market = replace(NOTED.market, history=points)  # type: ignore[type-var]
+    due = replace(NOTED, market=market, time=points[-1].time + MARKET_SAMPLE_INTERVAL)
+
+    sampled = sample_price(due)
+
+    assert len(history(sampled)) == MARKET_HISTORY_LIMIT
+    assert history(sampled)[0][0] == points[1].time
+    assert history(sampled)[-1][0] == due.time
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: PricePoint(math.nan, 20), "price time must be finite"),
+        (lambda: PricePoint(-1, 20), "price time must be finite"),
+        (lambda: PricePoint(1, 0), "price must be a positive finite"),
+        (lambda: PricePoint(1, math.inf), "price must be a positive finite"),
+        (
+            lambda: Market(Position(1, 1), 5, history=(PricePoint(2, 20), PricePoint(1, 20))),
+            "must not go back in time",
+        ),
+        (
+            lambda: replace(
+                WORLD, market=Market(Position(50, 50), 5, history=(PricePoint(9, 20),))
+            ),
+            "reaches past the current time",
+        ),
+    ],
+    ids=["no time", "negative time", "free", "infinite", "out of order", "future"],
+)
+def test_the_world_refuses_an_impossible_price_history(
+    build: Callable[[], object], message: str
+) -> None:
     with pytest.raises(ValueError, match=message):
         build()
