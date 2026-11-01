@@ -178,15 +178,15 @@ def test_a_walk_that_would_spend_the_last_token_is_refused() -> None:
     game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
     before = game.world
 
-    # From (50, 50) to (60, 50) costs 10 tokens, all the resident has.
-    result = ResidentTools(game, "a").call("move_to", {"x": 60, "y": 50})
+    # From (50, 50) to (70, 50) costs 10 tokens, all the resident has.
+    result = ResidentTools(game, "a").call("move_to", {"x": 70, "y": 50})
 
     assert result.code == "last_token"
     assert game.world == before
 
 
 def test_a_whisper_on_the_way_that_would_spend_the_last_token_is_refused() -> None:
-    poor = replace(WORLD.residents[0], inventory=Inventory(((TOKEN, 11),)))
+    poor = replace(WORLD.residents[0], inventory=Inventory(((TOKEN, 6),)))
     game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
     tools = ResidentTools(game, "a")
     assert tools.call("move_to", {"x": 60, "y": 50}).ok

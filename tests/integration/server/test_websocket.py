@@ -434,7 +434,7 @@ def test_a_walk_spends_tokens_shown_in_the_next_state(client: TestClient) -> Non
         b = resident_view(ws.receive_json()["world"], "b")
 
     assert reply["ok"] is True
-    assert b["tokens"] == 97
+    assert b["tokens"] == 98
 
 
 def test_a_mining_job_is_shown_and_paid_out_to_every_page(
@@ -466,7 +466,7 @@ def test_a_mining_job_is_shown_and_paid_out_to_every_page(
             "remainingSeconds": MINE_SECONDS,
         }
     for b in paid:
-        assert b["tokens"] == 97 + MINE_YIELD
+        assert b["tokens"] == 98 + MINE_YIELD
         assert "mining" not in b
 
 
@@ -491,10 +491,15 @@ def test_a_walk_beyond_the_tokens_left_is_refused(client: TestClient, clock: Fak
         greet(ws)
         ws.send_text(move("a", 50, 0))
         assert ws.receive_json()["ok"] is True
-        assert resident_view(ws.receive_json()["world"], "a")["tokens"] == 29
+        assert resident_view(ws.receive_json()["world"], "a")["tokens"] == 64
 
         clock.now = 100
         ws.send_text(move("a", 0, 50))
+        assert ws.receive_json()["ok"] is True
+        assert resident_view(ws.receive_json()["world"], "a")["tokens"] == 28
+
+        clock.now = 200
+        ws.send_text(move("a", 50, 0))
         reply = ws.receive_json()
 
     assert reply["code"] == "not_enough_tokens"

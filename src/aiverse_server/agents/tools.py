@@ -30,7 +30,7 @@ from ..core.inventory import item_count
 from ..core.world import NOTE_LENGTH_LIMIT, Position, World
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.market import pressure_at
-from ..economy.tokens import TOKEN, token_total
+from ..economy.tokens import TOKEN, TOKENS_PER_UNIT, token_total
 from ..game.actions import (
     Action,
     ActionRejected,
@@ -304,7 +304,8 @@ TOOLS = (
     ),
     ToolSpec(
         "move_to",
-        "Walk in a straight line to a point. Costs 1 token per map unit, paid on setting off; "
+        "Walk in a straight line to a point. Costs "
+        f"{TOKENS_PER_UNIT:g} token per map unit, rounded up per walk, paid on setting off; "
         "you are busy until you arrive.",
         MoveToArgs,
     ),

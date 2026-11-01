@@ -84,7 +84,7 @@ def test_owners_chips_only_pay_electricity_and_do_not_keep_them_busy() -> None:
     paid = advance(walking, 20)
 
     assert paid.residents[0].position == Position(50, 10)
-    assert paid.residents[0].inventory.count("token") == 120  # 100 - 40 walk + 60 mined.
+    assert paid.residents[0].inventory.count("token") == 140  # 100 - 20 walk + 60 mined.
     assert paid.rigs[0].slots[0].balance == 488
     assert paid.rigs[0].slots[0].rent_paid == 0
 
@@ -229,7 +229,10 @@ def test_spending_the_last_token_stops_rigs_even_with_future_income(who: str) ->
 
 
 def test_a_large_time_jump_does_not_mine_after_an_exhausted_walker_leaves() -> None:
-    world = perform(installed(), MoveTo("b", Position(70, 90)))  # 100 tokens, arrives at 40.
+    poor = replace(WORLD.residents[1], inventory=Inventory((("token", 50), ("MK1", 5))))
+    world = replace(WORLD, residents=(WORLD.residents[0], poor, WORLD.residents[2]))
+    world = perform(perform(world, BuildRig("a", "p1")), InstallChip("b", 1, "MK1", 500))
+    world = perform(world, MoveTo("b", Position(70, 90)))  # 50 tokens, arrives at 40.
 
     # This slot is unfunded until after the arrival; no early production saves the walker.
     world = replace(
@@ -248,7 +251,7 @@ def test_production_at_the_same_instant_as_exhausted_arrival_does_not_revive() -
         WORLD,
         residents=(
             WORLD.residents[0],
-            replace(WORLD.residents[1], inventory=Inventory((("token", 50), ("MK1", 1)))),
+            replace(WORLD.residents[1], inventory=Inventory((("token", 25), ("MK1", 1)))),
             WORLD.residents[2],
         ),
     )

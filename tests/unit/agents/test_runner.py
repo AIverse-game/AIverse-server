@@ -60,7 +60,7 @@ def test_action_balances_count_escrow_as_owned_resources() -> None:
     assert calls[0].coins_change == 0  # Reserving 100 coins does not lower ranked wealth.
     assert calls[1].coins_change == -300
     assert (calls[2].coins_change, calls[2].tokens_change) == (578, -30)
-    assert (calls[3].coins_change, calls[3].tokens_change) == (0, -10)
+    assert (calls[3].coins_change, calls[3].tokens_change) == (0, -5)
     assert calls[4].result.ok is False
     assert (calls[4].coins_change, calls[4].tokens_change) == (0, 0)
 
@@ -81,7 +81,7 @@ def test_finished_mining_is_not_attributed_to_the_next_action() -> None:
 
     assert tools.calls[0].time == 22
     assert tools.calls[0].tokens_change == -2
-    assert game.world.residents[0].inventory.count(TOKEN) == 98
+    assert game.world.residents[0].inventory.count(TOKEN) == 113
 
 
 def test_page_history_is_bounded_and_has_no_full_observation() -> None:

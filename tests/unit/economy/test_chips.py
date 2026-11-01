@@ -121,8 +121,8 @@ def test_a_bought_chip_mines_and_the_best_one_carried_does_the_work() -> None:
     job = mining.residents[0].mining
     assert job is not None
     assert (job.chip, job.amount) == ("MK2", MK2.tokens_per_job)
-    # The walk from the market to the pool cost 57 tokens.
-    assert item_count(paid, "a", TOKEN) == 100 - 57 + MK2.tokens_per_job
+    # The walk from the market to the pool cost 29 tokens.
+    assert item_count(paid, "a", TOKEN) == 100 - 29 + MK2.tokens_per_job
     assert item_count(paid, "a", "MK1") == item_count(paid, "a", "MK2") == 1
 
 

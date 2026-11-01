@@ -20,7 +20,7 @@ from .trade import reserved_items
 TOKEN = "token"
 """The item kind of tokens."""
 
-TOKENS_PER_UNIT = 1.0
+TOKENS_PER_UNIT = 0.5
 """Tokens a walk costs per map unit of straight-line distance, before rounding up."""
 
 TokenErrorCode = Literal["not_enough_tokens"]

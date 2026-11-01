@@ -51,7 +51,7 @@ def arrive(world: World) -> World:
 
 @pytest.mark.parametrize(
     ("end", "cost"),
-    [(Position(0, 0), 0), (Position(3, 4), 5), (Position(0, 0.01), 1), (Position(2.5, 0), 3)],
+    [(Position(0, 0), 0), (Position(3, 4), 3), (Position(0, 0.01), 1), (Position(2.5, 0), 2)],
 )
 def test_a_walk_costs_its_distance_rounded_up(end: Position, cost: int) -> None:
     assert walk_cost(Position(0, 0), end) == cost
@@ -61,14 +61,14 @@ def test_walking_spends_tokens_when_setting_off() -> None:
     walking = perform(WORLD, MoveTo("a", Position(3, 4)))
     arrived = arrive(walking)
 
-    assert item_count(walking, "a", TOKEN) == 5
+    assert item_count(walking, "a", TOKEN) == 7
     assert arrived.residents[0].position == Position(3, 4)
-    assert item_count(arrived, "a", TOKEN) == 5
+    assert item_count(arrived, "a", TOKEN) == 7
 
 
 def test_a_walk_the_resident_cannot_pay_for_is_refused() -> None:
     with pytest.raises(ActionRejected) as raised:
-        perform(WORLD, MoveTo("a", Position(11, 0)))
+        perform(WORLD, MoveTo("a", Position(21, 0)))
     assert raised.value.code == "not_enough_tokens"
 
 
@@ -80,13 +80,13 @@ def test_standing_still_is_free_even_without_tokens() -> None:
 def test_spending_the_last_token_on_a_walk_takes_the_resident_out_on_arrival() -> None:
     offered = perform(WORLD, OfferToBuy("a", "b", "bread", 1, 5))
 
-    walking = perform(offered, MoveTo("a", Position(10, 0)))
+    walking = perform(offered, MoveTo("a", Position(20, 0)))
     arrived = arrive(walking)
 
     assert not walking.residents[0].left
     a = arrived.residents[0]
     assert a.left
-    assert a.position == Position(10, 0)
+    assert a.position == Position(20, 0)
     # Leaving settles their offers: the coins set aside come back and stay.
     assert arrived.events.pending == ()
     assert a.coins == 5

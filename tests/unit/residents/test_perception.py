@@ -222,7 +222,7 @@ def test_a_miner_who_leaves_is_logged_as_leaving_only() -> None:
 
 
 def test_a_walk_that_spends_the_last_token_logs_the_move_and_the_exit() -> None:
-    world = replace(WORLD, residents=(*WORLD.residents[:3], resident("d", 10, 30, tokens=5)))
+    world = replace(WORLD, residents=(*WORLD.residents[:3], resident("d", 10, 30, tokens=3)))
 
     world = arrive(perform(world, MoveTo("d", Position(10, 25))))
 

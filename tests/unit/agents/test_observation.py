@@ -54,7 +54,7 @@ def test_observation_shows_self_market_pools_offers_and_ranking() -> None:
     assert them.my_offers[0].to_id == "a"
     assert them.me.tokens == 95 and them.me.tokens_in_offers == 5
     assert [pool.id for pool in them.known_pools] == ["p1"]
-    assert them.known_pools[0].walk_cost == 20
+    assert them.known_pools[0].walk_cost == 10
 
 
 def rig_world() -> World:

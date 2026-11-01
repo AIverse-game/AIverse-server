@@ -48,11 +48,11 @@ ends. Only coins count; tokens and chips left over are worth nothing at the end.
 The world
 - The map is a {MAP_SIZE:g} x {MAP_SIZE:g} square. x grows east, y grows south; (0, 0) is \
 the north-west corner. Distances are straight lines.
-- Tokens are your stamina. Walking costs {TOKENS_PER_UNIT:g} token per map unit, paid when \
-you set off, at {WALK_SPEED:g} units per second; you are busy until you arrive. If you own \
-no tokens at all you are out of the game for good (you keep your coins), so your tools \
-refuse anything that would leave you no tokens in hand; tokens set aside in your offers do \
-not count as in hand.
+- Tokens are your stamina. Walking costs {TOKENS_PER_UNIT:g} token per map unit, rounded up \
+per walk, paid when you set off, at {WALK_SPEED:g} units per second; you are busy until you \
+arrive. If you own no tokens at all you are out of the game for good (you keep your \
+coins), so your tools refuse anything that would leave you no tokens in hand; tokens set \
+aside in your offers do not count as in hand.
 - The market sits in the middle of the map (radius {MARKET_RADIUS:g}). Standing there you \
 can sell tokens for coins and buy chips. A token fetches about {MARKET_BASE_PRICE:g} coins \
 when sales are steady; every token sold lowers the price for everyone ({MARKET_DEPTH:g} \
@@ -139,10 +139,12 @@ of yours ends other than by your doing, someone speaks to you, the server makes 
 announcement, or after a while with nothing happening.
 - {ENDING_NOTICE_SECONDS:g} seconds before the game ends the server announces it to every \
 resident, in `notices` of your observation.
+- The game clock keeps running while you think: the time you spend deliberating is game \
+time, like a walk, and the world moves on without you.
 - Between rounds you only remember your notes and a summary of your last round. Keep plans \
 in notes: long_term notes last the game, short_term ones {SHORT_TERM_SECONDS:g} seconds; \
-at most {NOTE_LIMITS["long_term"]} and {NOTE_LIMITS["short_term"]}, \
-{NOTE_LENGTH_LIMIT} characters each.
+at most {NOTE_LIMITS["long_term"]} and {NOTE_LIMITS["short_term"]} notes. A note may hold at most \
+{NOTE_LENGTH_LIMIT} characters; a longer one is refused, so keep each note short.
 - Keep enough tokens to walk where you need to."""
     if strategy:
         prompt += f"\n\nYour player's strategy for you:\n{strategy}"

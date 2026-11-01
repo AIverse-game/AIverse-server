@@ -9,6 +9,8 @@ game. It never talks or trades.
 
 import random
 
+from ..core.world import Position
+from ..economy.tokens import walk_cost
 from .observation import Observation
 from .tools import ResidentTools
 
@@ -88,7 +90,7 @@ class ScriptedBrain:
             return f"going to {pool.id}"
         while self._spots:
             x, y = self._spots.pop(0)
-            if abs(x - me.position.x) + abs(y - me.position.y) < tokens - 10:
+            if walk_cost(me.position, Position(x, y)) < tokens - 10:
                 tools.move_to(x, y)
                 return f"exploring ({x:g}, {y:g})"
         return "nothing left to do"

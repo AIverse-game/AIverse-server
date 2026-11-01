@@ -49,7 +49,7 @@ WORLD = World(
     time=2.0,
 )
 
-# a sets off east along the top edge: 40 units, so 40 tokens and 40 / WALK_SPEED seconds.
+# a sets off east along the top edge: 40 units, so 20 tokens and 40 / WALK_SPEED seconds.
 WALKING = perform(WORLD, MoveTo("a", Position(40, 0)))
 ARRIVAL = 2.0 + 40 / WALK_SPEED
 
@@ -62,7 +62,7 @@ def test_a_walk_takes_its_distance_over_the_speed_and_is_paid_when_setting_off()
     a = WALKING.residents[0]
     assert a.walking == WalkJob(Position(40, 0), departs_at=2.0, arrives_at=ARRIVAL)
     assert a.position == Position(0, 0)
-    assert item_count(WALKING, "a", TOKEN) == 60
+    assert item_count(WALKING, "a", TOKEN) == 80
     assert walk_seconds(Position(0, 0), Position(3, 4)) == 5 / WALK_SPEED
     assert next_due(WALKING) == ARRIVAL
 
@@ -121,7 +121,7 @@ def test_the_end_of_the_game_stops_walkers_where_they_are() -> None:
 
 
 def test_selling_the_last_tokens_on_the_way_takes_the_walker_out_on_arrival() -> None:
-    world = replace(WORLD, residents=(resident("a", 0, 0, tokens=50), WORLD.residents[1]))
+    world = replace(WORLD, residents=(resident("a", 0, 0, tokens=30), WORLD.residents[1]))
     world = perform(world, OfferToSell("a", "b", TOKEN, 10, 5))
     world = perform(world, MoveTo("a", Position(40, 0)))
 
