@@ -2,7 +2,7 @@
 
 AIverse 的权威游戏服务端。游戏状态只在这里计算，网页客户端（同级目录 `aiverse-client`）只接收并渲染。开发规则见本仓库的 `AGENTS.md` 与 `.agents/`；架构、设计与决策记录在客户端仓库的 `docs/` 中，从 `docs/architecture.md` 读起。
 
-当前功能：生成一张固定布局的正方形地图（边长 100）和 4 名居民，每人开局 10000 金币，客户端经 WebSocket 读取；通过操作原语改变世界，客户端可用的有“走到坐标”（`move_to`，按固定速度走过去，`walking.py`）、“退出游戏”（`leave_game`）、“采矿”（`mine`）、“卖 token”（`sell_tokens`）、“买芯片”（`buy_chip`）和“说话”（`say`）。一局 20 分钟（可配置），到点自动结束并给出按金币的最终排名（`lifecycle.py`）；居民可以中途出局，游戏照常进行。居民可以持有物品，服务端内部有存入、移出、计数、列出和清空的接口（`inventory.py`），尚未开放给客户端或 AI。居民之间需要对方同意的请求（如购买）作为事件排进世界中的队列，由收件人同意或拒绝、发件人撤回（`events.py`）；第一批事件是交易（`trade.py`）：买方或卖方任一方用原语 `OfferToBuy`、`OfferToSell` 发起报价，自己的金币或物品立即预留，对方同意后互换，拒绝或撤回后退回；金币是居民的独立余额。这些原语和答复原语 `RespondToEvent`、`WithdrawEvent` 都还没有进入协议。居民的体力是 token（`tokens.py`）：开局每人 200，是物品种类 `"token"`，可以用上述报价买卖；走路按直线距离消耗，每秒走 2.5 单位，途中不能做别的；token 由正变零的居民出局。开局时随机放置 6 个矿池，整局固定，居民站在矿池范围内、手上有芯片时可以花 10 秒采一次 token（`mining.py`）。芯片（`chips.py`）开局谁都没有，要在收购点用金币按定价买：MK1 300 金币、每次采 30 token，MK2 1200 金币、60 token，MK3 3000 金币、100 token；有几块时用最好的一块，采矿期间守着芯片，不能走开或卖掉。芯片是以型号命名的物品，可以用报价转手，出局时清空。地图中心有一个收购点（`market.py`），代表镇外的买家，是除开局资金外金币唯一的新来源：居民站在收购点范围内可以卖出携带的 token 换金币、买芯片，token 单价随近期卖出量下跌、随时间回升，所有人共用一个价格；AI 居民一轮之内卖出时按本轮开始时看到的价格计价（之后价格回升则按现价），这期间别人的卖出不压低它，自己的卖出照常压价，收购点的实际卖压照常累加；矿池离收购点至少 20 单位。居民有感知与发现（`perception.py`）：每轮工作开始时调用 `begin_turn`，居民注意到周围 20 单位内的矿池、其他居民，无论站在哪里都能看到收购点及其现价和芯片价目，以及自上次查看以来别人在附近的出发、到达、开始或完成采矿、出局；见过的矿池记在居民的记忆里，走远后仍记得位置和当时的储量。这些动态来自世界中的活动日志，由原语和对局时钟自动记录。居民还有由 Agent 自己决定的记忆（`memory.py`）：`remember` 写下一条文字笔记并选择长期（整局保留）或短期（120 秒游戏时间后清除），`forget` 忘掉任意一条；每条最多 300 字符，长期最多 30 条、短期最多 20 条，满了要先忘掉一条，每轮感知时一并交回。居民可以对话（`speech.py`）：当众说的话由说话那一刻 20 单位内的在局居民听到，私聊不论远近只有对方听到，每句最多 100 字符；当众说每句 2 token、私聊 1 token，行走、采矿中也能说，每轮感知时交回自上次查看以来自己说的和听到的话。页面上显示所有当众说的话，私聊只发给选中了说话人或对象的页面（`view_as`）。居民可以由服务端里的 Agent 驱动（`agents/`，见下文“AI 居民”），由启动参数指定，或在页面上把选中的居民交给玩家配置的大模型：每轮调用 `Game.begin_turn`，它先推进游戏时间再感知；原语与 `Game.act` 一样执行并经 `Game.commit` 保存，与网页的操作走同一条路径并广播；记笔记用 `Game.remember`、`Game.forget`。感知和记忆都不在协议中。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
+当前功能：生成一张固定布局的正方形地图（边长 100）和 4 名居民，每人开局 10000 金币，客户端经 WebSocket 读取；通过操作原语改变世界，客户端可用的有“走到坐标”（`move_to`，按固定速度走过去，`walking.py`）、“退出游戏”（`leave_game`）、“采矿”（`mine`）、“卖 token”（`sell_tokens`）、“买芯片”（`buy_chip`）和“说话”（`say`）。一局 20 分钟（可配置），到点自动结束并给出按金币的最终排名（`lifecycle.py`）；居民可以中途出局，游戏照常进行。居民可以持有物品，服务端内部有存入、移出、计数、列出和清空的接口（`inventory.py`），尚未开放给客户端或 AI。居民之间需要对方同意的请求（如购买）作为事件排进世界中的队列，由收件人同意或拒绝、发件人撤回（`events.py`）；第一批事件是交易（`trade.py`）：买方或卖方任一方用原语 `OfferToBuy`、`OfferToSell` 发起报价，自己的金币或物品立即预留，对方同意后互换，拒绝或撤回后退回；金币是居民的独立余额。这些原语和答复原语 `RespondToEvent`、`WithdrawEvent` 都还没有进入协议。居民的体力是 token（`tokens.py`）：开局每人 200，是物品种类 `"token"`，可以用上述报价买卖；走路按直线距离消耗，每秒走 2.5 单位，途中不能做别的；token 由正变零的居民出局。开局时随机放置 6 个矿池，整局固定，居民站在矿池范围内、手上有芯片时可以花 10 秒采一次 token（`mining.py`）。芯片（`chips.py`）开局谁都没有，要在收购点用金币按定价买：MK1 300 金币、每次采 30 token，MK2 1200 金币、60 token，MK3 3000 金币、100 token；有几块时用最好的一块，采矿期间守着芯片，不能走开或卖掉。芯片是以型号命名的物品，可以用报价转手，出局时清空。地图中心有一个收购点（`market.py`），代表镇外的买家，是除开局资金外金币唯一的新来源：居民站在收购点范围内可以卖出携带的 token 换金币、买芯片，token 单价随近期卖出量下跌（近期卖出 400 个减半）、随时间回升，长时间没人卖会涨过基准价 20、最高到 40，所有人共用一个价格；AI 居民一轮之内卖出时按本轮开始时看到的价格计价（之后价格回升则按现价），这期间别人的卖出不压低它，自己的卖出照常压价，收购点的实际卖压照常累加；矿池离收购点至少 20 单位。居民有感知与发现（`perception.py`）：每轮工作开始时调用 `begin_turn`，居民注意到周围 20 单位内的矿池、其他居民，无论站在哪里都能看到收购点及其现价和芯片价目，以及自上次查看以来别人在附近的出发、到达、开始或完成采矿、出局；见过的矿池记在居民的记忆里，走远后仍记得位置和当时的储量。这些动态来自世界中的活动日志，由原语和对局时钟自动记录。居民还有由 Agent 自己决定的记忆（`memory.py`）：`remember` 写下一条文字笔记并选择长期（整局保留）或短期（120 秒游戏时间后清除），`forget` 忘掉任意一条；每条最多 300 字符，长期最多 30 条、短期最多 20 条，满了要先忘掉一条，每轮感知时一并交回。居民可以对话（`speech.py`）：当众说的话由说话那一刻 20 单位内的在局居民听到，私聊不论远近只有对方听到，每句最多 100 字符；当众说每句 2 token、私聊 1 token，行走、采矿中也能说，每轮感知时交回自上次查看以来自己说的和听到的话。页面上显示所有当众说的话，私聊只发给选中了说话人或对象的页面（`view_as`）。居民可以由服务端里的 Agent 驱动（`agents/`，见下文“AI 居民”），由启动参数指定，或在页面上把选中的居民交给玩家配置的大模型：每轮调用 `Game.begin_turn`，它先推进游戏时间再感知；原语与 `Game.act` 一样执行并经 `Game.commit` 保存，与网页的操作走同一条路径并广播；记笔记用 `Game.remember`、`Game.forget`。感知和记忆都不在协议中。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
 
 ## 坐标系
 
@@ -82,16 +82,16 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 15。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 16。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 15}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 16}` | 连接后发送；多余字段忽略 |
 | 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价与合约，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
-| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 15, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
+| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 16, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
 | 服务端 → 客户端 | `{"type": "state", "world": {...}}` | 紧跟 `welcome`；世界变化后、游戏结束时也推送给每个已握手的连接。内容见下 |
 | 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`not_enough_tokens`、`busy`、`not_at_pool`、`pool_empty`、`unknown_pool`、`not_at_market`、`invalid_quantity`、`price_too_low`、`no_chip`、`unknown_chip`、`not_enough_coins`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
 | 服务端 → 客户端 | `{"type": "agent_result", "residentId": "r1", "ok": true}` | 回应发送者对 `residentId` 的 `start_agent` 或 `stop_agent`，成功后所有连接收到新的 `state`。被拒绝时 `ok` 为 `false`，附 `code`（`unknown_resident`、`resident_left`、`game_over`，与配置文件合并后缺项的 `missing_llm_setting`，地址不是 http(s) URL 或 key 不是不含空格的可打印 ASCII 的 `invalid_llm_setting`；客户端应接受未知代码）和 `message`，不含 key |
@@ -144,7 +144,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
   ],
   "game": { "ended": false, "remainingSeconds": 1199.5 },
   "rigs": [],
-  "rigRules": { "price": 4000, "capacity": 4, "cycleSeconds": 20, "rentPer100": 300, "energyPer100": 20 },
+  "rigRules": { "price": 4000, "capacity": 4, "cycleSeconds": 20, "yieldMultiplier": 2, "rentPer100": 50, "energyPer100": 20 },
   "speech": [
     { "seq": 1, "time": 12.5, "speakerId": "r1", "text": "有人卖 token 吗？", "listeners": ["r3"] },
     { "seq": 2, "time": 15.0, "speakerId": "r1", "text": "我出高价", "to": "r4", "listeners": ["r4"] }
@@ -163,7 +163,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
   ],
   "market": {
     "position": { "x": 50.0, "y": 50.0 }, "radius": 5.0,
-    "basePrice": 20.0, "depth": 100.0, "halfLifeSeconds": 60.0, "pressure": 30.0,
+    "basePrice": 20.0, "depth": 400.0, "halfLifeSeconds": 60.0, "restingPressure": -200.0, "pressure": 30.0,
     "chips": [
       { "model": "MK1", "price": 300, "tokensPerJob": 30 },
       { "model": "MK2", "price": 1200, "tokensPerJob": 60 },
@@ -177,7 +177,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 - `position` 是发送时所在的位置，行走中即途中的位置。`walking` 只在行走期间出现：居民从 `position` 沿直线匀速走向 `target`，`remainingSeconds` 后到达，客户端据此本地播放走路动画。
 - `agent` 只在居民由 Agent 驱动时出现，`model` 是所用的模型，脚本机器人没有这一项。居民出局、游戏结束或 Agent 被停止后消失。
 - `tokens` 是拥有的 token：携带的加出售报价中预留的。`chips` 是拥有的芯片，型号到块数，同样含出售报价中预留的，没有的型号省略。`mining` 只在采矿期间出现，`chip` 是干活的芯片型号，`remainingSeconds` 是发送时该次采矿的剩余秒数。`pools` 的位置和半径整局不变，`reserve` 是剩余储量。
-- `market` 是收购点；没有收购点的地图省略它。`basePrice`、`depth`、`halfLifeSeconds` 是定价参数，`pressure` 是发送时的近期卖出压力。`chips` 是出售的芯片型号，按从差到好排列，`price` 是固定价格，`tokensPerJob` 是每次采矿的产量。客户端可以按收到时刻起经过的时间推算当前单价，只用于显示，成交以服务端为准。
+- `market` 是收购点；没有收购点的地图省略它。`basePrice`、`depth`、`halfLifeSeconds`、`restingPressure` 是定价参数，`pressure` 是发送时的近期卖出压力：单价为 `basePrice × depth ÷ (depth + pressure)`，`pressure` 与 `restingPressure` 的差每 `halfLifeSeconds` 减半；`restingPressure` 为负，所以长时间无人卖出时卖压降到 0 以下、单价高于 `basePrice`。`chips` 是出售的芯片型号，按从差到好排列，`price` 是固定价格，`tokensPerJob` 是每次采矿的产量。客户端可以按收到时刻起经过的时间推算当前单价，只用于显示，成交以服务端为准。
 - `speech` 是这个连接可见的最近 50 句，按先后排列：所有当众说的话，加上 `view_as` 所选居民发出或收到的私聊；没选居民时没有私聊。`time` 是开局以来的游戏秒数，`to` 只在私聊时出现，`listeners` 是听到的居民（不含说话人）。居民本人只从感知中拿到自己听到的。
 - `offers`、`contractProposals`、`contracts` 是 `view_as` 所选居民参与的待答复报价、待答复合约提议和生效的合约，按先后排列；和私聊一样，没选居民时为空，别人的交易不发给这个连接。报价的 `side` 为 `sell` 时发件人卖、为 `buy` 时发件人买，`price` 是整批总价；合约的 `price` 是每次交付的价款，`deposit` 是供货方每次的押金（0 为不押），`escrow` 是托管的余款（`price × deliveriesLeft`），`depositHeld` 是托管的押金（`deposit × deliveriesLeft`），`remainingSeconds` 是发送时距到期的秒数。页面还不能发起或答复它们。
 - `remainingSeconds` 是发送时的剩余秒数，结束后为 0。状态只在变化时推送，客户端应以收到时刻为起点本地倒计时，到点后以服务端的 `ended` 为准。
@@ -236,7 +236,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 `start_agent` 可附带 `strategy`（最多 1000 个 Unicode 字符，留空不追加方针），传给模型系统提示；不受 YAML 的接口配置覆盖。页面按居民保存草稿，修改后需重新交给 AI。
 
-协议版本为 15。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
+协议版本为 16。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
 
 `agents/tools.py` 的 `ResourceBalance` 和 `resource_balance` 测量动作前后总额，`runner.py` 生成带首尾资源的 `TurnRecord`，`server/protocol.py` 转为有界的 `AgentTurnView`，`server/app.py` 按观看者发送。
 
@@ -273,9 +273,11 @@ uv run aiverse-server --agent r1=llm --agent r2=llm
 
 ## 矿机与租用芯片
 
-协议 15：在矿池内用 `build_rig(poolId)` 花 4000 金币建一台 4 槽矿机；`install_chip(rigId, chip, deposit)` 安装自己携带的一块芯片并预存金币。自动采矿每 20 秒获得该芯片的单次产量，使用原矿池有限储量，角色可以离开；手动采矿仍为 10 秒。初始矿池储量为 1500～4000。
+协议 15：在矿池内用 `build_rig(poolId)` 花 4000 金币建一台 4 槽矿机；`install_chip(rigId, chip, deposit)` 安装自己携带的一块芯片并预存金币。自动采矿每 20 秒获得芯片的产量，使用原矿池有限储量，角色可以离开；手动采矿仍为 10 秒一次。初始矿池储量为 1500～4000。
 
-租客每产出 100 token 向矿主付 300 金币，自己使用免租；每 100 token 另消耗 20 金币电费。按实际产量逐周期向上取整，发 token、扣储量、扣费和转租金一起执行。余额不足暂停，不负债；`fund_rig(rigId, slotId, amount)` 远程充值，停产后重新等待完整周期，不补挖。`remove_chip(rigId, slotId)` 远程拆回并退回余额，只有芯片所有人可操作。四个原语同样向 Agent 开放，观察包含公开的 `mining_rigs`、规则与自己的 `rig_balance`。
+协议 16：机内产量为芯片单次产量的 2 倍（`rigRules.yieldMultiplier`），即每块芯片产能与手动相同，且 4 个槽位并行；租金降为每 100 token 50 金币。Agent 的 `build_rig` 成功结果告诉它新矿机的编号；在别处的矿机上安装时，拒绝原因说明该矿机所在的矿池。
+
+租客每产出 100 token 向矿主付 50 金币，自己使用免租；每 100 token 另消耗 20 金币电费。按实际产量逐周期向上取整，发 token、扣储量、扣费和转租金一起执行。余额不足暂停，不负债；`fund_rig(rigId, slotId, amount)` 远程充值，停产后重新等待完整周期，不补挖。`remove_chip(rigId, slotId)` 远程拆回并退回余额，只有芯片所有人可操作。四个原语同样向 Agent 开放，观察包含公开的 `mining_rigs`、规则与自己的 `rig_balance`。
 
 `state.world` 增加 `rigs`、`rigRules`；居民增加 `spendableCoins`（可用金币）、`rigBalance`（预存余额）、`carriedChips`（携带芯片）。`chips` 仍表示背包及报价中的芯片，已安装的在 `rigs[].slots` 中单列。`coins` 总额与排名包含矿机预存，预存不能支付其他购买。槽位视图包含余额、累计产量和已付租金、周期费用、倒计时，以及 `running` / `no_funds` / `pool_empty` 状态。
 

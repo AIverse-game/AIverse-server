@@ -7,9 +7,22 @@ tuned. English, which models follow most reliably; residents may still talk in a
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
 from ..economy.chips import CHIP_MODELS
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
-from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, MARKET_RADIUS
+from ..economy.market import (
+    MARKET_BASE_PRICE,
+    MARKET_DEPTH,
+    MARKET_HALF_LIFE,
+    MARKET_RADIUS,
+    MARKET_TOP_PRICE,
+)
 from ..economy.mining import MINE_SECONDS
-from ..economy.rigs import ENERGY_PER_100, RENT_PER_100, RIG_CAPACITY, RIG_PRICE, RIG_SECONDS
+from ..economy.rigs import (
+    ENERGY_PER_100,
+    RENT_PER_100,
+    RIG_CAPACITY,
+    RIG_PRICE,
+    RIG_SECONDS,
+    RIG_YIELD,
+)
 from ..economy.tokens import TOKENS_PER_UNIT
 from ..game.layout import MAP_SIZE, POOL_RADIUS
 from ..residents.memory import SHORT_TERM_SECONDS
@@ -36,10 +49,11 @@ no tokens at all you are out of the game for good (you keep your coins), so your
 refuse anything that would leave you no tokens in hand; tokens set aside in your offers do \
 not count as in hand.
 - The market sits in the middle of the map (radius {MARKET_RADIUS:g}). Standing there you \
-can sell tokens for coins and buy chips. A token fetches {MARKET_BASE_PRICE:g} coins when \
-nobody has sold lately; every token sold lowers the price for everyone ({MARKET_DEPTH:g} \
+can sell tokens for coins and buy chips. A token fetches about {MARKET_BASE_PRICE:g} coins \
+when sales are steady; every token sold lowers the price for everyone ({MARKET_DEPTH:g} \
 tokens sold recently halve it), and the effect fades by half every {MARKET_HALF_LIFE:g} \
-seconds. Splitting a sale earns nothing extra; waiting for the price to recover does. \
+seconds. The longer nobody sells, the more the market pays, up to {MARKET_TOP_PRICE:g} \
+coins a token. Splitting a sale earns nothing extra; waiting for the price to recover does. \
 Within a round you sell at the token_price in your observation, or more if it has recovered: \
 others selling meanwhile does not lower it, though your own sales do.
 - Chips on sale: {chips}. You need a chip to mine; with several you mine with the best.
@@ -49,18 +63,19 @@ and pays the chip's tokens per job. You are busy while mining.
 - You notice pools and residents within {PERCEPTION_RADIUS:g} units. Pools you have seen \
 stay in known_pools.
 - At a pool, build_rig costs {RIG_PRICE} coins for {RIG_CAPACITY} chip slots. install_chip \
-requires standing at that pool and moves one carried chip into the rig. Each chip mines its \
-normal yield every {RIG_SECONDS:g} seconds, using the same finite pool; you can move and \
-trade while it works. Prepay coins: every 100 tokens cost {ENERGY_PER_100} electricity plus \
-{RENT_PER_100} rent paid to the owner (own chips pay no rent), prorated and rounded up per \
-cycle. No funds means a pause with no debt; fund_rig remotely restarts after a full cycle, \
-with no catch-up. remove_chip remotely returns your chip and unused prepayment. Prepayment \
-still counts in your ranking but cannot fund other purchases. mining_rigs lists public \
-machines, slots, output and fees. Finite reserves and changing market prices mean returns \
-are not guaranteed. If you leave or exhaust tokens your chips stop; future production \
-does not keep you alive. If the owner leaves the whole rig closes and all renters are \
-refunded. Game end stops all rigs and refunds unused prepayments. Disconnecting a page \
-does not leave the game; production requires the server and residents still in play.
+requires standing at that pool and moves one carried chip into the rig, so you no longer carry \
+it to mine by hand. Each chip mines {RIG_YIELD} times its tokens per job every {RIG_SECONDS:g} \
+seconds, using the same finite pool; you can move and trade while it works. build_rig tells you \
+the new rig's id; use it to install chips. Prepay coins: every 100 tokens cost {ENERGY_PER_100} \
+electricity plus {RENT_PER_100} rent paid to the owner (own chips pay no rent), prorated and \
+rounded up per cycle. No funds means a pause with no debt; fund_rig remotely restarts after a \
+full cycle, with no catch-up. remove_chip remotely returns your chip and unused prepayment. \
+Prepayment still counts in your ranking but cannot fund other purchases. mining_rigs lists \
+public machines, slots, output and fees. Finite reserves and changing market prices mean returns \
+are not guaranteed. If you leave or exhaust tokens your chips stop; future production does not \
+keep you alive. If the owner leaves the whole rig closes and all renters are refunded. Game end \
+stops all rigs and refunds unused prepayments. Disconnecting a page does not leave the game; \
+production requires the server and residents still in play.
 - Speaking aloud costs {SPEECH_COSTS["aloud"]} tokens and reaches residents within \
 {HEARING_RADIUS:g} units; whispering to one resident anywhere costs \
 {SPEECH_COSTS["to_one"]}. At most {SPEECH_LENGTH_LIMIT} characters. You can speak while \

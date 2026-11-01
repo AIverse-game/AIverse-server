@@ -121,6 +121,30 @@ def test_the_next_round_hears_what_the_tools_did_in_this_one() -> None:
     asyncio.run(scenario())
 
 
+def test_the_next_round_hears_what_a_tool_told_the_model() -> None:
+    at_pool = replace(WORLD.residents[0], position=Position(80, 50))
+    world = replace(WORLD, residents=(at_pool, WORLD.residents[1]))
+
+    async def scenario() -> None:
+        game, _ = make_game(world)
+        call = {"id": "c1", "function": {"name": "build_rig", "arguments": '{"pool_id": "p1"}'}}
+        replies = [
+            httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
+            httpx.Response(200, json=_reply({"content": "Built a rig."})),
+            httpx.Response(200, json=_reply({"content": "Waiting."})),
+        ]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        next_round = json.loads(requests[2].content)["messages"][1]["content"]
+        assert "build_rig(pool_id='p1') -> ok (built rig 1;" in next_round
+
+    asyncio.run(scenario())
+
+
 def test_a_round_ends_once_its_tools_leave_the_resident_walking() -> None:
     async def scenario() -> None:
         game, _ = make_game()

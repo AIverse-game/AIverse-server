@@ -16,7 +16,9 @@ from .tokens import TOKEN
 
 RIG_PRICE = 4_000
 RIG_SECONDS = 20.0
-RENT_PER_100 = 300
+RIG_YIELD = 2
+"""A chip in a rig mines this many times its tokens per job each cycle."""
+RENT_PER_100 = 50
 ENERGY_PER_100 = 20
 
 RigErrorCode = Literal[
@@ -50,7 +52,7 @@ def build_rig(world: World, resident_id: str, pool_id: str) -> World:
 def install_chip(world: World, resident_id: str, rig_id: int, chip: str, deposit: int) -> World:
     _check_deposit(deposit)
     rig = _rig(world, rig_id)
-    _at_pool(world, resident_id, rig.pool_id)
+    _at_pool(world, resident_id, rig.pool_id, f"rig {rig.id} is at pool {rig.pool_id}; stand there")
     if len(rig.slots) >= RIG_CAPACITY:
         raise RigError("rig_full", "the rig has no free slots")
     if chip not in {model.model for model in CHIP_MODELS}:
@@ -101,7 +103,7 @@ def rig_coins(world: World, resident_id: str) -> int:
 def cycle_amount(world: World, rig: MiningRig, slot: RigSlot) -> int:
     pool = next(pool for pool in world.pools if pool.id == rig.pool_id)
     model = next(model for model in CHIP_MODELS if model.model == slot.chip)
-    return min(pool.reserve, model.tokens_per_job)
+    return min(pool.reserve, model.tokens_per_job * RIG_YIELD)
 
 
 def cycle_cost(rig: MiningRig, slot: RigSlot, amount: int) -> tuple[int, int]:
@@ -161,13 +163,18 @@ def _check_deposit(amount: int) -> None:
         raise RigError("invalid_deposit", "prepayment must be a positive integer")
 
 
-def _at_pool(world: World, resident_id: str, pool_id: str) -> Pool:
+def _at_pool(
+    world: World,
+    resident_id: str,
+    pool_id: str,
+    refusal: str = "stand within the pool to build or install",
+) -> Pool:
     pool = next((p for p in world.pools if p.id == pool_id), None)
     if pool is None:
         raise RigError("unknown_pool", "unknown pool")
     resident = next(r for r in world.residents if r.id == resident_id)
     if not pool.reaches(resident.position):
-        raise RigError("not_at_pool", "stand within the pool to build or install")
+        raise RigError("not_at_pool", refusal)
     return pool
 
 

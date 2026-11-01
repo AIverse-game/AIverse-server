@@ -26,13 +26,20 @@ from ..core.events import Event
 from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.contracts import ContractProposal, contracts_of
-from ..economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE, pressure_at
+from ..economy.market import (
+    MARKET_BASE_PRICE,
+    MARKET_DEPTH,
+    MARKET_HALF_LIFE,
+    MARKET_RESTING_PRESSURE,
+    pressure_at,
+)
 from ..economy.rigs import (
     ENERGY_PER_100,
     RENT_PER_100,
     RIG_CAPACITY,
     RIG_PRICE,
     RIG_SECONDS,
+    RIG_YIELD,
     cycle_amount,
     cycle_cost,
     rig_coins,
@@ -58,7 +65,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 15
+PROTOCOL_VERSION = 16
 
 ERROR_MAX_LENGTH = 200
 
@@ -301,18 +308,22 @@ class ChipModelView(_Message):
 
 
 class MarketView(_Message):
-    """The market and what sets its price, so clients can follow the price as it recovers
+    """The market and what sets its price, so clients can follow the price as it moves
     between states: one more token fetches `base_price * depth / (depth + p)` coins, where
-    the pressure p halves every `half_life_seconds` after this was sent, and selling q tokens
-    pays `floor(base_price * depth * ln((depth + p + q) / (depth + p)))`."""
+    the distance of the pressure p from `resting_pressure` halves every `half_life_seconds`
+    after this was sent, and selling q tokens pays
+    `floor(base_price * depth * ln((depth + p + q) / (depth + p)))`."""
 
     position: PositionView
     radius: float
     base_price: float
     depth: float
     half_life_seconds: float
+    resting_pressure: float
+    """Pressure the market drifts to with no sales; below zero, so the price then climbs
+    above `base_price`."""
     pressure: float
-    """Recent sales in tokens when this was sent."""
+    """Recent sales in tokens when this was sent; below zero after a quiet while."""
     chips: list[ChipModelView]
     """Chips on sale here at fixed prices, worst first."""
 
@@ -499,6 +510,8 @@ class RigRulesView(_Message):
     price: int = RIG_PRICE
     capacity: int = RIG_CAPACITY
     cycle_seconds: float = RIG_SECONDS
+    yield_multiplier: int = RIG_YIELD
+    """A chip in a rig mines this many times its tokens per job each cycle."""
     rent_per_100: int = RENT_PER_100
     energy_per_100: int = ENERGY_PER_100
 
@@ -702,6 +715,7 @@ def world_view(
             base_price=MARKET_BASE_PRICE,
             depth=MARKET_DEPTH,
             half_life_seconds=MARKET_HALF_LIFE,
+            resting_pressure=MARKET_RESTING_PRESSURE,
             pressure=pressure_at(world.market, world.time),
             chips=[
                 ChipModelView(

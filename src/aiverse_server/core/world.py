@@ -481,15 +481,16 @@ class Market:
     radius: float
     """Residents within this distance of `position` can sell here."""
     pressure: float = 0.0
-    """Tokens sold recently, as measured at `pressure_at`; it fades as time passes."""
+    """Tokens sold recently, as measured at `pressure_at`; it drifts as time passes, below
+    zero once nobody has sold for a while, see `market.py`."""
     pressure_at: float = 0.0
     """Game time of the last sale, see `World.time`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.radius) and self.radius > 0):
             raise ValueError(f"market has radius {self.radius}, must be positive")
-        if not (math.isfinite(self.pressure) and self.pressure >= 0):
-            raise ValueError(f"market pressure must be a finite number >= 0, got {self.pressure}")
+        if not math.isfinite(self.pressure):
+            raise ValueError(f"market pressure must be a finite number, got {self.pressure}")
         if not (math.isfinite(self.pressure_at) and self.pressure_at >= 0):
             raise ValueError(f"market pressure time must be finite and >= 0: {self.pressure_at}")
 

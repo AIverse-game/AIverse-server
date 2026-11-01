@@ -20,6 +20,8 @@ from aiverse_server.economy.market import (
     MARKET_DEPTH,
     MARKET_HALF_LIFE,
     MARKET_RADIUS,
+    MARKET_RESTING_PRESSURE,
+    MARKET_TOP_PRICE,
     pressure_at,
     quote,
     unit_price,
@@ -53,7 +55,8 @@ WORLD = World(
     map=WorldMap(size=100),
     residents=(resident("a", 50, 50), resident("b", 53, 54), resident("c", 10, 10)),
     pools=(Pool("p1", Position(10, 10), radius=4, reserve=100),),
-    market=Market(Position(50, 50), radius=5),
+    # Last measured now, so the market starts at the base price.
+    market=Market(Position(50, 50), radius=5, pressure_at=7.0),
     time=7.0,
 )
 
@@ -64,8 +67,8 @@ def coins(world: World, resident_id: str) -> int:
 
 def test_selling_pays_the_price_summed_over_the_sale() -> None:
     world = perform(WORLD, SellTokens("a", 30))
-    expected = math.floor(MARKET_BASE_PRICE * MARKET_DEPTH * math.log(130 / 100))
-    assert expected == 524
+    expected = math.floor(MARKET_BASE_PRICE * MARKET_DEPTH * math.log(430 / 400))
+    assert expected == 578
     assert coins(world, "a") == 100 + expected
     assert item_count(world, "a", TOKEN) == 470
     assert world.market == Market(Position(50, 50), 5, pressure=30, pressure_at=7.0)
@@ -74,23 +77,37 @@ def test_selling_pays_the_price_summed_over_the_sale() -> None:
 def test_the_price_falls_with_sales_and_recovers_with_time() -> None:
     assert unit_price(WORLD.market, 7.0) == MARKET_BASE_PRICE  # type: ignore[arg-type]
 
-    world = perform(WORLD, SellTokens("a", 100))
+    world = perform(WORLD, SellTokens("a", 400))
 
     market = world.market
     assert market is not None
+    assert MARKET_DEPTH == 400 and MARKET_RESTING_PRESSURE == -200
     assert unit_price(market, 7.0) == pytest.approx(MARKET_BASE_PRICE / 2)
-    assert pressure_at(market, 7.0 + MARKET_HALF_LIFE) == pytest.approx(50)
-    assert unit_price(market, 7.0 + MARKET_HALF_LIFE) == pytest.approx(MARKET_BASE_PRICE / 1.5)
-    assert unit_price(market, 7.0 + 20 * MARKET_HALF_LIFE) == pytest.approx(MARKET_BASE_PRICE)
+    # Halfway from 400 back to the resting -200.
+    assert pressure_at(market, 7.0 + MARKET_HALF_LIFE) == pytest.approx(100)
+    assert unit_price(market, 7.0 + MARKET_HALF_LIFE) == pytest.approx(16)
+
+
+def test_a_market_nobody_sells_to_pays_more_than_the_base_price_up_to_its_top() -> None:
+    market = WORLD.market
+    assert market is not None
+
+    after_a_while = unit_price(market, 7.0 + MARKET_HALF_LIFE)
+    after_long = unit_price(market, 7.0 + 20 * MARKET_HALF_LIFE)
+
+    # Halfway from 0 to the resting -200: 20 * 400 / 300.
+    assert after_a_while == pytest.approx(80 / 3)
+    assert after_long == pytest.approx(MARKET_TOP_PRICE)
+    assert MARKET_TOP_PRICE == 40
 
 
 def test_a_later_sale_starts_from_the_faded_pressure() -> None:
-    world = perform(WORLD, SellTokens("a", 100))
+    world = perform(WORLD, SellTokens("a", 400))
 
     later = perform(replace(world, time=7.0 + MARKET_HALF_LIFE), SellTokens("b", 10))
 
     assert later.market is not None
-    assert later.market.pressure == pytest.approx(60)
+    assert later.market.pressure == pytest.approx(110)
     assert later.market.pressure_at == 7.0 + MARKET_HALF_LIFE
 
 
@@ -105,7 +122,7 @@ def test_a_seller_is_paid_the_price_they_saw_whatever_others_sold_since() -> Non
 
     world = perform(after_others, SellTokens("a", 30, seen_pressure=0.0))
 
-    assert coins(world, "a") == 100 + 524
+    assert coins(world, "a") == 100 + 578
     assert world.market is not None
     assert world.market.pressure == pytest.approx(130)
 
@@ -113,7 +130,7 @@ def test_a_seller_is_paid_the_price_they_saw_whatever_others_sold_since() -> Non
 def test_a_price_that_recovered_since_the_seller_looked_is_paid_in_full() -> None:
     world = perform(WORLD, SellTokens("a", 30, seen_pressure=100.0))
 
-    assert coins(world, "a") == 100 + 524
+    assert coins(world, "a") == 100 + 578
 
 
 @pytest.mark.parametrize("parts", [[1] * 40, [10, 10, 10, 10], [7, 33], [39, 1]])
@@ -221,7 +238,8 @@ def test_perception_shows_the_market_and_its_price_from_anywhere() -> None:
     assert seen.market is not None
     assert seen.market.position == Position(50, 50)
     assert seen.market.radius == 5
-    assert seen.market.price == pytest.approx(MARKET_BASE_PRICE / 1.5)
+    # Halfway from 100 to the resting -200: 20 * 400 / 350.
+    assert seen.market.price == pytest.approx(160 / 7)
 
 
 def test_perception_shows_no_market_in_a_world_without_one() -> None:
@@ -258,7 +276,10 @@ def test_mining_and_selling_happen_in_different_places() -> None:
     [
         (lambda: replace(WORLD, market=Market(Position(101, 50), 5)), "outside the map"),
         (lambda: Market(Position(50, 50), 0), "radius 0"),
-        (lambda: Market(Position(50, 50), 5, pressure=-1), "pressure must be a finite number"),
+        (
+            lambda: Market(Position(50, 50), 5, pressure=math.nan),
+            "pressure must be a finite number",
+        ),
         (
             lambda: Market(Position(50, 50), 5, pressure=math.inf),
             "pressure must be a finite number",

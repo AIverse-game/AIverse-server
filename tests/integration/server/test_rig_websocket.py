@@ -65,8 +65,9 @@ def test_rig_actions_flow_through_websocket_and_broadcast_production() -> None:
     assert built["rigs"][0]["ownerId"] == "r1"
     assert installed["residents"][1]["carriedChips"] == {}
     assert installed["residents"][1]["rigBalance"] == 500
-    assert paid["residents"][1]["tokens"] == 130
-    assert paid["residents"][0]["coins"] == 6090
+    # Twice an MK1's 30 a job, for 30 rent and 12 electricity, as in the rig unit tests.
+    assert paid["residents"][1]["tokens"] == 160
+    assert paid["residents"][0]["coins"] == 6030
     assert removed["rigs"][0]["slots"] == []
-    assert removed["residents"][1]["spendableCoins"] == 9904
+    assert removed["residents"][1]["spendableCoins"] == 9958
     assert refused["type"] == "error" and refused["code"] == "bad_message"

@@ -17,7 +17,12 @@ from aiverse_server.core.world import (
     WorldMap,
 )
 from aiverse_server.economy.chips import CHIP_MODELS
-from aiverse_server.economy.market import MARKET_BASE_PRICE, MARKET_DEPTH, MARKET_HALF_LIFE
+from aiverse_server.economy.market import (
+    MARKET_BASE_PRICE,
+    MARKET_DEPTH,
+    MARKET_HALF_LIFE,
+    MARKET_RESTING_PRESSURE,
+)
 from aiverse_server.economy.mining import MINE_SECONDS
 from aiverse_server.economy.tokens import TOKEN
 from aiverse_server.game.layout import POOL_COUNT, STARTING_TOKENS
@@ -120,7 +125,8 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                     "price": 4000,
                     "capacity": 4,
                     "cycleSeconds": 20,
-                    "rentPer100": 300,
+                    "yieldMultiplier": 2,
+                    "rentPer100": 50,
                     "energyPer100": 20,
                 },
             },
@@ -607,6 +613,7 @@ def test_states_show_the_market_and_its_prices(clock: FakeClock) -> None:
         "basePrice": MARKET_BASE_PRICE,
         "depth": MARKET_DEPTH,
         "halfLifeSeconds": MARKET_HALF_LIFE,
+        "restingPressure": MARKET_RESTING_PRESSURE,
         "pressure": 0,
         "chips": [
             {"model": "MK1", "price": 300, "tokensPerJob": 30},
@@ -622,7 +629,6 @@ def test_selling_tokens_pays_coins_and_lowers_the_price_for_everyone(clock: Fake
         greet(ws)
         greet(watcher)
 
-        clock.now = 3
         ws.send_text(sell("b", 30))
         reply = ws.receive_json()
         seen = [ws.receive_json()["world"], watcher.receive_json()["world"]]
@@ -630,7 +636,8 @@ def test_selling_tokens_pays_coins_and_lowers_the_price_for_everyone(clock: Fake
     assert reply["ok"] is True
     for world in seen:
         b = resident_view(world, "b")
-        assert (b["coins"], b["tokens"], b["rank"]) == (524, 70, 1)
+        # 30 tokens into an untouched market, as in the market's unit tests.
+        assert (b["coins"], b["tokens"], b["rank"]) == (578, 70, 1)
         assert resident_view(world, "a")["rank"] == 2
         assert world["market"]["pressure"] == 30
 
@@ -639,16 +646,16 @@ def test_a_later_state_shows_the_pressure_faded_since_the_sale(clock: FakeClock)
     client = TestClient(create_app(MARKET_WORLD, clock=clock))
     with client.websocket_connect("/ws") as ws:
         greet(ws)
-        clock.now = 3
         ws.send_text(sell("b", 30))
         ws.receive_json(), ws.receive_json()
 
-        clock.now = 3 + MARKET_HALF_LIFE
+        clock.now = MARKET_HALF_LIFE
         ws.send_text(sell("b", 1))
         assert ws.receive_json()["ok"] is True
         world = ws.receive_json()["world"]
 
-    assert world["market"]["pressure"] == pytest.approx(16)
+    # Halfway from 30 to the resting -200, plus the token just sold.
+    assert world["market"]["pressure"] == pytest.approx(-84)
 
 
 @pytest.mark.parametrize(
@@ -703,7 +710,9 @@ def test_default_world_has_a_market_in_the_middle() -> None:
     with TestClient(create_app()).websocket_connect("/ws") as ws:
         world = greet(ws)
     assert world["market"]["position"] == {"x": 50, "y": 50}
-    assert world["market"]["pressure"] == 0
+    # The real clock has barely moved the pressure since the world was made: about 2.3 tokens
+    # a second at first, so a few seconds of slack.
+    assert world["market"]["pressure"] == pytest.approx(0, abs=10)
 
 
 def buy(resident_id: str, model: object) -> str:

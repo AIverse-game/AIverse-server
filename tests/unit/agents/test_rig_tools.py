@@ -37,3 +37,18 @@ def test_agents_can_build_install_fund_observe_and_remove_their_own_chips() -> N
     assert seen.me.chips == {}
     assert forbidden.code == "unknown_slot"
     assert game.world.residents[1].coins == 10_000
+
+
+def test_building_a_rig_tells_the_agent_its_id() -> None:
+    initial = create_default_world(7)
+    pool = initial.pools[0]
+    at_pool = replace(initial.residents[0], position=pool.position)
+    neighbour = replace(initial.residents[1], position=pool.position)
+    world = replace(initial, residents=(at_pool, neighbour, *initial.residents[2:]))
+    game = Game(world, clock=lambda: 0)
+    assert ResidentTools(game, "r2").call("build_rig", {"pool_id": pool.id}).ok
+
+    built = ResidentTools(game, "r1").call("build_rig", {"pool_id": pool.id})
+
+    assert built.ok
+    assert built.message == "built rig 2; install chips into it with rig_id 2"

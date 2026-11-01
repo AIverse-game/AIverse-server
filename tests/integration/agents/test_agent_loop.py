@@ -256,9 +256,9 @@ def test_an_agent_sells_at_the_price_it_saw_though_another_sold_meanwhile() -> N
         await _until(lambda: bool(results))
         task.cancel()
 
-        # 30 tokens into an untouched market fetch 524 coins, see the market's tests.
+        # 30 tokens into an untouched market fetch 578 coins, see the market's tests.
         assert results[0].ok
-        assert next(r for r in game.world.residents if r.id == "a").coins == 5000 + 524
+        assert next(r for r in game.world.residents if r.id == "a").coins == 5000 + 578
 
     asyncio.run(scenario())
 

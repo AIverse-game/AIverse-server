@@ -59,7 +59,7 @@ def test_action_balances_count_escrow_as_owned_resources() -> None:
     calls = tools.calls
     assert calls[0].coins_change == 0  # Reserving 100 coins does not lower ranked wealth.
     assert calls[1].coins_change == -300
-    assert (calls[2].coins_change, calls[2].tokens_change) == (524, -30)
+    assert (calls[2].coins_change, calls[2].tokens_change) == (578, -30)
     assert (calls[3].coins_change, calls[3].tokens_change) == (0, -10)
     assert calls[4].result.ok is False
     assert (calls[4].coins_change, calls[4].tokens_change) == (0, 0)

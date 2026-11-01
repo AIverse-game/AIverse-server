@@ -4,10 +4,12 @@ Apart from the coins residents start with, this is where new coins come from: tr
 between residents only move coins around. A resident standing within the market's radius
 sells tokens they carry with `sell_tokens` and is paid at the market price.
 
-The price falls as tokens are sold and recovers as time passes. The market keeps a
-pressure, the tokens sold recently, which halves every `MARKET_HALF_LIFE` seconds of game
-time. The price of one more token at pressure S is `MARKET_BASE_PRICE * MARKET_DEPTH /
-(MARKET_DEPTH + S)`, so a pressure of `MARKET_DEPTH` halves it. Selling q tokens pays that
+The price falls as tokens are sold and rises as time passes. The market keeps a pressure,
+the tokens sold recently, whose distance from `MARKET_RESTING_PRESSURE` halves every
+`MARKET_HALF_LIFE` seconds of game time. The price of one more token at pressure S is
+`MARKET_BASE_PRICE * MARKET_DEPTH / (MARKET_DEPTH + S)`, so a pressure of `MARKET_DEPTH`
+halves it. The resting pressure is below zero, so a market nobody sells to for a long while
+pays more than the base price, up to `MARKET_TOP_PRICE`. Selling q tokens pays that
 price summed over the sale, from S to S + q, rounded down to whole coins; splitting a sale
 into smaller ones therefore earns no more than selling at once, while waiting for the price
 to recover does.
@@ -28,13 +30,19 @@ from ..core.world import Market, Resident, World
 from .tokens import TOKEN, TokenError
 
 MARKET_BASE_PRICE = 20.0
-"""Coins the market pays for a token when nobody has sold for a long while."""
+"""Coins the market pays for a token at zero pressure, as when the game begins."""
 
-MARKET_DEPTH = 100.0
+MARKET_DEPTH = 400.0
 """Recent sales, in tokens, that halve the price."""
 
+MARKET_TOP_PRICE = 40.0
+"""Coins the market pays for a token after nobody has sold for a very long while."""
+
+MARKET_RESTING_PRESSURE = -MARKET_DEPTH * (1 - MARKET_BASE_PRICE / MARKET_TOP_PRICE)
+"""Pressure the market drifts to with no sales, where a token fetches `MARKET_TOP_PRICE`."""
+
 MARKET_HALF_LIFE = 60.0
-"""Game seconds for the pressure of past sales, and so the price drop, to halve."""
+"""Game seconds for the pressure's distance from `MARKET_RESTING_PRESSURE` to halve."""
 
 MARKET_RADIUS = 5.0
 
@@ -49,9 +57,11 @@ class MarketError(Exception):
 
 
 def pressure_at(market: Market, time: float) -> float:
-    """Recent sales in tokens at game time `time`, faded since the last sale."""
+    """Recent sales in tokens at game time `time`, drifted towards the resting pressure since
+    the last sale; below zero once the market has gone without sales for a while."""
     elapsed = max(time - market.pressure_at, 0.0)
-    return market.pressure * math.exp2(-elapsed / MARKET_HALF_LIFE)
+    drift = math.exp2(-elapsed / MARKET_HALF_LIFE)
+    return MARKET_RESTING_PRESSURE + (market.pressure - MARKET_RESTING_PRESSURE) * drift
 
 
 def unit_price(market: Market, time: float) -> float:

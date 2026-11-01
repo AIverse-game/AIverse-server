@@ -467,7 +467,7 @@ class ResidentTools:
             )
             return ToolResult(False, "invalid_arguments", details[:300])
         try:
-            self._run(args)
+            message = self._run(args)
         except ActionRejected as rejection:
             return ToolResult(False, rejection.code, rejection.message, self.status())
         except _LastToken:
@@ -480,14 +480,18 @@ class ResidentTools:
             )
         except (GameError, NoteError) as error:
             return ToolResult(False, error.code, error.message, self.status())
-        return ToolResult(True, status=self.status())
+        return ToolResult(True, message=message, status=self.status())
 
-    def _run(self, args: _Args) -> None:
+    def _run(self, args: _Args) -> str:
+        """Carry out a tool; returns what the model needs to know beyond its status."""
         me = self.resident_id
         act = self._act
         match args:
             case BuildRigArgs():
                 act(BuildRig(me, args.pool_id))
+                # Rigs are numbered as they are built; the model needs the number to install.
+                rig_id = self.game.world.next_rig_id - 1
+                return f"built rig {rig_id}; install chips into it with rig_id {rig_id}"
             case InstallChipArgs():
                 act(InstallChip(me, args.rig_id, args.chip, args.deposit))
             case FundRigArgs():
@@ -544,6 +548,7 @@ class ResidentTools:
                 self.game.forget(me, args.note_id)
             case _:
                 raise AssertionError(f"tool arguments without a handler: {type(args).__name__}")
+        return ""
 
     def _act(self, action: Action) -> None:
         """Carry out a primitive as `Game.act` does, unless it would spend the resident's last

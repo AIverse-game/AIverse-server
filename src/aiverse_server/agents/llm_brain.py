@@ -278,7 +278,10 @@ def _summary(calls: list[ToolCall], remark: str | None) -> str:
     lines = ["Last round:"]
     for call in calls:
         result = call.result
-        outcome = "ok" if result.ok else f"refused ({result.code}: {result.message})"
+        if result.ok:
+            outcome = f"ok ({result.message})" if result.message else "ok"
+        else:
+            outcome = f"refused ({result.code}: {result.message})"
         lines.append(f"- {call.name}({_arguments(call)}) -> {outcome}")
     if remark is not None:
         lines.append(f"Your plan then: {remark[:500]}")

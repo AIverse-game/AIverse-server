@@ -145,9 +145,9 @@ def test_splitting_a_sale_within_a_round_earns_no_more_than_selling_at_once(
     for part in parts:
         assert tools.call("sell_tokens", {"quantity": part}).ok
 
-    # 30 tokens sold at once into an untouched market fetch 524 coins, see the market's tests;
+    # 30 tokens sold at once into an untouched market fetch 578 coins, see the market's tests;
     # parts round down on their own.
-    assert 5000 + 524 - len(parts) < me(game, "a").coins <= 5000 + 524
+    assert 5000 + 578 - len(parts) < me(game, "a").coins <= 5000 + 578
 
 
 def test_tools_take_arguments_as_json_text_as_models_send_them() -> None:
