@@ -28,7 +28,8 @@ price board in town, see `market.py`, and so are the chips on sale there, see
 
 Each look also hands back the notes the resident chose to keep, long and short term, with
 the expired ones cleared first, see `memory.py`, and what was said in their hearing since
-they last looked, their own words included, see `speech.py`.
+they last looked, their own words included, see `speech.py`, and the server's notices to
+everyone, see `lifecycle.announce`.
 
 `record_activity` fills the log by comparing the world before and after a change.
 `actions.perform` and the server's clock call it, so every walk, mining job and departure is
@@ -47,6 +48,7 @@ from ..core.world import (
     Activity,
     ActivityLog,
     Note,
+    Notice,
     PoolSighting,
     Position,
     Speech,
@@ -116,6 +118,8 @@ class Perception:
     speech: tuple[Speech, ...]
     """What the resident said or heard since they last looked, oldest first; who heard was
     settled when it was said, see `speech.py`."""
+    notices: tuple[Notice, ...] = ()
+    """What the server announced to everyone since the resident last looked, oldest first."""
 
 
 def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
@@ -158,6 +162,9 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         if line.seq > me.memory.speech_seen
         and (line.speaker_id == resident_id or resident_id in line.listeners)
     )
+    notices = tuple(
+        notice for notice in world.notices.entries if notice.seq > me.memory.notices_seen
+    )
     known = {sighting.pool_id: sighting for sighting in me.memory.known_pools}
     # The stretch walked so far, if walking, may turn up pools not seen before.
     passed = _unknown_along(world, known, me.position, here)
@@ -176,6 +183,7 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         found_on_walks=(),
         activity_seen=world.activity.next_seq - 1,
         speech_seen=world.speech.next_seq - 1,
+        notices_seen=world.notices.next_seq - 1,
     )
     residents_after = tuple(
         replace(resident, memory=memory) if resident.id == resident_id else resident
@@ -200,6 +208,7 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
             CHIP_MODELS,
         ),
         speech=speech,
+        notices=notices,
     )
     return replace(world, residents=residents_after), perception
 

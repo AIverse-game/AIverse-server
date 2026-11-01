@@ -224,6 +224,12 @@ class Line:
 
 
 @dataclass(frozen=True)
+class NoticeView:
+    time: float
+    text: str
+
+
+@dataclass(frozen=True)
 class Happening:
     time: float
     resident_id: str
@@ -272,6 +278,8 @@ class Observation:
     rig_balance: int
     rig_rules: dict[str, int | float]
     mining_rigs: tuple[dict[str, object], ...]
+    notices: tuple[NoticeView, ...] = ()
+    """What the server announced to everyone since the resident last looked."""
 
 
 def observe(
@@ -391,6 +399,7 @@ def observe(
         speech=tuple(
             Line(line.time, line.speaker_id, line.text, line.to) for line in perception.speech
         ),
+        notices=tuple(NoticeView(notice.time, notice.text) for notice in perception.notices),
         activity=tuple(
             Happening(
                 entry.time,

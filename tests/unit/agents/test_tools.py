@@ -257,6 +257,17 @@ def test_tools_take_arguments_as_json_text_as_models_send_them() -> None:
     assert [note.text for note in me(game, "a").memory.long_term] == ["pool p1 east"]
 
 
+def test_the_remember_tool_keeps_a_note_short_term_when_no_term_is_given() -> None:
+    game, _ = make_game()
+    tools = ResidentTools(game, "a")
+
+    remembered = tools.call("remember", {"text": "pool p1 east"})
+
+    assert remembered.ok
+    assert [note.text for note in me(game, "a").memory.short_term] == ["pool p1 east"]
+    assert me(game, "a").memory.long_term == ()
+
+
 def test_the_forget_tool_drops_a_note_the_resident_remembered() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")

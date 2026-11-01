@@ -1,15 +1,26 @@
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
 
 from aiverse_server.core.events import EventError, pending_for, send_event
 from aiverse_server.core.inventory import coin_balance, list_items
-from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
+from aiverse_server.core.world import (
+    Inventory,
+    Memory,
+    Notice,
+    NoticeLog,
+    Position,
+    Resident,
+    World,
+    WorldMap,
+)
 from aiverse_server.economy.trade import PurchaseOffer, SaleOffer
 from aiverse_server.game.actions import ActionRejected, LeaveGame, MoveTo, OfferToBuy, perform
 from aiverse_server.game.clock import settle_due
 from aiverse_server.game.lifecycle import (
     GameError,
+    announce,
     check_can_act,
     end_game,
     leave_game,
@@ -155,3 +166,44 @@ def test_residents_who_left_keep_their_place() -> None:
     richer = replace(WORLD, residents=(*WORLD.residents[:2], resident("c", 500)))
     world = leave_game(richer, "c")
     assert ranks(world) == {"c": 1, "a": 2, "b": 3}
+
+
+def test_announcements_are_numbered_in_the_order_they_were_made() -> None:
+    timed = replace(WORLD, time=30.0)
+
+    world = announce(announce(timed, "first"), "second")
+
+    assert world.notices.entries == (Notice(1, 30.0, "first"), Notice(2, 30.0, "second"))
+    assert world.notices.next_seq == 3
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: NoticeLog((Notice(1, 0.0, "hi"),), 1), "must be an integer above 0"),
+        (lambda: NoticeLog((Notice(2, 0.0, "a"), Notice(1, 0.0, "b")), 3), "above 2"),
+        (lambda: NoticeLog((Notice(1, 0.0, " "),), 2), "is empty"),
+        (lambda: NoticeLog((), 0), "must be an integer >= 1"),
+        (lambda: Memory(notices_seen=-1), "notices seen must be an integer >= 0"),
+        (
+            lambda: replace(
+                WORLD,
+                residents=(replace(WORLD.residents[0], memory=Memory(notices_seen=1)),),
+            ),
+            "not yet announced",
+        ),
+    ],
+    ids=[
+        "seq not below next",
+        "seq out of order",
+        "empty text",
+        "next seq below one",
+        "negative seen",
+        "read before announced",
+    ],
+)
+def test_a_world_rejects_notices_it_cannot_account_for(
+    build: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()

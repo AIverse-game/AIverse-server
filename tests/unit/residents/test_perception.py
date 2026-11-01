@@ -21,7 +21,7 @@ from aiverse_server.economy.mining import MINE_SECONDS
 from aiverse_server.economy.tokens import TOKEN, walk_cost
 from aiverse_server.game.actions import LeaveGame, Mine, MoveTo, OfferToBuy, RespondToEvent, perform
 from aiverse_server.game.clock import settle_due
-from aiverse_server.game.lifecycle import GameError, end_game
+from aiverse_server.game.lifecycle import GameError, announce, end_game
 from aiverse_server.residents.memory import remember
 from aiverse_server.residents.perception import PERCEPTION_RADIUS, begin_turn, record_activity
 from aiverse_server.residents.walking import WALK_SPEED, next_arrival
@@ -416,3 +416,25 @@ def test_a_walker_who_runs_out_of_tokens_on_arrival_discovers_nothing() -> None:
 
     assert world.residents[0].left
     assert world.residents[0].memory == Memory()
+
+
+def test_a_look_reads_each_notice_once_wherever_the_resident_stands() -> None:
+    world = announce(WORLD, "the first")
+
+    world, first = begin_turn(world, "a")
+    world = announce(world, "the second")
+    world, second = begin_turn(world, "a")
+    _, third = begin_turn(world, "a")
+
+    assert [notice.text for notice in first.notices] == ["the first"]
+    assert [notice.text for notice in second.notices] == ["the second"]
+    assert third.notices == ()
+
+
+def test_a_notice_waits_for_a_resident_who_has_not_looked_yet() -> None:
+    world = announce(WORLD, "the first")
+    world, _ = begin_turn(world, "a")
+
+    _, perception = begin_turn(world, "b")
+
+    assert [notice.text for notice in perception.notices] == ["the first"]

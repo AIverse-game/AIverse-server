@@ -185,6 +185,8 @@ class _Attention:
     """Sequence number of the latest line said by someone else in the resident's hearing."""
     done: int = 0
     """Sequence number of the resident's latest activity ending a walk or a mining job."""
+    announced: int = 0
+    """Sequence number of the latest notice the server announced to everyone."""
 
 
 class AgentRunner:
@@ -320,7 +322,7 @@ class AgentRunner:
             now = loop.time()
             current = self._attention()
             if now >= earliest:
-                if current.heard > seen.heard:
+                if current.heard > seen.heard or current.announced > seen.announced:
                     return
                 if current.free and (
                     # Only the brain failing: a round whose record failed got its answer.
@@ -360,6 +362,7 @@ class AgentRunner:
                 (line.seq for line in world.speech.entries if me.id in line.listeners),
                 default=0,
             ),
+            announced=world.notices.next_seq - 1,
             done=max(
                 (
                     entry.seq

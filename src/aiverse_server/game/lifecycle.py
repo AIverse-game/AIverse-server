@@ -19,7 +19,7 @@ from typing import Literal
 
 from ..core.events import Event, withdraw_event
 from ..core.inventory import clear_items
-from ..core.world import World
+from ..core.world import Notice, NoticeLog, World
 from ..economy.contracts import contract_coins, end_contracts
 from ..economy.mining import cancel_mining
 from ..economy.rigs import release_rigs, rig_coins
@@ -29,6 +29,9 @@ from ..residents.walking import stop_walking
 
 GAME_DURATION = 20 * 60.0
 """Seconds from the world's creation to the end of the game."""
+
+ENDING_NOTICE_SECONDS = 60.0
+"""How long before the game ends the server tells every resident it is about to."""
 
 GameErrorCode = Literal["unknown_resident", "resident_left", "game_over"]
 
@@ -110,6 +113,14 @@ def _owned_tokens(world: World, resident_id: str) -> int:
     resident = next(resident for resident in world.residents if resident.id == resident_id)
     mined = resident.mining.amount if resident.mining is not None else 0
     return token_total(world, resident_id) + mined
+
+
+def announce(world: World, text: str) -> World:
+    """Tell every resident `text`; each reads it in their next look, see
+    `perception.begin_turn`."""
+    log = world.notices
+    notice = Notice(log.next_seq, world.time, text)
+    return replace(world, notices=NoticeLog((*log.entries, notice), log.next_seq + 1))
 
 
 def end_game(world: World) -> World:

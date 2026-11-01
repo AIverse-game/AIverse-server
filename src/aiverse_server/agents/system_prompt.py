@@ -25,6 +25,7 @@ from ..economy.rigs import (
 )
 from ..economy.tokens import TOKENS_PER_UNIT
 from ..game.layout import MAP_SIZE, POOL_RADIUS
+from ..game.lifecycle import ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.perception import PERCEPTION_RADIUS
 from ..residents.speech import HEARING_RADIUS, SPEECH_COSTS
@@ -134,8 +135,10 @@ reply with one short sentence about your plan and call no tool.
 ends: make any notes or speech in the same reply as move_to or mine. Do not mine in the \
 same reply as a walk; you are not there yet.
 - You are woken again when your walk or mining job ends, an offer reaches you, a contract \
-of yours ends other than by your doing, someone speaks to you, or after a while with \
-nothing happening.
+of yours ends other than by your doing, someone speaks to you, the server makes an \
+announcement, or after a while with nothing happening.
+- {ENDING_NOTICE_SECONDS:g} seconds before the game ends the server announces it to every \
+resident, in `notices` of your observation.
 - Between rounds you only remember your notes and a summary of your last round. Keep plans \
 in notes: long_term notes last the game, short_term ones {SHORT_TERM_SECONDS:g} seconds; \
 at most {NOTE_LIMITS["long_term"]} and {NOTE_LIMITS["short_term"]}, \

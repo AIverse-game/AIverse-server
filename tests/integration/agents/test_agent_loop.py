@@ -153,6 +153,26 @@ def test_the_loop_wakes_for_speech_even_while_busy() -> None:
     asyncio.run(scenario())
 
 
+def test_the_loop_wakes_for_the_ending_announcement_even_while_busy() -> None:
+    async def scenario() -> None:
+        # The notice comes at 10 s, while the 56 unit walk, 22 s long, is still going.
+        game, clock = make_game(duration=70)
+        game.act(MoveTo("a", Position(90, 90)))
+        brain = Recorder()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        clock.now = 10.0
+        game.tick()
+        await _until(lambda: len(brain.seen) == 2)
+
+        assert game.world.residents[0].walking is not None
+        assert [notice.text for notice in brain.seen[1].notices] == ["The game ends in 60 seconds."]
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
 def test_the_loop_wakes_for_an_offer_when_free() -> None:
     async def scenario() -> None:
         game, _ = make_game()

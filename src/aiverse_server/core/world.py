@@ -137,6 +137,8 @@ class Memory:
     """Id the next note gets; it only counts up, so ids are never reused within a game."""
     speech_seen: int = 0
     """Sequence number of the last line of speech already looked at; 0 before the first look."""
+    notices_seen: int = 0
+    """Sequence number of the last server notice already looked at; 0 before the first look."""
 
     def __post_init__(self) -> None:
         ids = [sighting.pool_id for sighting in self.known_pools]
@@ -153,6 +155,8 @@ class Memory:
             raise ValueError(f"activity seen must be an integer >= 0, got {self.activity_seen!r}")
         if type(self.speech_seen) is not int or self.speech_seen < 0:
             raise ValueError(f"speech seen must be an integer >= 0, got {self.speech_seen!r}")
+        if type(self.notices_seen) is not int or self.notices_seen < 0:
+            raise ValueError(f"notices seen must be an integer >= 0, got {self.notices_seen!r}")
         if type(self.next_note_id) is not int or self.next_note_id < 1:
             raise ValueError(f"next note id must be an integer >= 1, got {self.next_note_id!r}")
         note_ids: set[int] = set()
@@ -287,6 +291,38 @@ class SpeechLog:
                 raise ValueError(f"speech {line.seq} lists its speaker or a listener twice")
             if line.to is not None and line.listeners != (line.to,):
                 raise ValueError(f"speech {line.seq} to one resident was heard by others")
+
+
+@dataclass(frozen=True)
+class Notice:
+    """An announcement the server makes to every resident, see `lifecycle.announce`."""
+
+    seq: int
+    """Unique within a world, counting up from 1 in the order things were announced."""
+    time: float
+    text: str
+
+
+@dataclass(frozen=True)
+class NoticeLog:
+    """The notices announced so far, oldest first, and the sequence number the next gets."""
+
+    entries: tuple[Notice, ...] = ()
+    next_seq: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.next_seq) is not int or self.next_seq < 1:
+            raise ValueError(f"next notice seq must be an integer >= 1, got {self.next_seq!r}")
+        previous = 0
+        for notice in self.entries:
+            if type(notice.seq) is not int or not previous < notice.seq < self.next_seq:
+                raise ValueError(
+                    f"notice seq {notice.seq!r} must be an integer above {previous} "
+                    f"and below {self.next_seq}"
+                )
+            previous = notice.seq
+            if not notice.text.strip():
+                raise ValueError(f"notice {notice.seq} is empty")
 
 
 @dataclass(frozen=True)
@@ -560,6 +596,8 @@ class World:
     """Where tokens sell for coins, see `market.py`; None on a map without one."""
     speech: SpeechLog = SpeechLog()
     """What residents have said and who heard it, see `speech.py`."""
+    notices: NoticeLog = NoticeLog()
+    """What the server has announced to every resident, see `lifecycle.announce`."""
     contracts: ContractBook = ContractBook()
     """Standing deals between residents, see `contracts.py`."""
     rigs: tuple[MiningRig, ...] = ()
@@ -604,6 +642,8 @@ class World:
                 raise ValueError(f"resident {resident.id} has seen activity not yet logged")
             if resident.memory.speech_seen >= self.speech.next_seq:
                 raise ValueError(f"resident {resident.id} has heard speech not yet said")
+            if resident.memory.notices_seen >= self.notices.next_seq:
+                raise ValueError(f"resident {resident.id} has read a notice not yet announced")
         for entry in self.activity.entries:
             if entry.resident_id not in ids:
                 raise ValueError(f"activity {entry.seq} involves unknown resident")
