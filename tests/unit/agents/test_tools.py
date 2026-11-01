@@ -1,5 +1,5 @@
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import Any
 
 import pytest
@@ -282,6 +282,65 @@ def test_trading_tools_send_and_answer_offers() -> None:
     assert offered.ok and accepted.ok
     assert me(game, "a").coins == 5150
     assert me(game, "b").inventory.count(TOKEN) == 110
+
+
+def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -> None:
+    game, _ = make_game()
+    seller, buyer = ResidentTools(game, "a"), ResidentTools(game, "b")
+    arguments = {
+        "buyer_id": "b",
+        "summary": "a rich pool",
+        "content": "pool p9 near (40, 90) holds 900 tokens",
+        "price": 150,
+    }
+
+    offered = seller.call("offer_information", arguments)
+    before = look(game, "b")
+    event_id = game.world.events.pending[0].id
+    accepted = buyer.call("respond_to_offer", {"event_id": event_id, "accept": True})
+
+    assert offered.ok and accepted.ok
+    [offer] = before.information_offers_to_me
+    assert (offer.from_id, offer.summary, offer.price) == ("a", "a rich pool", 150)
+    assert "pool p9" not in json.dumps(asdict(before))
+    assert me(game, "a").coins == 5150 and me(game, "b").coins == 4850
+    assert "pool p9" in me(game, "b").memory.long_term[0].text
+    assert me(game, "a").memory == WORLD.residents[0].memory
+
+
+def test_the_seller_sees_their_own_information_offer_without_the_content() -> None:
+    game, _ = make_game()
+    ResidentTools(game, "a").call(
+        "offer_information",
+        {"buyer_id": "b", "summary": "a rich pool", "content": "pool p9 holds 900", "price": 150},
+    )
+
+    seen = look(game, "a")
+
+    [offer] = seen.my_information_offers
+    assert (offer.to_id, offer.summary, offer.price) == ("b", "a rich pool", 150)
+    assert "pool p9" not in json.dumps(asdict(seen))
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"buyer_id": "b", "summary": "s", "content": "c", "price": True},
+        {"buyer_id": "b", "summary": "s", "content": "c", "price": 1.5},
+        {"buyer_id": "b", "summary": "s", "content": "c"},
+        {"buyer_id": "b", "summary": "s", "price": 5},
+    ],
+)
+def test_information_offers_with_bad_arguments_fail_and_change_nothing(
+    arguments: dict[str, Any],
+) -> None:
+    game, _ = make_game()
+    before = game.world
+
+    result = ResidentTools(game, "a").call("offer_information", arguments)
+
+    assert not result.ok and result.code == "invalid_arguments"
+    assert game.world == before
 
 
 def proposed() -> tuple[Game, FakeClock]:

@@ -100,6 +100,12 @@ busy.
 - You can trade with other residents: offer to buy or sell items ("token" or a chip model) \
 for coins, for the whole lot. What you offer is set aside until they accept or reject, or \
 you withdraw. Offers to you appear in offers_to_me.
+- You can also sell information: offer_information gives another resident a summary to judge \
+and, once they accept and pay, a copy of the content as a long-term note. Nothing is set aside \
+and you keep what you know, so you may sell it to several residents. The server does not check \
+that it is true. Information offers to you appear in information_offers_to_me with only the \
+summary; accepting costs the price, and fails while your long-term notes are full, until you \
+forget one.
 - Contracts settle future deals: "the supplier delivers N of an item D times, and each \
 delivery pays them P coins", for 1 to {MAX_DELIVERIES} deliveries (1 for a one-off) within a \
 time you choose, at most {MAX_CONTRACT_SECONDS} seconds. \

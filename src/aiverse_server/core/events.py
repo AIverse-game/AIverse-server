@@ -39,8 +39,9 @@ class EventPayload:
 
     Subclasses are frozen dataclasses holding the details, such as the item and price of a
     purchase. Each hook receives the world and the event and returns the next world, or
-    raises `EventError`, `InventoryError`, `TradeError` or `ContractError` to refuse, which
-    leaves the world and the queue as they were; `actions.py` turns these into rejections.
+    raises `EventError`, `InventoryError`, `TradeError`, `ContractError`, `InformationError` or
+    `NoteError` to refuse, which leaves the world and the queue as they were; `actions.py`
+    turns these into rejections.
     The defaults change nothing, so a kind overrides only what it needs.
     """
 

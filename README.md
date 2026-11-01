@@ -63,11 +63,21 @@ override:
 key 只放在服务端内存里，用来调用接口，不写进状态、控制台或角色/汇总日志；服务商在错误信息里回显的 key 替换为 `***`。httpx 的请求日志调到 WARNING，不打印请求地址。
 
 - 每名居民一个异步循环（`agents/runner.py`）：感知 → 大脑决策一轮并调用工具 → 等待唤醒。唤醒条件：行走或采矿结束、空闲时收到报价、空闲时自己的合约因别人或时间而结束、听到别人说话（忙碌时也唤醒）、空闲 20 秒无事、空闲时大脑上一轮出错。两轮开始至少相隔 3 秒，大脑出错后 10 秒。居民出局或游戏结束时停止。
-- 工具（`agents/tools.py`）绑定到一名居民，参数里没有“谁来做”：`move_to`、`mine`、`sell_tokens`、`buy_chip`、`say`、`offer_to_buy`、`offer_to_sell`、`respond_to_offer`、`withdraw_offer`、`propose_contract`、`deliver`、`cancel_contract`、`remember`、`forget`。`respond_to_offer` 与 `withdraw_offer` 也用来答复和撤回合约提议。不提供退出游戏，也不让居民花掉最后一个 token：会让手上（不含报价中预留的）token 变为零的调用以 `last_token` 拒绝，原语本身的出局规则不变，网页操作照旧。参数错误、未知工具、原语被拒绝都作为失败结果交回，世界不变。
-- 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价与合约提议，自己参与的合约和最近结束的几份（结束原因、没交付的次数、赔付的押金），到收购点和已知矿池的距离与走路花费。已知矿池带上次看到的储量和多久前看到（`seen_ago`）；只有此刻在视野内的矿池才给出矿机的消耗速度（`rig_draw_per_second`）和按此速度的枯竭时间（`seconds_to_empty`），视野外的为 null，手动采矿不计入。附近居民正在采的矿池、近处发生的采矿动态，只在居民见过那个矿池时才写出矿池编号，否则为 null。
+- 工具（`agents/tools.py`）绑定到一名居民，参数里没有“谁来做”：`move_to`、`mine`、`sell_tokens`、`buy_chip`、`say`、`offer_to_buy`、`offer_to_sell`、`offer_information`、`respond_to_offer`、`withdraw_offer`、`propose_contract`、`deliver`、`cancel_contract`、`remember`、`forget`。`respond_to_offer` 与 `withdraw_offer` 也用来答复和撤回合约提议和信息报价。不提供退出游戏，也不让居民花掉最后一个 token：会让手上（不含报价中预留的）token 变为零的调用以 `last_token` 拒绝，原语本身的出局规则不变，网页操作照旧。参数错误、未知工具、原语被拒绝都作为失败结果交回，世界不变。
+- 观察（`agents/observation.py`）：感知结果加上自己的金币、token、芯片和忙碌状态，所有居民的名字、金币和名次，发给自己的和自己发出的报价、信息报价（只含摘要和价格）与合约提议，自己参与的合约和最近结束的几份（结束原因、没交付的次数、赔付的押金），到收购点和已知矿池的距离与走路花费。已知矿池带上次看到的储量和多久前看到（`seen_ago`）；只有此刻在视野内的矿池才给出矿机的消耗速度（`rig_draw_per_second`）和按此速度的枯竭时间（`seconds_to_empty`），视野外的为 null，手动采矿不计入。附近居民正在采的矿池、近处发生的采矿动态，只在居民见过那个矿池时才写出矿池编号，否则为 null。
 - 脚本机器人（`agents/scripted_brain.py`）：买得起的最好芯片 → 最近的有储量矿池（找不到就到固定点探索）→ 采到 260 个 token 回收购点卖到剩 60 → 快结束时卖到剩 1。
 - 大模型大脑（`agents/llm_brain.py`）：系统提示是规则说明（`agents/system_prompt.py`，数值取自代码常量），用户消息是观察和上一轮的行动结果；模型每轮最多请求 8 次，每局每名居民最多 400 次（停止或更换 Agent 不重置），每次最多写 8192 token（推理模型要先思考再调用工具，2048 时一局里一半以上的轮次被截断），每次请求最多等 180 秒。一批工具调用之后居民处于行走或采矿中，本轮即结束，不再请求，等行走或采矿结束时唤醒。居民空闲且本轮尚未调用工具时，空回复或因长度截断的回复再问一次，仍然如此则作为失败（错误中带 `finish_reason`）。请求失败时由循环记录，居民空闲时 10 秒后再问。停止或更换 Agent 时关闭它的 HTTP 客户端。
 - 控制台每轮打印一行摘要；默认同时在服务端项目 `logs/` 为每名居民创建独立的 JSONL 文件，每次开新局覆盖。详见下文“角色日志”。
+
+## 信息售卖
+
+居民可以把自己知道的信息卖给别人（`residents/information_offer.py`）：信息是可复制的，卖方成交后仍保留，也可以再卖给其他人。
+
+- 卖方用原语 `OfferInformation` 发出报价（事件 `InformationOffer`）：`summary`（摘要，最多 60 字符）、`content`（内容，自由文本，由 AI 自己撰写）和 `price`（金币，至少 1）。买方成交前只能看到摘要和价格，看不到内容。目前只有卖方能发起，买方不能先求购。
+- 发出时不预留任何东西，所以同一卖方对同一买方最多同时有 3 条待答复的信息报价（超过以 `too_many_offers` 拒绝），免得刷屏。买方用 `RespondToEvent` 同意时，金币付给卖方，内容连同卖方 id 和摘要写成买方的一条长期笔记（`Bought from <卖方> (<摘要>): <内容>`），所以摘要、内容和这些前缀合起来不得超过笔记的 300 字符上限。买方金币不足，或长期笔记已满（要先 `forget` 一条）时，同意被拒绝（`not_enough_coins`、`memory_full`），报价仍待处理。拒绝、撤回、出局、游戏结束时没有什么需要退回。
+- 服务端不核实内容是否属实，买方只能凭对卖方的信任判断；这是有意的，真假与信誉交给居民博弈。
+- AI 居民用工具 `offer_information` 发起，用 `respond_to_offer`、`withdraw_offer` 答复和撤回；观察中的 `information_offers_to_me`、`my_information_offers` 只含摘要和价格。
+- 尚未进入协议：页面不显示信息报价（`offers` 里只有物品报价），也不能操作。
 
 ## 合约
 
@@ -192,7 +202,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | --- | --- |
 | `core/` | 世界模型与各玩法共用的机制：居民、坐标、物品栏与金币、事件队列；只依赖 `core/` 内的模块 |
 | `economy/` | 经济：token 体力、芯片、矿池采矿、收购点、交易报价、合约 |
-| `residents/` | 居民的行动与认知：行走、感知、记忆、对话 |
+| `residents/` | 居民的行动与认知：行走、感知、记忆、对话、信息售卖 |
 | `game/` | 一局的规则与调度：操作原语、生命周期、到点结算、开局布局 |
 | `server/` | 对外接口：FastAPI 应用与 WebSocket、协议 |
 | `agents/` | AI 居民：驱动居民的 Agent 循环、工具与大脑 |
@@ -215,6 +225,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/residents/walking.py` | 行走：速度、所需时间、途中位置、出发、到达、中途停下、下一次到达时刻 |
 | `src/aiverse_server/residents/perception.py` | 感知与发现：每轮开始时 `begin_turn` 返回范围内的矿池、居民和新的活动、收购点与现价、芯片价目，并更新居民记住的矿池；`record_activity` 比较前后世界记录活动，`record_discoveries` 在走完时发现路线两侧的矿池 |
 | `src/aiverse_server/residents/memory.py` | 居民自选的记忆：写入长期或短期笔记、忘掉笔记、清除过期的短期笔记 |
+| `src/aiverse_server/residents/information_offer.py` | 信息报价：事件 `InformationOffer`（摘要、内容、价格），条款校验；成交时买方付金币、内容作为长期笔记写入买方记忆，卖方保留原信息 |
 | `src/aiverse_server/residents/speech.py` | 对话：听力半径、每句的 token 消耗、当众说或私聊 `say`，听到的人在说话时定下 |
 | `src/aiverse_server/game/actions.py` | 操作原语：玩家与 AI 改变世界的唯一入口，校验并执行；含答复事件、发起购买与出售、提议合约、交付与取消合约、退出游戏、采矿、卖 token 给收购点、买芯片的原语，执行后处理 token 耗尽并记录活动 |
 | `src/aiverse_server/game/lifecycle.py` | 对局生命周期：能否行动的检查、出局（含 token 耗尽，行走者到达后出局；出局和结束时停下行走）、结束、按金币总额排名，默认时长 |

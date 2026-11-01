@@ -35,6 +35,7 @@ from ..economy.rigs import (
 from ..economy.tokens import TOKEN, walk_cost
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
 from ..game.lifecycle import ranks, total_coins
+from ..residents.information_offer import InformationOffer
 from ..residents.perception import Perception
 from ..residents.walking import walk_seconds
 
@@ -147,6 +148,17 @@ class OfferView:
 
 
 @dataclass(frozen=True)
+class InformationOfferView:
+    event_id: int
+    from_id: str
+    to_id: str
+    summary: str
+    """All the recipient sees until they pay; the content is withheld."""
+    price: int
+    """Coins for the information."""
+
+
+@dataclass(frozen=True)
 class ProposalView:
     event_id: int
     from_id: str
@@ -244,6 +256,8 @@ class Observation:
     residents: tuple[Standing, ...]
     offers_to_me: tuple[OfferView, ...]
     my_offers: tuple[OfferView, ...]
+    information_offers_to_me: tuple[InformationOfferView, ...]
+    my_information_offers: tuple[InformationOfferView, ...]
     contract_proposals_to_me: tuple[ProposalView, ...]
     my_contract_proposals: tuple[ProposalView, ...]
     my_contracts: tuple[ContractView, ...]
@@ -358,6 +372,8 @@ def observe(
         ),
         offers_to_me=_offers(pending_for(world, resident_id)),
         my_offers=_offers(pending_from(world, resident_id)),
+        information_offers_to_me=_information_offers(pending_for(world, resident_id)),
+        my_information_offers=_information_offers(pending_from(world, resident_id)),
         contract_proposals_to_me=_proposals(pending_for(world, resident_id)),
         my_contract_proposals=_proposals(pending_from(world, resident_id)),
         my_contracts=tuple(
@@ -416,6 +432,21 @@ def _offers(events: tuple[Event, ...]) -> tuple[OfferView, ...]:
         )
         for event in events
         if isinstance(event.payload, PurchaseOffer | SaleOffer)
+    )
+
+
+def _information_offers(events: tuple[Event, ...]) -> tuple[InformationOfferView, ...]:
+    """The information offers among `events`, without their content."""
+    return tuple(
+        InformationOfferView(
+            event_id=event.id,
+            from_id=event.sender_id,
+            to_id=event.recipient_id,
+            summary=event.payload.summary.strip(),
+            price=event.payload.price,
+        )
+        for event in events
+        if isinstance(event.payload, InformationOffer)
     )
 
 

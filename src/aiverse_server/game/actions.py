@@ -45,6 +45,8 @@ from ..economy.rigs import (
 )
 from ..economy.tokens import TokenError, TokenErrorCode, pay_for_walk
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
+from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
+from ..residents.memory import NoteError, NoteErrorCode
 from ..residents.perception import record_activity
 from ..residents.speech import SpeechError, SpeechErrorCode, say
 from ..residents.walking import start_walk
@@ -64,6 +66,8 @@ RejectionCode = (
     | SpeechErrorCode
     | ContractErrorCode
     | RigErrorCode
+    | InformationErrorCode
+    | NoteErrorCode
 )
 
 
@@ -137,6 +141,23 @@ class OfferToSell:
     quantity: int
     price: int
     """Coins for the whole lot."""
+
+
+@dataclass(frozen=True)
+class OfferInformation:
+    """Offer `buyer_id` a copy of what the resident knows for `price` coins, see
+    `information_offer.py`.
+
+    The buyer sees only `summary` until they accept; then they pay and get `content` as a
+    note. Nothing is set aside and the seller keeps the information.
+    """
+
+    resident_id: str
+    buyer_id: str
+    summary: str
+    content: str
+    price: int
+    """Coins for the information."""
 
 
 @dataclass(frozen=True)
@@ -263,6 +284,7 @@ Action = (
     | WithdrawEvent
     | OfferToBuy
     | OfferToSell
+    | OfferInformation
     | ProposeContract
     | Deliver
     | CancelContract
@@ -313,6 +335,12 @@ def _carry_out(world: World, action: Action) -> World:
             return _answer(world, action)
         case OfferToBuy() | OfferToSell():
             return _offer(world, action)
+        case OfferInformation():
+            offer = InformationOffer(action.summary, action.content, action.price)
+            try:
+                return send_event(world, action.resident_id, action.buyer_id, offer)[0]
+            except (EventError, InformationError) as error:
+                raise ActionRejected(error.code, error.message) from error
         case ProposeContract():
             payload = ContractProposal(
                 action.supplies,
@@ -364,7 +392,14 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
         if action.accept:
             return accept_event(world, action.resident_id, action.event_id)
         return reject_event(world, action.resident_id, action.event_id)
-    except (EventError, InventoryError, TradeError, ContractError) as error:
+    except (
+        EventError,
+        InventoryError,
+        TradeError,
+        ContractError,
+        InformationError,
+        NoteError,
+    ) as error:
         raise ActionRejected(error.code, error.message) from error
 
 

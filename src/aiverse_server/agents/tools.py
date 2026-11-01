@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
 from ..core.inventory import item_count
-from ..core.world import Position, World
+from ..core.world import NOTE_LENGTH_LIMIT, Position, World
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.market import pressure_at
 from ..economy.tokens import TOKEN, token_total
@@ -42,6 +42,7 @@ from ..game.actions import (
     InstallChip,
     Mine,
     MoveTo,
+    OfferInformation,
     OfferToBuy,
     OfferToSell,
     ProposeContract,
@@ -53,6 +54,7 @@ from ..game.actions import (
     perform,
 )
 from ..game.lifecycle import GameError, total_coins
+from ..residents.information_offer import SUMMARY_LIMIT
 from ..residents.memory import NoteError
 from ..residents.perception import pools_in_sight
 from .observation import known_slots
@@ -142,17 +144,32 @@ class OfferToSellArgs(_Args):
     price: StrictInt = Field(description="Coins for the whole lot.")
 
 
+class OfferInformationArgs(_Args):
+    buyer_id: str = Field(description="Resident id you sell the information to.")
+    summary: str = Field(
+        description=f"What the buyer sees before paying, at most {SUMMARY_LIMIT} characters. "
+        "Say what the information is about, not the information itself."
+    )
+    content: str = Field(
+        description="What the buyer gets once they pay; they keep it as a long-term note that "
+        f"also names you and your summary, so with those it must fit in {NOTE_LENGTH_LIMIT} "
+        "characters. Anything you know: a place, a price, a plan, a rumour."
+    )
+    price: StrictInt = Field(description="Coins for the information.")
+
+
 class RespondToOfferArgs(_Args):
     event_id: StrictInt = Field(
-        description="event_id of an offer in offers_to_me or a proposal in "
-        "contract_proposals_to_me."
+        description="event_id of an offer in offers_to_me or information_offers_to_me, or a "
+        "proposal in contract_proposals_to_me."
     )
     accept: StrictBool = Field(description="true to accept, false to reject.")
 
 
 class WithdrawOfferArgs(_Args):
     event_id: StrictInt = Field(
-        description="event_id of an offer in my_offers or a proposal in my_contract_proposals."
+        description="event_id of an offer in my_offers or my_information_offers, or a proposal "
+        "in my_contract_proposals."
     )
 
 
@@ -322,8 +339,16 @@ TOOLS = (
         OfferToSellArgs,
     ),
     ToolSpec(
+        "offer_information",
+        "Offer another resident a copy of something you know for coins. They see only your "
+        "summary until they accept and pay, then get the content as a note. Nothing is set "
+        "aside and you keep the information, so you can sell it again. The server does not "
+        "check that it is true.",
+        OfferInformationArgs,
+    ),
+    ToolSpec(
         "respond_to_offer",
-        "Accept or reject an offer or contract proposal sent to you.",
+        "Accept or reject an offer (items or information) or contract proposal sent to you.",
         RespondToOfferArgs,
     ),
     ToolSpec(
@@ -538,6 +563,8 @@ class ResidentTools:
                 act(OfferToBuy(me, args.seller_id, args.kind, args.quantity, args.price))
             case OfferToSellArgs():
                 act(OfferToSell(me, args.buyer_id, args.kind, args.quantity, args.price))
+            case OfferInformationArgs():
+                act(OfferInformation(me, args.buyer_id, args.summary, args.content, args.price))
             case RespondToOfferArgs():
                 act(RespondToEvent(me, args.event_id, args.accept))
             case WithdrawOfferArgs():
