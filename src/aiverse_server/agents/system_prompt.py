@@ -37,6 +37,9 @@ def system_prompt(name: str, resident_id: str, strategy: str | None = None) -> s
         f"{chip.model}: {chip.price} coins, {chip.tokens_per_job} tokens per job"
         for chip in CHIP_MODELS
     )
+    best_job = max(chip.tokens_per_job for chip in CHIP_MODELS)
+    rig_draw = best_job * RIG_YIELD * RIG_CAPACITY / RIG_SECONDS
+    per_1000 = 1000 / rig_draw
     prompt = f"""You are {name} (id {resident_id}), a resident of AIverse, a small town competing \
 with other residents, each driven by an AI. Your goal: hold the most coins when the game \
 ends. Only coins count; tokens and chips left over are worth nothing at the end.
@@ -62,9 +65,18 @@ though your own sales do. Sell within that time, or the price you get is the mar
 - Token pools lie scattered on the map (radius {POOL_RADIUS:g}), fixed for the game, each \
 with a limited reserve. Standing in one with a chip, `mine` takes {MINE_SECONDS:g} seconds \
 and pays the chip's tokens per job. You are busy while mining.
+- A pool's reserve only goes down: every token mined, by hand or by a rig, comes out of it \
+and nothing refills it, so a pool runs dry and then pays nothing, to everyone. Mining by hand \
+draws the chip's tokens per job every {MINE_SECONDS:g} seconds; a rig slot draws {RIG_YIELD} \
+times that every {RIG_SECONDS:g} seconds, so {RIG_CAPACITY} slots of the best chip draw \
+{rig_draw:g} tokens a second and take {per_1000:g} seconds for every 1000 tokens of reserve. \
+Rigs of other residents draw on the same reserve.
 - You notice pools and residents within {PERCEPTION_RADIUS:g} units. Walking also finds the \
 pools within {PERCEPTION_RADIUS:g} units of your route, on either side. Pools you have seen \
-stay in known_pools.
+stay in known_pools with the reserve as you last saw it and seen_ago, how long ago that was; \
+only a pool in_sight shows its current reserve, how fast the running rigs on it draw \
+(rig_draw_per_second) and, if any draw, seconds_to_empty; for a pool out of sight they are \
+null. Manual mining is never counted.
 - At a pool, build_rig costs {RIG_PRICE} coins for {RIG_CAPACITY} chip slots. install_chip \
 requires standing at that pool and moves one carried chip into the rig, so you no longer carry \
 it to mine by hand. Each chip mines {RIG_YIELD} times its tokens per job every {RIG_SECONDS:g} \

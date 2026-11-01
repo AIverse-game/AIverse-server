@@ -15,7 +15,7 @@ import math
 from dataclasses import asdict, dataclass
 
 from ..core.events import Event, pending_for, pending_from
-from ..core.world import Contract, ContractEnd, Position, World
+from ..core.world import Contract, ContractEnd, PoolSighting, Position, World
 from ..economy.chips import CHIP_MODELS
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.rigs import (
@@ -27,6 +27,7 @@ from ..economy.rigs import (
     RIG_YIELD,
     cycle_amount,
     cycle_cost,
+    pool_draw_rate,
     rig_coins,
     slot_status,
 )
@@ -95,8 +96,16 @@ class PoolView:
     radius: float
     reserve: int
     """Tokens left when last seen."""
+    seen_ago: float
+    """Seconds since the reserve was seen; 0 when in sight."""
     in_sight: bool
     """Seen this round, so the reserve is current."""
+    rig_draw_per_second: float | None
+    """Tokens per second the running rigs on this pool take out of it; None unless in sight,
+    since a pool out of sight is not watched. Manual mining is not counted."""
+    seconds_to_empty: float | None
+    """Seconds until the reserve is gone at that rate; None unless in sight and rigs are
+    drawing on it."""
     distance: float
     walk_cost: int
     walk_seconds: float
@@ -269,16 +278,7 @@ def observe(
     in_sight = {sighting.pool_id for sighting in perception.pools}
     pools = sorted(
         (
-            PoolView(
-                id=sighting.pool_id,
-                position=sighting.position,
-                radius=sighting.radius,
-                reserve=sighting.reserve,
-                in_sight=sighting.pool_id in in_sight,
-                distance=_distance(here, sighting.position),
-                walk_cost=walk_cost(here, sighting.position),
-                walk_seconds=walk_seconds(here, sighting.position),
-            )
+            _pool_view(world, sighting, here, sighting.pool_id in in_sight)
             for sighting in perception.known_pools
         ),
         key=lambda pool: pool.distance,
@@ -488,6 +488,24 @@ def _ended(end: ContractEnd, resident_id: str, now: float) -> EndedContractView:
         deliveries_missed=contract.deliveries_left,
         deposit_forfeited=end.forfeit,
         ended_ago=max(now - end.time, 0.0),
+    )
+
+
+def _pool_view(world: World, sighting: PoolSighting, here: Position, in_sight: bool) -> PoolView:
+    """A known pool; how fast rigs drain it is told only while the resident can see it."""
+    draw = pool_draw_rate(world, sighting.pool_id) if in_sight else None
+    return PoolView(
+        id=sighting.pool_id,
+        position=sighting.position,
+        radius=sighting.radius,
+        reserve=sighting.reserve,
+        seen_ago=0.0 if in_sight else max(world.time - sighting.seen_at, 0.0),
+        in_sight=in_sight,
+        rig_draw_per_second=draw,
+        seconds_to_empty=sighting.reserve / draw if draw else None,
+        distance=_distance(here, sighting.position),
+        walk_cost=walk_cost(here, sighting.position),
+        walk_seconds=walk_seconds(here, sighting.position),
     )
 
 

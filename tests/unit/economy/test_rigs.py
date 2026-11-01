@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from aiverse_server.core.world import Inventory, Pool, Position, Resident, World, WorldMap
-from aiverse_server.economy.rigs import RIG_PRICE, slot_status
+from aiverse_server.economy.rigs import RIG_PRICE, pool_draw_rate, slot_status
 from aiverse_server.game.actions import (
     Action,
     ActionRejected,
@@ -140,6 +140,15 @@ def test_insufficient_balance_pauses_without_charging_or_consuming_the_pool() ->
     assert paused.rigs[0].slots[0].balance == 41
     assert paused.residents[0].coins == 10_000 - RIG_PRICE
     assert slot_status(paused, paused.rigs[0], paused.rigs[0].slots[0]) == "no_funds"
+
+
+def test_pool_draw_rate_counts_only_running_slots() -> None:
+    running = installed()  # One MK1 slot takes 60 tokens every 20 seconds.
+    paused = installed(deposit=41)  # A cycle costs 42.
+
+    assert pool_draw_rate(running, "p1") == 3
+    assert pool_draw_rate(paused, "p1") == 0
+    assert pool_draw_rate(WORLD, "p1") == 0
 
 
 def test_recharging_a_paused_slot_waits_a_full_cycle_without_catching_up() -> None:

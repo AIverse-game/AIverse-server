@@ -106,6 +106,18 @@ def cycle_amount(world: World, rig: MiningRig, slot: RigSlot) -> int:
     return min(pool.reserve, model.tokens_per_job * RIG_YIELD)
 
 
+def pool_draw_rate(world: World, pool_id: str) -> float:
+    """Tokens per second the running rig slots on a pool take out of it; paused slots and
+    manual mining are not counted."""
+    return sum(
+        cycle_amount(world, rig, slot) / RIG_SECONDS
+        for rig in world.rigs
+        if rig.pool_id == pool_id
+        for slot in rig.slots
+        if slot_status(world, rig, slot) == "running"
+    )
+
+
 def cycle_cost(rig: MiningRig, slot: RigSlot, amount: int) -> tuple[int, int]:
     rent = 0 if rig.owner_id == slot.resident_id else (amount * RENT_PER_100 + 99) // 100
     energy = (amount * ENERGY_PER_100 + 99) // 100
