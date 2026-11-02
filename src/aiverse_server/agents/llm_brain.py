@@ -34,6 +34,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS
 from .observation import Observation, to_json
 from .system_prompt import system_prompt
 from .tools import ResidentTools, ToolCall, tool_specs
@@ -48,6 +49,15 @@ MAX_TOKENS = 8192
 """Tokens a model may write per request, so one answer cannot run up the bill. A reasoning
 model spends most of them thinking before it calls a tool; at 2048 more than half the
 rounds of a logged game ended cut off with nothing done."""
+
+ENDGAME_MAX_TOKENS = 8192
+"""Per-request output ceiling during the last three minutes, including reasoning tokens."""
+
+ENDGAME_INSTRUCTION = (
+    "The game ends within three minutes. Keep reasoning brief and call the next useful tool "
+    "promptly. Only coins count at the end: allow time to reach the market and sell carried "
+    "tokens before the clock runs out."
+)
 
 TIMEOUT = 180.0
 """Seconds to wait for one request."""
@@ -164,11 +174,21 @@ class ChatCompletionsBrain:
         ]
         remark: str | None = None
         retried = False
+        endgame_instruction_sent = False
         try:
             for _ in range(self.max_steps):
                 if self.requests >= self.request_limit:
                     break
-                message, finish_reason = await self._complete(messages)
+                remaining = tools.game.remaining()
+                if remaining <= EARLY_ENDING_NOTICE_SECONDS and not endgame_instruction_sent:
+                    messages[0]["content"] += "\n\n" + ENDGAME_INSTRUCTION
+                    endgame_instruction_sent = True
+                max_tokens = (
+                    min(self.max_tokens, ENDGAME_MAX_TOKENS)
+                    if remaining <= EARLY_ENDING_NOTICE_SECONDS
+                    else self.max_tokens
+                )
+                message, finish_reason = await self._complete(messages, max_tokens)
                 content = message.get("content")
                 if isinstance(content, str) and content:
                     self.outputs.append(content)
@@ -233,7 +253,9 @@ class ChatCompletionsBrain:
         if self._owns_client:
             await self._client.aclose()
 
-    async def _complete(self, messages: list[dict[str, Any]]) -> tuple[dict[str, Any], str | None]:
+    async def _complete(
+        self, messages: list[dict[str, Any]], max_tokens: int
+    ) -> tuple[dict[str, Any], str | None]:
         """One chat completion; returns the model's message and why it stopped writing, such
         as "length" when it ran out of tokens."""
         self.requests += 1
@@ -246,7 +268,7 @@ class ChatCompletionsBrain:
                     "messages": messages,
                     "tools": tool_specs(),
                     "tool_choice": "auto",
-                    "max_tokens": self.max_tokens,
+                    "max_tokens": max_tokens,
                 },
             )
         except httpx.HTTPError as error:

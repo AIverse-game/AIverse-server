@@ -296,19 +296,65 @@ def test_the_brain_ignores_token_counts_the_api_does_not_give_as_numbers(usage: 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("max_tokens", [8192, 16384])
-def test_a_request_uses_the_configured_output_limit(max_tokens: int) -> None:
+@pytest.mark.parametrize(
+    ("remaining", "configured", "expected"),
+    [(180.1, 20000, 20000), (180, 20000, 8192), (60, 20000, 8192), (180, 4096, 4096)],
+)
+def test_a_request_reduces_its_output_limit_in_the_last_three_minutes(
+    remaining: float, configured: int, expected: int
+) -> None:
     async def scenario() -> None:
-        game, _ = make_game()
+        game, clock = make_game()
+        clock.now = 600 - remaining
         requests: list[httpx.Request] = []
         replies = [httpx.Response(200, json=_reply({"content": "Waiting."}))]
         brain = ChatCompletionsBrain(
-            "http://llm", "k", "m", client=_http(replies, requests), max_tokens=max_tokens
+            "http://llm", "k", "m", client=_http(replies, requests), max_tokens=configured
         )
 
         await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
-        assert json.loads(requests[0].content)["max_tokens"] == max_tokens
+        request = json.loads(requests[0].content)
+        assert request["max_tokens"] == expected
+        prompted = any(
+            "Keep reasoning brief" in message["content"] for message in request["messages"]
+        )
+        assert prompted == (remaining <= 180)
+
+    asyncio.run(scenario())
+
+
+def test_a_round_reduces_the_limit_when_it_enters_the_last_three_minutes() -> None:
+    async def scenario() -> None:
+        game, clock = make_game()
+        clock.now = 419
+        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        replies = [
+            httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
+            httpx.Response(200, json=_reply({"content": "Bought MK2."})),
+        ]
+        requests: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                clock.now = 421
+            return replies.pop(0)
+
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+            max_tokens=20000,
+        )
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        first, second = (json.loads(request.content) for request in requests)
+        assert [first["max_tokens"], second["max_tokens"]] == [20000, 8192]
+        assert not any("Keep reasoning brief" in m["content"] for m in first["messages"])
+        assert any("Keep reasoning brief" in m["content"] for m in second["messages"])
 
     asyncio.run(scenario())
 
