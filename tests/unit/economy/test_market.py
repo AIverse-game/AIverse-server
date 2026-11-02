@@ -262,6 +262,14 @@ def test_the_default_world_has_a_market_in_the_middle() -> None:
     assert world.market.position == Position(75, 75)
 
 
+def test_every_resident_starts_at_the_market() -> None:
+    world = create_default_world(3)
+
+    assert world.market is not None
+    assert len(world.residents) == 4
+    assert all(resident.position == world.market.position for resident in world.residents)
+
+
 def test_the_default_market_starts_its_history_at_the_base_price() -> None:
     market = create_default_world(3).market
 

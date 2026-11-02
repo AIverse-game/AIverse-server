@@ -41,23 +41,28 @@ MARKET_CLEARANCE = 30.0
 _STARTING_INVENTORY = Inventory(((TOKEN, STARTING_TOKENS),))
 
 
-def _resident(id: str, name: str, color: str, x: float, y: float) -> Resident:
+def market_position(size: float = MAP_SIZE) -> Position:
+    """The centre of the map."""
+    return Position(size / 2, size / 2)
+
+
+def _resident(id: str, name: str, color: str, position: Position) -> Resident:
     return Resident(
         id=id,
         name=name,
         color=color,
-        position=Position(x, y),
+        position=position,
         inventory=_STARTING_INVENTORY,
         coins=STARTING_COINS,
     )
 
 
-# Demo residents; spread out so the coordinate system is easy to check on screen.
+# All residents begin at the market so they can buy a chip before heading to a pool.
 DEFAULT_RESIDENTS = (
-    _resident("r1", "阿青", "#e4572e", 30, 37.5),
-    _resident("r2", "小麦", "#f3a712", 108, 27),
-    _resident("r3", "松木", "#5fb49c", 52.5, 105),
-    _resident("r4", "白露", "#8e9aed", 123, 126),
+    _resident("r1", "阿青", "#e4572e", market_position()),
+    _resident("r2", "小麦", "#f3a712", market_position()),
+    _resident("r3", "松木", "#5fb49c", market_position()),
+    _resident("r4", "白露", "#8e9aed", market_position()),
 )
 
 
@@ -86,11 +91,6 @@ def scatter_pools(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Pool
     if len(pools) < POOL_COUNT:
         raise ValueError(f"cannot fit {POOL_COUNT} pools on a map of size {size:g}")
     return tuple(pools)
-
-
-def market_position(size: float = MAP_SIZE) -> Position:
-    """The centre of the map."""
-    return Position(size / 2, size / 2)
 
 
 def create_default_world(seed: int | None = None) -> World:
