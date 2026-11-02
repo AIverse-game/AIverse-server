@@ -227,6 +227,8 @@ class Game:
         record: Callable[[TurnRecord], None] | None = None,
         llm_override: LLMSettings = NO_SETTINGS,
         llm_brain: LLMBrainFactory = ChatCompletionsBrain,
+        early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
+        final_notice_seconds: float = ENDING_NOTICE_SECONDS,
     ) -> None:
         self.world = world
         self.llm_override = llm_override
@@ -235,10 +237,12 @@ class Game:
         self._clock = clock
         self._start = clock()
         self._duration = duration
+        self.early_notice_seconds = early_notice_seconds
+        self.final_notice_seconds = final_notice_seconds
         # A game no longer than a warning has no time to give it.
         self._pending_notices = tuple(
             seconds
-            for seconds in (EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS)
+            for seconds in (early_notice_seconds, final_notice_seconds)
             if duration > seconds
         )
         self._pace = pace
@@ -280,12 +284,12 @@ class Game:
                 seconds = self._pending_notices[0]
                 self._pending_notices = self._pending_notices[1:]
                 # A delayed tick may cross both thresholds at once. Only the latest
-                # warning is useful then; do not announce that three minutes remain.
+                # warning is useful then; do not announce the older threshold.
                 if self._pending_notices and elapsed >= self._duration - self._pending_notices[0]:
                     continue
                 text = (
-                    "The game ends within 3 minutes."
-                    if seconds == EARLY_ENDING_NOTICE_SECONDS
+                    f"The game ends within {seconds / 60:g} minutes."
+                    if seconds == self.early_notice_seconds
                     else f"The game ends in {seconds:g} seconds."
                 )
                 after = announce(after, text)
@@ -544,6 +548,8 @@ def create_app(
     record: Callable[[TurnRecord], None] | None = None,
     llm_override: LLMSettings = NO_SETTINGS,
     llm_brain: LLMBrainFactory = ChatCompletionsBrain,
+    early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
+    final_notice_seconds: float = ENDING_NOTICE_SECONDS,
 ) -> FastAPI:
     """The game starts now, when its world is created, and ends `duration` seconds later.
     `agents` maps resident ids to the brains that drive them from the start, see
@@ -558,6 +564,8 @@ def create_app(
         record,
         llm_override,
         llm_brain,
+        early_notice_seconds,
+        final_notice_seconds,
     )
     unknown = set(agents or {}) - {resident.id for resident in game.world.residents}
     if unknown:

@@ -34,7 +34,6 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS
 from .observation import Observation, to_json
 from .system_prompt import system_prompt
 from .tools import ResidentTools, ToolCall, tool_specs
@@ -51,10 +50,10 @@ model spends most of them thinking before it calls a tool; at 2048 more than hal
 rounds of a logged game ended cut off with nothing done."""
 
 ENDGAME_MAX_TOKENS = 8192
-"""Per-request output ceiling during the last three minutes, including reasoning tokens."""
+"""Per-request output ceiling after the configured early-warning threshold."""
 
 ENDGAME_INSTRUCTION = (
-    "The game ends within three minutes. Keep reasoning brief and call the next useful tool "
+    "Keep reasoning brief and call the next useful tool "
     "promptly. Only coins count at the end: allow time to reach the market and sell carried "
     "tokens before the clock runs out."
 )
@@ -165,7 +164,13 @@ class ChatCompletionsBrain:
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": system_prompt(observation.me.name, observation.me.id, self.strategy),
+                "content": system_prompt(
+                    observation.me.name,
+                    observation.me.id,
+                    self.strategy,
+                    tools.game.early_notice_seconds,
+                    tools.game.final_notice_seconds,
+                ),
             },
             {
                 "role": "user",
@@ -180,12 +185,15 @@ class ChatCompletionsBrain:
                 if self.requests >= self.request_limit:
                     break
                 remaining = tools.game.remaining()
-                if remaining <= EARLY_ENDING_NOTICE_SECONDS and not endgame_instruction_sent:
-                    messages[0]["content"] += "\n\n" + ENDGAME_INSTRUCTION
+                if remaining <= tools.game.early_notice_seconds and not endgame_instruction_sent:
+                    messages[0]["content"] += (
+                        f"\n\nThe game ends within {tools.game.early_notice_seconds / 60:g} "
+                        f"minutes. {ENDGAME_INSTRUCTION}"
+                    )
                     endgame_instruction_sent = True
                 max_tokens = (
                     min(self.max_tokens, ENDGAME_MAX_TOKENS)
-                    if remaining <= EARLY_ENDING_NOTICE_SECONDS
+                    if remaining <= tools.game.early_notice_seconds
                     else self.max_tokens
                 )
                 message, finish_reason = await self._complete(messages, max_tokens)

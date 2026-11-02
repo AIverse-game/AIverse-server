@@ -1,0 +1,6 @@
+# 对局时间设置。复制为 game.yml，或用 --game-config 指定其他文件。
+# 单位都是秒；不填写时分别使用 1200、180、60。
+# 第一条公告必须早于第二条。对局时长不大于公告提前量时，跳过该公告。
+# duration_seconds: 2400
+# early_notice_seconds: 300
+# final_notice_seconds: 120

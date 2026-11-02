@@ -33,7 +33,13 @@ from ..residents.walking import WALK_SPEED
 from .tools import PRICE_HOLD_SECONDS
 
 
-def system_prompt(name: str, resident_id: str, strategy: str | None = None) -> str:
+def system_prompt(
+    name: str,
+    resident_id: str,
+    strategy: str | None = None,
+    early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
+    final_notice_seconds: float = ENDING_NOTICE_SECONDS,
+) -> str:
     chips = "; ".join(
         f"{chip.model}: {chip.price} coins, {chip.tokens_per_job} tokens per job"
         for chip in CHIP_MODELS
@@ -138,7 +144,7 @@ same reply as a walk; you are not there yet.
 of yours ends other than by your doing, someone speaks to you, the server makes an \
 announcement, or after a while with nothing happening.
 - If the game lasts longer than the warning's lead time, the server announces the ending \
-{EARLY_ENDING_NOTICE_SECONDS / 60:g} minutes and {ENDING_NOTICE_SECONDS:g} seconds before it \
+{early_notice_seconds / 60:g} minutes and {final_notice_seconds:g} seconds before it \
 happens. You read each announcement in `notices` of your next observation.
 - The game clock keeps running while you think: the time you spend deliberating is game \
 time, like a walk, and the world moves on without you. Nothing waits and nothing renews: \

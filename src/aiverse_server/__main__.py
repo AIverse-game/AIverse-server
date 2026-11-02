@@ -1,5 +1,6 @@
 """Run the server: `uv run aiverse-server [--host HOST] [--port PORT] [--duration SECONDS]
-[--seed N] [--config FILE] [--agent RESIDENT=BRAIN ...] [--log-dir DIR] [--agent-log FILE]`.
+[--seed N] [--config FILE] [--game-config FILE] [--agent RESIDENT=BRAIN ...]
+[--log-dir DIR] [--agent-log FILE]`.
 
 `--agent r1=scripted` drives resident r1 with the fixed-plan bot, `--agent r2=llm` or
 `--agent r2=llm:MODEL` with a language model, whose base URL and API key, and model when
@@ -19,7 +20,7 @@ from .agents.runner import Brain
 from .agents.scripted_brain import ScriptedBrain
 from .agents.turn_logger import TurnLogger
 from .game.layout import create_default_world
-from .game.lifecycle import GAME_DURATION
+from .game.settings import GameSettings, GameSettingsError, load_game_settings
 from .server.app import create_app
 from .server.config import Config, ConfigError, load_config
 
@@ -27,6 +28,7 @@ DEFAULT_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 
 DEFAULT_CONFIG = Path(__file__).parent / "agents" / "config" / "llm.yml"
 """Read when present and no `--config` is given, wherever the server is started from."""
+DEFAULT_GAME_CONFIG = Path(__file__).parent / "game" / "config" / "game.yml"
 
 
 def parse_agent(spec: str) -> tuple[str, str, str | None]:
@@ -48,8 +50,8 @@ def main() -> None:
     parser.add_argument(
         "--duration",
         type=float,
-        default=GAME_DURATION,
-        help=f"seconds until the game ends (default {GAME_DURATION:g})",
+        default=None,
+        help="seconds until the game ends (overrides the game config)",
     )
     parser.add_argument(
         "--seed",
@@ -63,6 +65,13 @@ def main() -> None:
         default=None,
         metavar="FILE",
         help=f"YAML config file (default {DEFAULT_CONFIG} when present)",
+    )
+    parser.add_argument(
+        "--game-config",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help=f"game timing YAML (default {DEFAULT_GAME_CONFIG} when present)",
     )
     parser.add_argument(
         "--agent",
@@ -86,7 +95,7 @@ def main() -> None:
         help="also write every agent round to FILE as JSONL, overwritten for each game",
     )
     args = parser.parse_args()
-    if not (math.isfinite(args.duration) and args.duration > 0):
+    if args.duration is not None and not (math.isfinite(args.duration) and args.duration > 0):
         parser.error("--duration must be a positive number of seconds")
     config_path: Path | None = args.config
     if config_path is None and DEFAULT_CONFIG.is_file():
@@ -94,6 +103,15 @@ def main() -> None:
     try:
         config = load_config(config_path) if config_path is not None else Config()
     except ConfigError as error:
+        parser.error(str(error))
+    game_config_path: Path | None = args.game_config
+    if game_config_path is None and DEFAULT_GAME_CONFIG.is_file():
+        game_config_path = DEFAULT_GAME_CONFIG
+    try:
+        game_settings = (
+            load_game_settings(game_config_path) if game_config_path is not None else GameSettings()
+        )
+    except GameSettingsError as error:
         parser.error(str(error))
     override = config.llm_override()
     llm_brain = partial(ChatCompletionsBrain, max_tokens=config.override.max_tokens)
@@ -134,7 +152,9 @@ def main() -> None:
     with recorder:
         app = create_app(
             world,
-            duration=args.duration,
+            duration=args.duration if args.duration is not None else game_settings.duration_seconds,
+            early_notice_seconds=game_settings.early_notice_seconds,
+            final_notice_seconds=game_settings.final_notice_seconds,
             agents=agents,
             record=recorder,
             llm_override=override,

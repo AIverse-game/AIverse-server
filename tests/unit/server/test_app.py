@@ -130,6 +130,26 @@ def test_the_server_tells_every_resident_three_minutes_and_one_minute_before_end
     assert final_again.notices == ()
 
 
+def test_custom_notice_times_change_when_warnings_are_sent() -> None:
+    clock = FakeClock()
+    game = Game(
+        WORLD, duration=600, clock=clock, early_notice_seconds=300, final_notice_seconds=120
+    )
+    clock.now = 299
+    game.tick()
+    before = game.world.notices.entries
+    clock.now = 300
+    game.tick()
+    early = game.begin_turn("a")
+    clock.now = 480
+    game.tick()
+    final = game.begin_turn("a")
+
+    assert before == ()
+    assert [notice.text for notice in early.notices] == ["The game ends within 5 minutes."]
+    assert [notice.text for notice in final.notices] == ["The game ends in 120 seconds."]
+
+
 def test_the_ending_is_announced_once_however_often_the_clock_ticks() -> None:
     game, clock = make_game(duration=600)
 

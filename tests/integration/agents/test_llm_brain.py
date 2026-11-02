@@ -359,6 +359,33 @@ def test_a_round_reduces_the_limit_when_it_enters_the_last_three_minutes() -> No
     asyncio.run(scenario())
 
 
+def test_the_brain_uses_the_configured_early_warning_threshold() -> None:
+    async def scenario() -> None:
+        clock = FakeClock()
+        game = Game(
+            WORLD, duration=600, clock=clock, early_notice_seconds=300, final_notice_seconds=120
+        )
+        clock.now = 300
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http([httpx.Response(200, json=_reply({"content": "Waiting."}))], requests),
+            max_tokens=20000,
+        )
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        request = json.loads(requests[0].content)
+        prompt = request["messages"][0]["content"]
+        assert request["max_tokens"] == 8192
+        assert "within 5 minutes" in prompt
+        assert "120 seconds before" in prompt
+
+    asyncio.run(scenario())
+
+
 def test_an_empty_reply_is_asked_again() -> None:
     async def scenario() -> None:
         game, _ = make_game()
