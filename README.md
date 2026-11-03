@@ -212,10 +212,10 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 | 子包 | 内容 |
 | --- | --- |
-| `core/` | 世界模型与各玩法共用的机制：居民、坐标、物品栏与金币、事件队列；只依赖 `core/` 内的模块 |
+| `core/` | 世界模型与各玩法共用的机制：居民、坐标、物品栏与金币、事件队列、金币流水账；只依赖 `core/` 内的模块 |
 | `economy/` | 经济：token 体力、芯片、矿池采矿、收购点、交易报价、合约 |
 | `residents/` | 居民的行动与认知：行走、感知、记忆、对话、信息售卖 |
-| `game/` | 一局的规则与调度：操作原语、生命周期、到点结算、开局布局 |
+| `game/` | 一局的规则与调度：操作原语、生命周期、到点结算、开局布局、经济报告 |
 | `server/` | 对外接口：FastAPI 应用与 WebSocket、协议 |
 | `agents/` | AI 居民：驱动居民的 Agent 循环、工具与大脑 |
 
@@ -226,6 +226,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/core/world.py` | 坐标、居民（含金币、是否出局、采矿与行走任务、记忆与笔记）、物品栏、事件队列、生效的合约（`Contract`、`ContractBook`）、矿池、收购点、活动日志、发言记录、地图与世界模型（含是否结束、游戏时间），越界、重复 id 与事件、采矿、行走、记忆和日志一致性校验 |
 | `src/aiverse_server/core/inventory.py` | 居民物品的存入、移出、计数、列出与清空，金币的收付；服务端内部接口，不是原语 |
 | `src/aiverse_server/core/rigs.py` | 不可变矿机、插槽和容量约束 |
+| `src/aiverse_server/core/ledger.py` | 金币流水账：每次真实转手的付款方、收款方、金额与渠道，有上限并计数丢弃的条目 |
 | `src/aiverse_server/economy/rigs.py` | 建造、安装、预存、按产量生产和租金、远程充值与拆回、出局清理 |
 | `src/aiverse_server/core/events.py` | 事件队列：可扩展的事件种类（`EventPayload` 及其发送、同意、拒绝钩子），发送、答复、撤回与收件箱查询 |
 | `src/aiverse_server/economy/tokens.py` | token 体力：物品种类、拥有量、走路消耗 |
@@ -242,6 +243,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/game/actions.py` | 操作原语：玩家与 AI 改变世界的唯一入口，校验并执行；含答复事件、发起购买与出售、提议合约、交付与取消合约、退出游戏、采矿、卖 token 给收购点、买芯片的原语，执行后处理 token 耗尽并记录活动 |
 | `src/aiverse_server/game/lifecycle.py` | 对局生命周期：能否行动的检查、出局（含 token 耗尽，行走者到达后出局；出局和结束时停下行走）、结束、按金币总额排名，默认时长与公告提前量、公告记录的 `announce` |
 | `src/aiverse_server/game/settings.py` | 读取并校验独立的游戏时间 YAML 配置 |
+| `src/aiverse_server/game/economy_report.py` | 由流水账与世界算出经济指标（居民间流量占比、各渠道、价格、合约、基尼系数、收入集中度），写成 JSON 与控制台摘要 |
 | `src/aiverse_server/game/config/` | 游戏时间配置：示例 `game.example.yml`；本地的 `game.yml` 被 Git 忽略 |
 | `src/aiverse_server/game/clock.py` | 游戏时间到点的事：发放采矿、行走到达（及到达时 token 耗尽出局）并记录活动，合约到期，下一个到点时刻 |
 | `src/aiverse_server/game/layout.py` | 固定的初始地图与居民（含初始金币与 token）、地图中心的收购点，按种子随机放置的矿池 |
@@ -273,7 +275,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 uv run aiverse-server --agent r1=llm --agent r2=llm
 ```
 
-默认位置为服务端项目的 `logs/`，与启动时的工作目录无关。按居民 id 分别保存 `r1.jsonl`、`r2.jsonl`、`r3.jsonl`、`r4.jsonl`；未启动 AI 的居民文件为空。每次启动服务端就是新一局，因此会覆盖这些文件，同局内停止、更换 AI 继续追加，不删除目录里的其他文件。日志文件已被 Git 忽略。
+默认位置为服务端项目的 `logs/`，与启动时的工作目录无关。按居民 id 分别保存 `r1.jsonl`、`r2.jsonl`、`r3.jsonl`、`r4.jsonl`；未启动 AI 的居民文件为空。每次启动服务端就是新一局，因此会覆盖这些文件，同局内停止、更换 AI 继续追加；除上一局的经济报告 `summary.json`（见下文“经济报告”）外，不删除目录里的其他文件。日志文件已被 Git 忽略。
 
 用 `--log-dir /绝对路径/日志目录` 改位置（相对路径相对启动目录），目录不存在时自动创建。旧的 `--agent-log FILE` 仍可额外保存所有角色的汇总记录，现在也改为每局覆盖，不能与任一角色文件同名。
 
@@ -296,6 +298,25 @@ uv run aiverse-server --agent r1=llm --agent r2=llm
 模型返回错误、被停止或更换时的未完成轮次也写文件；取消轮次不进入页面的已完成时间线。本局已使用的 API key 在 JSON 转义前从文本、参数、笔记和输出中脱敏；非法 JSON 参数不保存原文。日志包含局内私聊与记忆，只保存在本机。
 
 本功能记录 AI 决策轮，手动操作不是独立日志行，但其造成的状态变化会出现在后续观察和资源变化中。直接嵌入 `create_app` 的程序仍可自行传 `record` 回调，默认文件记录由命令行入口创建。
+
+## 经济报告
+
+世界里有一本金币流水账（`core/ledger.py`）：金币每次真实转手都记一条，包括游戏时间、付款方、收款方、金额、渠道，买物品时还记物品和数量。系统一方记为 `system`。渠道包括 `market`（收购点收 token）、`chip_import`（买芯片）、`rig_build`、`electricity`、`rent`、`offer`（报价成交）、`contract_payment`、`contract_forfeit`（押金赔给买方）、`information`。预留和退回（报价、合约托管、矿机预存）不记。流水账最多保留 20000 条，超出时丢掉最早的并计数。
+
+对局结束时，命令行入口在日志目录写 `summary.json`，并在控制台打印几行摘要（`game/economy_report.py`）。主要字段：
+
+| 字段 | 内容 |
+| --- | --- |
+| `between_residents`、`from_system`、`to_system` | 居民之间转手的金币、系统付给居民的、居民付给系统的 |
+| `resident_share` | `between_residents ÷ (between_residents + from_system)`，衡量钱主要来自别人还是来自系统；没有金币流动时为 null |
+| `channels` | 各渠道的笔数与金额 |
+| `prices` | 渠道 → 物品 → 成交笔数、数量、按数量加权的均价、最低与最高单价、单价的标准差 |
+| `contracts` | 签订数、交付次数、押金赔付次数与金额、按原因统计的已结束合约（世界只保留最近 100 份） |
+| `coin_gini`、`mean_income_concentration` | 最终金币总额（排名口径）的基尼系数；每人收入来源按渠道的赫芬达尔指数的平均，越高越专于一门营生 |
+| `residents` | 每人的金币总额、按渠道的收入与支出、收入集中度 |
+| `transfers_dropped` | 流水账丢掉的条数；大于 0 时金币数字不完整 |
+
+服务端启动时删掉上一局的 `summary.json`，所以目录里的报告一定是本局的；对局没到时间就停掉服务端时不写报告。嵌入 `create_app` 的程序可以传 `on_end` 回调，在对局结束时拿到最终的世界。设计见客户端 `docs/design/economy-metrics.md`。
 
 ## 矿机与租用芯片
 

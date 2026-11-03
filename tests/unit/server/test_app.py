@@ -216,3 +216,32 @@ def test_the_clock_announces_the_ending_on_its_own_when_nothing_else_happens() -
     game = asyncio.run(scenario())
 
     assert len(game.world.notices.entries) == 1
+
+
+def test_the_end_of_the_game_is_handed_over_once_with_the_final_world() -> None:
+    ends: list[World] = []
+    clock = FakeClock()
+    game = Game(WORLD, 600, clock, on_end=ends.append)
+
+    for now in (599.0, 600.0, 601.0):
+        clock.now = now
+        game.tick()
+
+    assert ends == [game.world]
+    assert ends[0].ended
+
+
+def test_a_failing_end_handler_is_logged_and_the_game_still_ends(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fail(world: World) -> None:
+        raise OSError("disk full")
+
+    clock = FakeClock()
+    game = Game(WORLD, 600, clock, on_end=fail)
+
+    clock.now = 600.0
+    game.tick()
+
+    assert game.world.ended
+    assert "handling the end of the game failed" in caplog.text

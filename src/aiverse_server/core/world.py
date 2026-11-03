@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .events import EventQueue
+from .ledger import Ledger
 from .rigs import MiningRig
 
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
@@ -602,6 +603,8 @@ class World:
     """Standing deals between residents, see `contracts.py`."""
     rigs: tuple[MiningRig, ...] = ()
     next_rig_id: int = 1
+    ledger: Ledger = Ledger()
+    """Every coin that changed hands, see `ledger.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ..core.events import EventPayload
 from ..core.inventory import add_coins, store_item, take_coins, take_item
+from ..core.ledger import record_transfer
 
 if TYPE_CHECKING:
     from ..core.events import Event
@@ -79,7 +80,10 @@ class _Trade(EventPayload):
 
     def _swap(self, world: World, buyer_id: str, seller_id: str) -> World:
         world = store_item(world, buyer_id, self.kind, self.quantity)
-        return add_coins(world, seller_id, self.price)
+        world = add_coins(world, seller_id, self.price)
+        return record_transfer(
+            world, buyer_id, seller_id, self.price, "offer", self.kind, self.quantity
+        )
 
 
 @dataclass(frozen=True)

@@ -19,12 +19,16 @@ from .agents.llm_brain import ChatCompletionsBrain, LLMSettings, SettingsError, 
 from .agents.runner import Brain
 from .agents.scripted_brain import ScriptedBrain
 from .agents.turn_logger import TurnLogger
+from .core.world import World
+from .game.economy_report import format_report, write_economy_report
 from .game.layout import create_default_world
 from .game.settings import GameSettings, GameSettingsError, load_game_settings
 from .server.app import create_app
 from .server.config import Config, ConfigError, load_config
 
 DEFAULT_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+SUMMARY_FILE = "summary.json"
+"""The economy report written into the log directory when the game ends."""
 
 DEFAULT_CONFIG = Path(__file__).parent / "agents" / "config" / "llm.yml"
 """Read when present and no `--config` is given, wherever the server is started from."""
@@ -85,8 +89,8 @@ def main() -> None:
         "--log-dir",
         type=Path,
         default=DEFAULT_LOG_DIR,
-        help="directory for per-resident JSONL logs, overwritten each game "
-        "(default: logs/ in the server project)",
+        help="directory for per-resident JSONL logs and the end-of-game economy report "
+        "summary.json, overwritten each game (default: logs/ in the server project)",
     )
     parser.add_argument(
         "--agent-log",
@@ -143,12 +147,24 @@ def main() -> None:
     # Pages can start agents later, so every resident gets a file, even without --agent.
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    summary = args.log_dir / SUMMARY_FILE
+    if args.agent_log and Path(args.agent_log).resolve() == summary.resolve():
+        parser.error(f"--agent-log must differ from the economy report {summary}")
     try:
         recorder = TurnLogger(
             args.log_dir, world.residents, Path(args.agent_log) if args.agent_log else None
         )
     except (OSError, ValueError) as error:
         parser.error(f"cannot initialize agent logs: {error}")
+    # The last game's report would pass for this one's until the game ends.
+    try:
+        summary.unlink(missing_ok=True)
+    except OSError as error:
+        parser.error(f"cannot remove the last economy report: {error}")
+
+    def report_economy(world: World) -> None:
+        logging.getLogger(__name__).info("%s", format_report(write_economy_report(summary, world)))
+
     with recorder:
         app = create_app(
             world,
@@ -159,6 +175,7 @@ def main() -> None:
             record=recorder,
             llm_override=override,
             llm_brain=llm_brain,
+            on_end=report_economy,
         )
         uvicorn.run(app, host=args.host, port=args.port)
 

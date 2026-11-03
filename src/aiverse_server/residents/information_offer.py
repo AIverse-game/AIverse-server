@@ -23,6 +23,7 @@ from typing import Literal
 
 from ..core.events import Event, EventPayload
 from ..core.inventory import add_coins, take_coins
+from ..core.ledger import record_transfer
 from ..core.world import NOTE_LENGTH_LIMIT, World
 from ..economy.trade import MAX_AMOUNT
 from .memory import remember
@@ -101,4 +102,7 @@ class InformationOffer(EventPayload):
     def on_accept(self, world: World, event: Event) -> World:
         world = take_coins(world, event.recipient_id, self.price)
         world = add_coins(world, event.sender_id, self.price)
+        world = record_transfer(
+            world, event.recipient_id, event.sender_id, self.price, "information"
+        )
         return remember(world, event.recipient_id, self.note_text(event.sender_id), "long_term")[0]

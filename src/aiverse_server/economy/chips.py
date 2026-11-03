@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..core.inventory import store_item, take_coins
+from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import Resident, World
 
 
@@ -67,6 +68,9 @@ def buy_chip(world: World, resident_id: str, model: str) -> World:
     if world.market is None or not world.market.reaches(resident.position):
         raise ChipError("not_at_market", f"resident {resident_id!r} is not at the market")
     world = take_coins(world, resident_id, wanted.price)
+    world = record_transfer(
+        world, resident_id, SYSTEM, wanted.price, "chip_import", wanted.model, 1
+    )
     return store_item(world, resident_id, wanted.model)
 
 

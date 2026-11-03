@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ..core.events import EventPayload
 from ..core.inventory import add_coins, store_item, take_coins, take_item
+from ..core.ledger import record_transfer
 from ..core.world import (
     CONTRACT_END_LIMIT,
     Contract,
@@ -197,6 +198,15 @@ def deliver(world: World, resident_id: str, contract_id: int) -> World:
     world = take_item(world, resident_id, contract.kind, contract.quantity)
     world = store_item(world, contract.buyer_id, contract.kind, contract.quantity)
     world = add_coins(world, resident_id, contract.price)
+    world = record_transfer(
+        world,
+        contract.buyer_id,
+        resident_id,
+        contract.price,
+        "contract_payment",
+        contract.kind,
+        contract.quantity,
+    )
     world = _give(world, resident_id, contract.deposit)
     rest = replace(contract, deliveries_left=contract.deliveries_left - 1)
     if rest.deliveries_left > 0:
@@ -258,6 +268,10 @@ def _end(world: World, contract: Contract, reason: ContractEndReason, by: str | 
     forfeit = contract.deposit_held if breached else 0
     world = add_coins(world, contract.buyer_id, contract.escrow)
     world = _give(world, contract.buyer_id, forfeit)
+    if forfeit:
+        world = record_transfer(
+            world, contract.supplier_id, contract.buyer_id, forfeit, "contract_forfeit"
+        )
     world = _give(world, contract.supplier_id, contract.deposit_held - forfeit)
     return _record(_replace(world, contract, None), contract, reason, by, forfeit)
 

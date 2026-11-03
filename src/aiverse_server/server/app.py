@@ -229,6 +229,7 @@ class Game:
         llm_brain: LLMBrainFactory = ChatCompletionsBrain,
         early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
         final_notice_seconds: float = ENDING_NOTICE_SECONDS,
+        on_end: Callable[[World], None] | None = None,
     ) -> None:
         self.world = world
         self.llm_override = llm_override
@@ -247,6 +248,7 @@ class Game:
         )
         self._pace = pace
         self._record = record
+        self._on_end = on_end
         self._llm_brain = llm_brain
         self._outboxes: set[Outbox] = set()
         # Set on every broadcast: a new job or walk may end before what the timer waits for.
@@ -294,6 +296,12 @@ class Game:
                 )
                 after = announce(after, text)
         self.world = after
+        if after.ended and self._on_end is not None:
+            # Like a failed record: the game is over either way, so only log it.
+            try:
+                self._on_end(after)
+            except Exception:
+                logger.exception("handling the end of the game failed")
         if after is not timed:
             self.broadcast_world()
 
@@ -550,12 +558,13 @@ def create_app(
     llm_brain: LLMBrainFactory = ChatCompletionsBrain,
     early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
     final_notice_seconds: float = ENDING_NOTICE_SECONDS,
+    on_end: Callable[[World], None] | None = None,
 ) -> FastAPI:
     """The game starts now, when its world is created, and ends `duration` seconds later.
     `agents` maps resident ids to the brains that drive them from the start, see
     `agents/runner.py`; pages may start and stop more later, with brains from `llm_brain`
     and settings `llm_override` lays over theirs. `record` receives every round agents
-    take. Other residents are left to the pages."""
+    take, and `on_end` the final world once. Other residents are left to the pages."""
     game = Game(
         world if world is not None else create_default_world(),
         duration,
@@ -566,6 +575,7 @@ def create_app(
         llm_brain,
         early_notice_seconds,
         final_notice_seconds,
+        on_end,
     )
     unknown = set(agents or {}) - {resident.id for resident in game.world.residents}
     if unknown:

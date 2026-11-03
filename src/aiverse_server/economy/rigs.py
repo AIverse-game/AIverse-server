@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import Literal
 
 from ..core.inventory import add_coins, store_item, take_coins, take_item
+from ..core.ledger import SYSTEM, record_transfer
 from ..core.rigs import RIG_CAPACITY as RIG_CAPACITY
 from ..core.rigs import MiningRig, RigSlot
 from ..core.world import Pool, World
@@ -45,6 +46,7 @@ def build_rig(world: World, resident_id: str, pool_id: str) -> World:
     if pool.reserve == 0:
         raise RigError("pool_empty", "the pool is empty")
     world = take_coins(world, resident_id, RIG_PRICE)
+    world = record_transfer(world, resident_id, SYSTEM, RIG_PRICE, "rig_build")
     rig = MiningRig(world.next_rig_id, resident_id, pool_id)
     return replace(world, rigs=(*world.rigs, rig), next_rig_id=world.next_rig_id + 1)
 
@@ -156,6 +158,10 @@ def finish_rigs(world: World) -> World:
                 world = store_item(world, slot.resident_id, TOKEN, amount)
                 if rent:
                     world = add_coins(world, rig.owner_id, rent)
+                    # No item: the tokens come from the pool, the rent only pays for the rig.
+                    world = record_transfer(world, slot.resident_id, rig.owner_id, rent, "rent")
+                if energy:
+                    world = record_transfer(world, slot.resident_id, SYSTEM, energy, "electricity")
                 slot = replace(
                     slot,
                     balance=slot.balance - rent - energy,

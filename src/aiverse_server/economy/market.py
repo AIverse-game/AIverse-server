@@ -32,6 +32,7 @@ from dataclasses import replace
 from typing import Literal
 
 from ..core.inventory import InventoryError, add_coins, take_item
+from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import Market, PricePoint, Resident, World
 from .tokens import TOKEN, TokenError
 
@@ -123,6 +124,7 @@ def sell_tokens(world: World, resident_id: str, quantity: int, seen: float | Non
             "price_too_low", f"{quantity} tokens would fetch less than a coin right now"
         )
     world = add_coins(world, resident_id, coins)
+    world = record_transfer(world, SYSTEM, resident_id, coins, "market", TOKEN, quantity)
     before = unit_price(market, world.time)
     pressure = pressure_at(market, world.time) + quantity
     market = replace(market, pressure=pressure, pressure_at=world.time)
