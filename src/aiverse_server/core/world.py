@@ -83,6 +83,28 @@ class WalkJob:
 
 
 @dataclass(frozen=True)
+class DigJob:
+    """A resident digging shards at a quarry, see `shards.py`; they can do nothing else until
+    it ends."""
+
+    quarry_id: str
+    ends_at: float
+    """Game time when the shards are paid out, see `World.time`."""
+    amount: int
+    """Shards taken out of the quarry when the job started, paid to the digger when it ends."""
+
+
+@dataclass(frozen=True)
+class RefineJob:
+    """A resident refining a crystal at the workshop, see `workshop.py`; the materials were
+    spent when it started, and they can do nothing else until it ends."""
+
+    tier: str
+    """Tier of the crystal they get when it ends."""
+    ends_at: float
+
+
+@dataclass(frozen=True)
 class SpringSighting:
     """A spring as a resident last saw it, see `perception.py`."""
 
@@ -462,7 +484,18 @@ class Resident:
     harvesting: HarvestJob | None = None
     walking: WalkJob | None = None
     """On the way somewhere: `position` is where they set off, see `walking.position_at`."""
+    digging: DigJob | None = None
+    refining: RefineJob | None = None
+    crystals_refined: int = 0
+    """Crystals they have refined this game, which makes them refine faster and is public, see
+    `workshop.py`."""
     memory: Memory = Memory()
+
+    @property
+    def busy(self) -> bool:
+        """In the middle of a walk or a job: they can do nothing but talk or leave."""
+        jobs = (self.harvesting, self.walking, self.digging, self.refining)
+        return any(job is not None for job in jobs)
 
     def __post_init__(self) -> None:
         if not COLOR_PATTERN.fullmatch(self.color):
@@ -483,11 +516,24 @@ class Resident:
                 raise ValueError(f"resident {self.id} has a harvesting job that never ends")
             if self.inventory.count(self.harvesting.crystal) < 1:
                 raise ValueError(f"resident {self.id} is harvesting without carrying its crystal")
+        jobs = (self.harvesting, self.walking, self.digging, self.refining)
+        if sum(job is not None for job in jobs) > 1:
+            raise ValueError(f"resident {self.id} has more than one walk or job at once")
+        if type(self.crystals_refined) is not int or self.crystals_refined < 0:
+            raise ValueError(f"resident {self.id} refined {self.crystals_refined!r} crystals")
+        for job in (self.digging, self.refining):
+            if job is not None:
+                if self.left:
+                    raise ValueError(f"resident {self.id} left the game but still has a job")
+                if not math.isfinite(job.ends_at):
+                    raise ValueError(f"resident {self.id} has a job that never ends")
+        if self.digging is not None and (
+            type(self.digging.amount) is not int or self.digging.amount < 1
+        ):
+            raise ValueError(f"resident {self.id} is digging {self.digging.amount!r} shards")
         if self.walking is not None:
             if self.left:
                 raise ValueError(f"resident {self.id} left the game but is still walking")
-            if self.harvesting is not None:
-                raise ValueError(f"resident {self.id} is walking and harvesting at once")
             walk = self.walking
             if not (
                 math.isfinite(walk.departs_at)
@@ -514,6 +560,48 @@ class Spring:
             raise ValueError(f"spring {self.id} has radius {self.radius}, must be positive")
         if type(self.reserve) is not int or self.reserve < 0:
             raise ValueError(f"spring {self.id} holds {self.reserve!r} energy, must be >= 0")
+
+    def reaches(self, position: Position) -> bool:
+        return (
+            math.dist((self.position.x, self.position.y), (position.x, position.y)) <= self.radius
+        )
+
+
+@dataclass(frozen=True)
+class Quarry:
+    """A shard quarry on the ground, see `shards.py`. Quarries are placed when the game starts
+    and never move or appear later; only their reserve goes down."""
+
+    id: str
+    position: Position
+    radius: float
+    """Residents within this distance of `position` can dig here."""
+    reserve: int
+    """Shards still in the ground, not counting what diggers are taking out right now."""
+
+    def __post_init__(self) -> None:
+        if not (math.isfinite(self.radius) and self.radius > 0):
+            raise ValueError(f"quarry {self.id} has radius {self.radius}, must be positive")
+        if type(self.reserve) is not int or self.reserve < 0:
+            raise ValueError(f"quarry {self.id} holds {self.reserve!r} shards, must be >= 0")
+
+    def reaches(self, position: Position) -> bool:
+        return (
+            math.dist((self.position.x, self.position.y), (position.x, position.y)) <= self.radius
+        )
+
+
+@dataclass(frozen=True)
+class Workshop:
+    """Where residents refine crystals, see `workshop.py`. It never moves."""
+
+    position: Position
+    radius: float
+    """Residents within this distance of `position` can refine here."""
+
+    def __post_init__(self) -> None:
+        if not (math.isfinite(self.radius) and self.radius > 0):
+            raise ValueError(f"workshop has radius {self.radius}, must be positive")
 
     def reaches(self, position: Position) -> bool:
         return (
@@ -610,6 +698,10 @@ class World:
     next_tower_id: int = 1
     ledger: Ledger = Ledger()
     """Every coin that changed hands, see `ledger.py`."""
+    quarries: tuple[Quarry, ...] = ()
+    """Shard quarries, fixed for the whole game, see `shards.py`."""
+    workshop: Workshop | None = None
+    """Where crystals are refined, see `workshop.py`; None on a map without one."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -627,6 +719,12 @@ class World:
         for spring in self.springs:
             if not self.map.contains(spring.position):
                 raise ValueError(f"spring {spring.id} is outside the map: {spring.position}")
+        quarry_ids = [quarry.id for quarry in self.quarries]
+        if len(set(quarry_ids)) != len(quarry_ids):
+            raise ValueError("quarry ids must be unique")
+        for place in (*self.quarries, self.workshop):
+            if place is not None and not self.map.contains(place.position):
+                raise ValueError(f"{place} is outside the map")
         ids = [resident.id for resident in self.residents]
         if len(set(ids)) != len(ids):
             raise ValueError("resident ids must be unique")
@@ -638,6 +736,10 @@ class World:
                     raise ValueError(f"resident {resident.id} harvests unknown spring")
                 if self.ended:
                     raise ValueError(f"resident {resident.id} is harvesting after the game ended")
+            if resident.digging is not None and resident.digging.quarry_id not in quarry_ids:
+                raise ValueError(f"resident {resident.id} digs unknown quarry")
+            if (resident.digging or resident.refining) is not None and self.ended:
+                raise ValueError(f"resident {resident.id} has a job after the game ended")
             if resident.walking is not None:
                 if not self.map.contains(resident.walking.target):
                     raise ValueError(f"resident {resident.id} walks to outside the map")

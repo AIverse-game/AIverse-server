@@ -34,9 +34,9 @@ class CrystalTier:
 
 
 CRYSTAL_TIERS = (
-    CrystalTier("C1", price=300, energy_per_job=30),
-    CrystalTier("C2", price=1_200, energy_per_job=60),
-    CrystalTier("C3", price=3_000, energy_per_job=100),
+    CrystalTier("C1", price=600, energy_per_job=30),
+    CrystalTier("C2", price=2_400, energy_per_job=60),
+    CrystalTier("C3", price=6_000, energy_per_job=100),
 )
 """Every tier on sale, worst first."""
 

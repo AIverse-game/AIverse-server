@@ -23,8 +23,10 @@ from ..core.world import Notice, NoticeLog, World
 from ..economy.contracts import contract_coins, end_contracts
 from ..economy.energy import energy_total
 from ..economy.harvesting import cancel_harvesting
+from ..economy.shards import cancel_digging
 from ..economy.towers import release_towers, tower_coins
 from ..economy.trade import reserved_coins
+from ..economy.workshop import cancel_refining
 from ..residents.walking import stop_walking
 
 GAME_DURATION = 20 * 60.0
@@ -59,12 +61,15 @@ def check_can_act(world: World, resident_id: str) -> None:
 
 
 def leave_game(world: World, resident_id: str) -> World:
-    """Take the resident out of the game: a harvesting job stops and its energy goes back to the
-    spring, a walk stops where they are, their pending events are declined and their contracts
-    end, which hands back whatever offers and contracts set aside, a supplier's deposit
-    going to the buyer, then their items are cleared. Their coins stay."""
+    """Take the resident out of the game: a harvesting or digging job stops and what it took
+    goes back to the spring or quarry, a refining job is dropped, a walk stops where they are,
+    their pending events are declined and their contracts end, which hands back whatever
+    offers and contracts set aside, a supplier's deposit going to the buyer, then their items
+    are cleared. Their coins stay."""
     check_can_act(world, resident_id)
     world = cancel_harvesting(world, resident_id)
+    world = cancel_digging(world, resident_id)
+    world = cancel_refining(world, resident_id)
     world = release_towers(world, resident_id)
     world = stop_walking(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
@@ -127,12 +132,14 @@ def announce(world: World, text: str) -> World:
 
 
 def end_game(world: World) -> World:
-    """Stop every harvesting job and walk, decline every pending event, end every contract and
-    freeze the world; ending twice changes nothing."""
+    """Stop every job and walk, putting back what harvesting and digging took, decline every
+    pending event, end every contract and freeze the world; ending twice changes nothing."""
     if world.ended:
         return world
     for resident in world.residents:
         world = cancel_harvesting(world, resident.id)
+        world = cancel_digging(world, resident.id)
+        world = cancel_refining(world, resident.id)
         world = stop_walking(world, resident.id)
     world = end_contracts(_settle(world, lambda event: True), lambda contract: True, "game_ended")
     world = release_towers(world)

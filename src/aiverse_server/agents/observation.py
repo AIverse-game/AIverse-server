@@ -21,6 +21,7 @@ from ..core.world import Contract, ContractEnd, Position, SpringSighting, World
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.crystals import CRYSTAL_TIERS
 from ..economy.energy import ENERGY, walk_cost
+from ..economy.shards import SHARD
 from ..economy.towers import (
     RENT_PER_100,
     TOWER_CAPACITY,
@@ -35,6 +36,7 @@ from ..economy.towers import (
     tower_coins,
 )
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
+from ..economy.workshop import RECIPES, refine_seconds
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
 from ..residents.perception import Perception
@@ -61,15 +63,26 @@ class Me:
     and in proposals not yet answered."""
     crystals: dict[str, int]
     """Crystals carried, tier to count."""
+    shards: int
+    """Shards carried, which refining spends."""
+    crystals_refined: int
+    """Crystals refined so far, which makes refining faster."""
     walking_to: Position | None
     arrives_in: float | None
     """Seconds until the walk ends."""
     harvesting_spring: str | None
     harvesting_done_in: float | None
     """Seconds until the harvesting job pays out."""
+    digging_quarry: str | None
+    digging_done_in: float | None
+    refining_crystal: str | None
+    """Tier of the crystal being refined."""
+    refining_done_in: float | None
     at_market: bool
     at_spring: str | None
     """The spring the resident stands close enough to harvest, if any."""
+    at_quarry: str | None
+    at_workshop: bool
 
 
 @dataclass(frozen=True)
@@ -90,6 +103,40 @@ class MarketView:
     """Energy a walk from here to the market's centre costs."""
     walk_seconds: float
     crystals: tuple[CrystalOnSale, ...]
+
+
+@dataclass(frozen=True)
+class QuarryView:
+    """A shard quarry; quarries are public, so the reserve is always current."""
+
+    id: str
+    position: Position
+    radius: float
+    reserve: int
+    distance: float
+    walk_cost: int
+    walk_seconds: float
+
+
+@dataclass(frozen=True)
+class RecipeView:
+    tier: str
+    shards: int
+    energy: int
+    consumes: str | None
+    """Tier of the crystal it uses up; None for C1."""
+    seconds: float
+    """Game seconds refining takes this resident, practice counted."""
+
+
+@dataclass(frozen=True)
+class WorkshopView:
+    position: Position
+    radius: float
+    distance: float
+    walk_cost: int
+    walk_seconds: float
+    recipes: tuple[RecipeView, ...]
 
 
 @dataclass(frozen=True)
@@ -133,6 +180,7 @@ class Standing:
     """Total coins, including those set aside in offers."""
     rank: int
     left: bool
+    crystals_refined: int
 
 
 @dataclass(frozen=True)
@@ -254,6 +302,9 @@ class Observation:
     remaining_seconds: float
     me: Me
     market: MarketView | None
+    quarries: tuple[QuarryView, ...]
+    """Every quarry, nearest first."""
+    workshop: WorkshopView | None
     known_springs: tuple[SpringView, ...]
     """Every spring discovered so far, nearest first."""
     discovered: tuple[str, ...]
@@ -303,7 +354,10 @@ def observe(
     crystal_tiers = {crystal.tier for crystal in CRYSTAL_TIERS}
     walk = me.walking
     job = me.harvesting
+    dig = me.digging
+    refine = me.refining
     market = world.market
+    workshop = world.workshop
     standings = ranks(world)
     at_spring = next(
         (spring.id for spring in world.springs if spring.reaches(here) and walk is None),
@@ -348,12 +402,23 @@ def observe(
                 for kind, count in me.inventory.counts().items()
                 if kind in crystal_tiers
             },
+            shards=me.inventory.count(SHARD),
+            crystals_refined=me.crystals_refined,
             walking_to=walk.target if walk is not None else None,
             arrives_in=max(walk.arrives_at - world.time, 0.0) if walk is not None else None,
             harvesting_spring=job.spring_id if job is not None else None,
             harvesting_done_in=max(job.ends_at - world.time, 0.0) if job is not None else None,
+            digging_quarry=dig.quarry_id if dig is not None else None,
+            digging_done_in=max(dig.ends_at - world.time, 0.0) if dig is not None else None,
+            refining_crystal=refine.tier if refine is not None else None,
+            refining_done_in=max(refine.ends_at - world.time, 0.0) if refine is not None else None,
             at_market=market is not None and walk is None and market.reaches(here),
             at_spring=at_spring,
+            at_quarry=next(
+                (quarry.id for quarry in world.quarries if quarry.reaches(here) and walk is None),
+                None,
+            ),
+            at_workshop=workshop is not None and walk is None and workshop.reaches(here),
         ),
         market=None
         if perception.market is None
@@ -367,6 +432,42 @@ def observe(
             crystals=tuple(
                 CrystalOnSale(crystal.tier, crystal.price, crystal.energy_per_job)
                 for crystal in perception.market.crystals
+            ),
+        ),
+        quarries=tuple(
+            sorted(
+                (
+                    QuarryView(
+                        quarry.id,
+                        quarry.position,
+                        quarry.radius,
+                        quarry.reserve,
+                        _distance(here, quarry.position),
+                        walk_cost(here, quarry.position),
+                        walk_seconds(here, quarry.position),
+                    )
+                    for quarry in world.quarries
+                ),
+                key=lambda quarry: quarry.distance,
+            )
+        ),
+        workshop=None
+        if workshop is None
+        else WorkshopView(
+            workshop.position,
+            workshop.radius,
+            _distance(here, workshop.position),
+            walk_cost(here, workshop.position),
+            walk_seconds(here, workshop.position),
+            tuple(
+                RecipeView(
+                    recipe.tier,
+                    recipe.shards,
+                    recipe.energy,
+                    recipe.consumes,
+                    refine_seconds(recipe, me.crystals_refined),
+                )
+                for recipe in RECIPES
             ),
         ),
         known_springs=tuple(springs),
@@ -390,6 +491,7 @@ def observe(
                 coins=total_coins(world, resident.id),
                 rank=standings[resident.id],
                 left=resident.left,
+                crystals_refined=resident.crystals_refined,
             )
             for resident in world.residents
         ),

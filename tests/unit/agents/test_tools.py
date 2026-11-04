@@ -55,7 +55,7 @@ def test_tools_act_for_their_own_resident_only() -> None:
     assert result.ok
     assert me(game, "a").inventory.count("C1") == 1
     assert me(game, "b").inventory.count("C1") == 0
-    assert result.status is not None and result.status["coins"] == 4700
+    assert result.status is not None and result.status["coins"] == 4400
 
 
 @pytest.mark.parametrize("spec", TOOLS, ids=lambda spec: spec.name)

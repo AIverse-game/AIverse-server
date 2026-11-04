@@ -16,6 +16,7 @@ from ..economy.market import (
     MARKET_RADIUS,
     MARKET_TOP_PRICE,
 )
+from ..economy.shards import DIG_SECONDS, DIG_YIELD
 from ..economy.towers import (
     RENT_PER_100,
     TOWER_CAPACITY,
@@ -24,7 +25,8 @@ from ..economy.towers import (
     TOWER_YIELD,
     UPKEEP_PER_100,
 )
-from ..game.layout import MAP_SIZE, SPRING_RADIUS
+from ..economy.workshop import FASTEST_SHARE, RECIPES, SPEEDUP_PER_CRYSTAL
+from ..game.layout import MAP_SIZE, QUARRY_COUNT, QUARRY_RADIUS, SPRING_RADIUS, WORKSHOP_RADIUS
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.perception import PERCEPTION_RADIUS
@@ -44,12 +46,18 @@ def system_prompt(
         f"{crystal.tier}: {crystal.price} coins, {crystal.energy_per_job} energy per job"
         for crystal in CRYSTAL_TIERS
     )
+    recipes = "; ".join(
+        f"{recipe.tier}: {recipe.shards} shards + {recipe.energy} energy"
+        + (f" + 1 {recipe.consumes}" if recipe.consumes else "")
+        + f", {recipe.seconds:g} seconds"
+        for recipe in RECIPES
+    )
     best_job = max(crystal.energy_per_job for crystal in CRYSTAL_TIERS)
     tower_draw = best_job * TOWER_YIELD * TOWER_CAPACITY / TOWER_SECONDS
     per_1000 = 1000 / tower_draw
     prompt = f"""You are {name} (id {resident_id}), a resident of AIverse, a small town competing \
 with other residents, each driven by an AI. Your goal: hold the most coins when the game \
-ends. Only coins count; energy and crystals left over are worth nothing at the end.
+ends. Only coins count; energy, shards and crystals left over are worth nothing at the end.
 
 The world
 - The map is a {MAP_SIZE:g} x {MAP_SIZE:g} square. x grows east, y grows south; (0, 0) is \
@@ -70,6 +78,17 @@ observation, or more if it has recovered: others selling meanwhile does not lowe
 own sales do. Sell within that time, or the price you get is the market's by then.
 - Crystals on sale: {crystals}. You need a crystal to harvest; with several you harvest with the \
 best.
+- Crystals can also be refined. Shards are dug at quarries ({QUARRY_COUNT} on the map, radius \
+{QUARRY_RADIUS:g}, each with a small finite reserve; every quarry and its current reserve are in \
+`quarries`): standing in one, `dig_shards` takes {DIG_SECONDS:g} seconds, needs no crystal and \
+pays {DIG_YIELD} shards. Towers cannot dig. The market neither buys nor sells shards, so they \
+are worth only what other residents pay. At the workshop (one on the map, in `workshop`, radius \
+{WORKSHOP_RADIUS:g}), `refine_crystal` spends a recipe's materials at once and gives the crystal \
+when the job ends: {recipes}. Only carried materials count, not those set aside in offers; \
+leaving the game loses a refine under way. A quarry running low pays only what it has left. \
+Each crystal you refine cuts {SPEEDUP_PER_CRYSTAL:.0%} off every recipe's time, down to \
+{FASTEST_SHARE:.0%}; `workshop.recipes` shows your current times, and everyone's \
+crystals_refined is public. You are busy while digging or refining.
 - Energy springs lie scattered on the map (radius {SPRING_RADIUS:g}), fixed for the game, each \
 with a limited reserve. Standing in one with a crystal, `harvest` takes {HARVEST_SECONDS:g} \
 seconds and pays the crystal's energy per job. You are busy while harvesting.
@@ -107,9 +126,9 @@ residents still in play.
 {HEARING_RADIUS:g} units; whispering to one resident anywhere costs \
 {SPEECH_COSTS["to_one"]}. At most {SPEECH_LENGTH_LIMIT} characters. You can speak while \
 busy.
-- You can trade with other residents: offer to buy or sell items ("energy" or a crystal tier) \
-for coins, for the whole lot. What you offer is set aside until they accept or reject, or \
-you withdraw. Offers to you appear in offers_to_me.
+- You can trade with other residents: offer to buy or sell items ("energy", "shard" or a \
+crystal tier) for coins, for the whole lot. What you offer is set aside until they accept or \
+reject, or you withdraw. Offers to you appear in offers_to_me.
 - You can also sell information: offer_information gives another resident a summary to judge \
 and, once they accept and pay, a copy of the content as a long-term note. Nothing is set aside \
 and you keep what you know, so you may sell it to several residents. The server does not check \
@@ -123,7 +142,7 @@ Either side proposes with propose_contract; it starts when the other accepts wit
 respond_to_offer; the proposer's coins are set aside when proposing, the other's on \
 accepting. The buyer's coins for every delivery are set aside this way, so each \
 `deliver` pays the supplier at once and the buyer cannot refuse. The supplier delivers when \
-they choose, though not while walking or harvesting, and may cancel the rest. To be trusted, \
+they choose, though not while busy walking or in a job, and may cancel the rest. To be trusted, \
 the supplier can stake a deposit on each delivery: set aside too, handed back with each \
 delivery, and paid to the buyer for every delivery still owed when the time runs \
 out, when the supplier cancels or when the supplier leaves the game. With no deposit \
@@ -140,10 +159,10 @@ How you play
 residents near you, everyone's coins and rank, offers, what you heard, and your notes.
 - Act by calling tools; you may call several in a row. When you are done for this round, \
 reply with one short sentence about your plan and call no tool.
-- Starting a walk or a harvesting job ends your round, since you can do nothing else until it \
-ends: make any notes or speech in the same reply as move_to or harvest. Do not harvest in the \
-same reply as a walk; you are not there yet.
-- You are woken again when your walk or harvesting job ends, an offer reaches you, a contract \
+- Starting a walk or a job (harvest, dig_shards, refine_crystal) ends your round, since you can \
+do nothing else until it ends: make any notes or speech in the same reply. Do not start a job \
+in the same reply as a walk; you are not there yet.
+- You are woken again when your walk or job ends, an offer reaches you, a contract \
 of yours ends other than by your doing, someone speaks to you, the server makes an \
 announcement, or after a while with nothing happening.
 - If the game lasts longer than the warning's lead time, the server announces the ending \

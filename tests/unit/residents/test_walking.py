@@ -197,7 +197,7 @@ def test_beginning_a_turn_through_the_game_is_refused_for_an_unknown_resident() 
     ("change", "message"),
     [
         ({"left": True}, "left the game but is still walking"),
-        ({"harvesting": HarvestJob("p", 9.0, 1, "C1")}, "walking and harvesting at once"),
+        ({"harvesting": HarvestJob("p", 9.0, 1, "C1")}, "more than one walk or job at once"),
         ({"walking": WalkJob(Position(1, 1), 5.0, 4.0)}, "ends early"),
     ],
 )

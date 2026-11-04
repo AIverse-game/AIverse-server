@@ -1,8 +1,10 @@
-"""The starting layout: a fixed map, residents and market, with springs scattered at random.
+"""The starting layout: a fixed map, residents and market, with springs, quarries and the
+workshop placed at random.
 
 Every match uses the same map, residents and market, which stands in the middle of the map.
-The springs are placed when the world is created, from a seed, and stay where they are for the
-whole game.
+The springs, then the quarries, then the workshop are placed when the world is created, from a
+seed, and stay where they are for the whole game; the quarries and workshop come after, so a
+seed puts the springs where it always did.
 """
 
 import math
@@ -13,8 +15,10 @@ from ..core.world import (
     Market,
     Position,
     PricePoint,
+    Quarry,
     Resident,
     Spring,
+    Workshop,
     World,
     WorldMap,
 )
@@ -38,6 +42,15 @@ SPRING_SPACING = 30.0
 MARKET_CLEARANCE = 30.0
 """Least distance from a spring's centre to the market's, so selling takes a walk from
 harvesting."""
+
+QUARRY_COUNT = 3
+QUARRY_RADIUS = 4.0
+QUARRY_RESERVE = (300, 600)
+"""Smallest and largest number of shards a quarry starts with."""
+WORKSHOP_RADIUS = 5.0
+PLACE_SPACING = 20.0
+"""Least distance from a quarry's or the workshop's centre to any spring, quarry or workshop
+placed before it."""
 
 _STARTING_INVENTORY = Inventory(((ENERGY, STARTING_ENERGY),))
 
@@ -71,7 +84,10 @@ def scatter_springs(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Sp
     """`SPRING_COUNT` springs at random spots at least `SPRING_SPACING` apart and `MARKET_CLEARANCE`
     from the market, each with a random reserve. The same seed gives the same springs; without
     one, every call differs."""
-    rng = random.Random(seed)
+    return _scatter_springs(random.Random(seed), size)
+
+
+def _scatter_springs(rng: random.Random, size: float) -> tuple[Spring, ...]:
     market = market_position(size)
     springs: list[Spring] = []
     # The spacing leaves plenty of room on the default map; the bound only guards a
@@ -94,12 +110,39 @@ def scatter_springs(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Sp
     return tuple(springs)
 
 
+def _place(rng: random.Random, size: float, taken: list[Position]) -> Position:
+    """A random spot `MARKET_CLEARANCE` from the market and `PLACE_SPACING` from every spot
+    in `taken`, as far from the edge as springs are."""
+    market = market_position(size)
+    for _ in range(10_000):
+        position = Position(
+            round(rng.uniform(SPRING_MARGIN, size - SPRING_MARGIN), 1),
+            round(rng.uniform(SPRING_MARGIN, size - SPRING_MARGIN), 1),
+        )
+        if math.dist((market.x, market.y), (position.x, position.y)) >= MARKET_CLEARANCE and all(
+            math.dist((other.x, other.y), (position.x, position.y)) >= PLACE_SPACING
+            for other in taken
+        ):
+            return position
+    raise ValueError(f"cannot fit the quarries and workshop on a map of size {size:g}")
+
+
 def create_default_world(seed: int | None = None) -> World:
+    rng = random.Random(seed)
+    springs = _scatter_springs(rng, MAP_SIZE)
+    taken = [spring.position for spring in springs]
+    quarries: list[Quarry] = []
+    for number in range(1, QUARRY_COUNT + 1):
+        position = _place(rng, MAP_SIZE, taken)
+        taken.append(position)
+        quarries.append(Quarry(f"q{number}", position, QUARRY_RADIUS, rng.randint(*QUARRY_RESERVE)))
     return World(
         map=WorldMap(size=MAP_SIZE),
         residents=DEFAULT_RESIDENTS,
-        springs=scatter_springs(seed),
+        springs=springs,
         market=Market(
             market_position(), MARKET_RADIUS, history=(PricePoint(0.0, MARKET_BASE_PRICE),)
         ),
+        quarries=tuple(quarries),
+        workshop=Workshop(_place(rng, MAP_SIZE, taken), WORKSHOP_RADIUS),
     )

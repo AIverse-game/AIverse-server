@@ -8,9 +8,19 @@ import pytest
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord, record_to_json
 from aiverse_server.agents.tools import ResidentTools
-from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
+from aiverse_server.core.world import (
+    Inventory,
+    Market,
+    Position,
+    Quarry,
+    Resident,
+    Spring,
+    World,
+    WorldMap,
+)
 from aiverse_server.economy.energy import ENERGY
 from aiverse_server.economy.market import quote
+from aiverse_server.economy.shards import DIG_SECONDS, DIG_YIELD
 from aiverse_server.game.actions import (
     CancelContract,
     LeaveGame,
@@ -98,6 +108,25 @@ def test_the_loop_wakes_when_a_walk_ends() -> None:
         await _until(lambda: len(brain.seen) == 2)
 
         assert brain.seen[1].me.position == Position(60, 50)
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_when_a_dig_ends() -> None:
+    world = replace(WORLD, quarries=(Quarry("q1", Position(50, 50), 4, 300),))
+
+    async def scenario() -> None:
+        game, clock = make_game(world)
+        brain = Recorder(lambda seen, tools: None if seen.time else tools.dig_shards("q1"))
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        clock.now = DIG_SECONDS
+        game.tick()
+        await _until(lambda: len(brain.seen) == 2)
+
+        assert brain.seen[1].me.shards == DIG_YIELD
         task.cancel()
 
     asyncio.run(scenario())

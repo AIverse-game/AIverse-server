@@ -38,6 +38,7 @@ from ..game.actions import (
     BuyCrystal,
     CancelContract,
     Deliver,
+    DigShards,
     FundTower,
     Harvest,
     InstallCrystal,
@@ -46,6 +47,7 @@ from ..game.actions import (
     OfferToBuy,
     OfferToSell,
     ProposeContract,
+    RefineCrystal,
     RemoveCrystal,
     RespondToEvent,
     Say,
@@ -92,6 +94,14 @@ class HarvestArgs(_Args):
     spring_id: str = Field(description="Id of the spring you stand at, such as s1.")
 
 
+class DigShardsArgs(_Args):
+    quarry_id: str = Field(description="Id of the quarry you stand at, such as q1.")
+
+
+class RefineCrystalArgs(_Args):
+    tier: str = Field(description="Crystal tier to refine: C1, C2 or C3.")
+
+
 class SellEnergyArgs(_Args):
     quantity: StrictInt = Field(description="Energy to sell; you must stand at the market.")
 
@@ -132,14 +142,14 @@ class SayArgs(_Args):
 
 class OfferToBuyArgs(_Args):
     seller_id: str = Field(description="Resident id you buy from.")
-    kind: str = Field(description='Item kind, such as "energy" or a crystal tier like "C1".')
+    kind: str = Field(description='Item kind: "energy", "shard" or a crystal tier like "C1".')
     quantity: StrictInt = Field(description="How many items.")
     price: StrictInt = Field(description="Coins for the whole lot, set aside until answered.")
 
 
 class OfferToSellArgs(_Args):
     buyer_id: str = Field(description="Resident id you sell to.")
-    kind: str = Field(description='Item kind, such as "energy" or a crystal tier like "C1".')
+    kind: str = Field(description='Item kind: "energy", "shard" or a crystal tier like "C1".')
     quantity: StrictInt = Field(description="How many items, set aside until answered.")
     price: StrictInt = Field(description="Coins for the whole lot.")
 
@@ -179,7 +189,9 @@ class ProposeContractArgs(_Args):
         description="supplier: you deliver the items and get paid, your deposits set aside "
         "now; buyer: you pay for each delivery, and all your payments are set aside now."
     )
-    kind: str = Field(description='Item kind delivered, such as "energy" or "C1".')
+    kind: str = Field(
+        description='Item kind delivered: "energy", "shard" or a crystal tier like "C1".'
+    )
     quantity: StrictInt = Field(description="Items in each delivery.")
     price: StrictInt = Field(description="Coins the buyer pays for each delivery.")
     deliveries: StrictInt = Field(
@@ -318,6 +330,19 @@ TOOLS = (
         "Harvest the spring you stand at with the best crystal you carry; the energy arrives "
         "when the job ends and you are busy until then.",
         HarvestArgs,
+    ),
+    ToolSpec(
+        "dig_shards",
+        "Dig shards at the quarry you stand at; no crystal needed. The shards arrive when the "
+        "job ends and you are busy until then.",
+        DigShardsArgs,
+    ),
+    ToolSpec(
+        "refine_crystal",
+        "Refine one crystal at the workshop you stand at: its recipe's shards, energy and, above "
+        "C1, one crystal of the tier below are spent at once; the crystal arrives when the job "
+        "ends and you are busy until then.",
+        RefineCrystalArgs,
     ),
     ToolSpec(
         "sell_energy",
@@ -463,6 +488,12 @@ class ResidentTools:
     def sell_energy(self, quantity: int) -> ToolResult:
         return self.call("sell_energy", {"quantity": quantity})
 
+    def dig_shards(self, quarry_id: str) -> ToolResult:
+        return self.call("dig_shards", {"quarry_id": quarry_id})
+
+    def refine_crystal(self, tier: str) -> ToolResult:
+        return self.call("refine_crystal", {"tier": tier})
+
     def buy_crystal(self, tier: str) -> ToolResult:
         return self.call("buy_crystal", {"tier": tier})
 
@@ -550,6 +581,10 @@ class ResidentTools:
             case HarvestArgs():
                 self._require_known_spring(args.spring_id)
                 act(Harvest(me, args.spring_id))
+            case DigShardsArgs():
+                act(DigShards(me, args.quarry_id))
+            case RefineCrystalArgs():
+                act(RefineCrystal(me, args.tier))
             case SellEnergyArgs():
                 held = (
                     self.seen_pressure
@@ -649,6 +684,12 @@ class ResidentTools:
         if me.harvesting is not None:
             shown["harvesting_spring"] = me.harvesting.spring_id
             shown["harvesting_done_in"] = round(max(me.harvesting.ends_at - world.time, 0.0), 1)
+        if me.digging is not None:
+            shown["digging_quarry"] = me.digging.quarry_id
+            shown["digging_done_in"] = round(max(me.digging.ends_at - world.time, 0.0), 1)
+        if me.refining is not None:
+            shown["refining_crystal"] = me.refining.tier
+            shown["refining_done_in"] = round(max(me.refining.ends_at - world.time, 0.0), 1)
         if me.left:
             shown["left_game"] = True
         if world.ended:

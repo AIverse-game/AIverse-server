@@ -85,7 +85,7 @@ def test_selling_energy_records_the_market_paying_the_seller() -> None:
 def test_buying_a_crystal_records_the_buyer_paying_the_system() -> None:
     world = perform(WORLD, BuyCrystal("a", "C2"))
 
-    assert rows(world) == [("a", SYSTEM, 1_200, "crystal_import", "C2", 1)]
+    assert rows(world) == [("a", SYSTEM, 2_400, "crystal_import", "C2", 1)]
 
 
 def test_a_rented_tower_cycle_records_rent_to_the_owner_and_upkeep_to_the_system() -> None:

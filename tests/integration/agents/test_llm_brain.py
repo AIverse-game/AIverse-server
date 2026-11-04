@@ -10,7 +10,16 @@ from aiverse_server.agents.llm_brain import ChatCompletionsBrain, LLMError
 from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord
 from aiverse_server.agents.tools import ResidentTools
-from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
+from aiverse_server.core.world import (
+    Inventory,
+    Market,
+    Position,
+    Quarry,
+    Resident,
+    Spring,
+    World,
+    WorldMap,
+)
 from aiverse_server.economy.energy import ENERGY
 from aiverse_server.economy.towers import TOWER_PRICE
 from aiverse_server.game.actions import MoveTo
@@ -192,6 +201,24 @@ def test_a_round_ends_once_its_tools_leave_the_resident_harvesting() -> None:
 
         assert len(requests) == 1
         assert me(game, "a").harvesting is not None
+
+    asyncio.run(scenario())
+
+
+def test_a_round_ends_once_its_tools_leave_the_resident_digging() -> None:
+    world = replace(WORLD, quarries=(Quarry("q1", WORLD.residents[0].position, 4, 300),))
+
+    async def scenario() -> None:
+        game, _ = make_game(world)
+        call = {"id": "c1", "function": {"name": "dig_shards", "arguments": '{"quarry_id": "q1"}'}}
+        replies = [httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]}))]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        assert len(requests) == 1
+        assert me(game, "a").digging is not None
 
     asyncio.run(scenario())
 

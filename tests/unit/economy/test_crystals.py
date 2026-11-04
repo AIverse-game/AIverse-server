@@ -26,7 +26,7 @@ from aiverse_server.residents.perception import begin_turn
 C1, C2, C3 = CRYSTAL_TIERS
 
 
-def resident(resident_id: str, x: float, y: float, coins: int = 10_000) -> Resident:
+def resident(resident_id: str, x: float, y: float, coins: int = 20_000) -> Resident:
     return Resident(
         id=resident_id,
         name=resident_id,
@@ -51,7 +51,7 @@ def coins(world: World, resident_id: str) -> int:
     return next(r.coins for r in world.residents if r.id == resident_id)
 
 
-def test_three_models_the_better_dearer_and_digging_more() -> None:
+def test_three_tiers_the_better_dearer_and_drawing_more() -> None:
     assert [tier.tier for tier in CRYSTAL_TIERS] == ["C1", "C2", "C3"]
     assert C1.price < C2.price < C3.price
     assert C1.energy_per_job < C2.energy_per_job < C3.energy_per_job
@@ -62,9 +62,9 @@ def test_a_crystal_costs_its_fixed_price_at_the_market(tier: CrystalTier) -> Non
     once = perform(WORLD, BuyCrystal("a", tier.tier))
     twice = perform(once, BuyCrystal("a", tier.tier))
 
-    assert coins(once, "a") == 10_000 - tier.price
+    assert coins(once, "a") == 20_000 - tier.price
     assert item_count(once, "a", tier.tier) == 1
-    assert coins(twice, "a") == 10_000 - 2 * tier.price
+    assert coins(twice, "a") == 20_000 - 2 * tier.price
     assert item_count(twice, "a", tier.tier) == 2
 
 
@@ -134,7 +134,7 @@ def test_crystals_change_hands_through_offers() -> None:
     job = perform(traded, Harvest("c", "p1")).residents[2].harvesting
 
     assert item_count(traded, "a", "C3") == 0
-    assert coins(traded, "a") == 10_000 - C3.price + 2_500
+    assert coins(traded, "a") == 20_000 - C3.price + 2_500
     assert job is not None
     assert job.crystal == "C3"
 
@@ -142,7 +142,7 @@ def test_crystals_change_hands_through_offers() -> None:
 def test_leaving_loses_the_crystals() -> None:
     world = perform(perform(WORLD, BuyCrystal("a", "C2")), LeaveGame("a"))
     assert item_count(world, "a", "C2") == 0
-    assert coins(world, "a") == 10_000 - C2.price
+    assert coins(world, "a") == 20_000 - C2.price
 
 
 def test_perception_shows_the_crystals_on_sale_from_anywhere() -> None:

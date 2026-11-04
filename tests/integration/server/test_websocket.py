@@ -628,9 +628,9 @@ def test_states_show_the_market_and_its_prices(clock: FakeClock) -> None:
         "restingPressure": MARKET_RESTING_PRESSURE,
         "pressure": 0,
         "crystals": [
-            {"tier": "C1", "price": 300, "energyPerJob": 30},
-            {"tier": "C2", "price": 1200, "energyPerJob": 60},
-            {"tier": "C3", "price": 3000, "energyPerJob": 100},
+            {"tier": "C1", "price": 600, "energyPerJob": 30},
+            {"tier": "C2", "price": 2400, "energyPerJob": 60},
+            {"tier": "C3", "price": 6000, "energyPerJob": 100},
         ],
         "priceHistory": [],
     }
@@ -776,7 +776,7 @@ def test_a_crystal_bought_shows_on_every_page(clock: FakeClock) -> None:
 
     assert before["crystals"] == {}
     assert reply["ok"] is True
-    assert [(b["coins"], b["crystals"]) for b in after] == [(700, {"C1": 1})] * 2
+    assert [(b["coins"], b["crystals"]) for b in after] == [(400, {"C1": 1})] * 2
 
 
 def test_a_crystal_bought_harvests(clock: FakeClock) -> None:

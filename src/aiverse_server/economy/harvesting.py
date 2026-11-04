@@ -6,7 +6,8 @@ as much as that tier draws per job or whatever the spring has left if less, come
 spring at once, so two harvesters cannot draw the same energy, and reaches the harvester when
 the job ends. Until then the harvester is busy and stays with the crystal: they can do nothing
 but talk, or leave the game, which puts the energy back into the spring. Walkers are busy the
-same way, see `walking.py`; `check_not_busy` covers both.
+same way, see `walking.py`, and so are diggers and refiners, see `shards.py` and `workshop.py`;
+`check_not_busy` covers them all.
 
 Game time is `World.time`. The server moves it on as real time passes and calls
 `finish_harvesting` to pay out the jobs that are due; `next_finish` tells it when to look again.
@@ -39,12 +40,22 @@ class HarvestError(Exception):
 
 
 def check_not_busy(world: World, resident_id: str) -> None:
-    """Refuse a resident who is in the middle of a harvesting job or a walk."""
+    """Refuse a resident who is in the middle of a walk or a job: harvesting, digging shards or
+    refining a crystal."""
     resident = _find(world, resident_id)
-    if resident.harvesting is not None:
-        raise HarvestError("busy", f"resident {resident_id!r} is harvesting and cannot do that now")
-    if resident.walking is not None:
-        raise HarvestError("busy", f"resident {resident_id!r} is walking and cannot do that now")
+    doing = (
+        "harvesting"
+        if resident.harvesting is not None
+        else "walking"
+        if resident.walking is not None
+        else "digging"
+        if resident.digging is not None
+        else "refining"
+        if resident.refining is not None
+        else None
+    )
+    if doing is not None:
+        raise HarvestError("busy", f"resident {resident_id!r} is {doing} and cannot do that now")
 
 
 def start_harvesting(world: World, resident_id: str, spring_id: str) -> World:

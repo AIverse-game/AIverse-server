@@ -36,6 +36,7 @@ from ..economy.crystals import CrystalError, CrystalErrorCode, buy_crystal
 from ..economy.energy import EnergyError, EnergyErrorCode, pay_for_walk
 from ..economy.harvesting import HarvestError, HarvestErrorCode, check_not_busy, start_harvesting
 from ..economy.market import MarketError, MarketErrorCode, sell_energy
+from ..economy.shards import ShardError, ShardErrorCode, start_digging
 from ..economy.towers import (
     TowerError,
     TowerErrorCode,
@@ -45,6 +46,7 @@ from ..economy.towers import (
     remove_crystal,
 )
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
+from ..economy.workshop import WorkshopError, WorkshopErrorCode, start_refining
 from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
 from ..residents.memory import NoteError, NoteErrorCode
 from ..residents.perception import record_activity
@@ -66,6 +68,8 @@ RejectionCode = (
     | SpeechErrorCode
     | ContractErrorCode
     | TowerErrorCode
+    | ShardErrorCode
+    | WorkshopErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -218,6 +222,25 @@ class Harvest:
 
 
 @dataclass(frozen=True)
+class DigShards:
+    """Spend time at a quarry the resident stands next to, see `shards.py`: the shards arrive
+    when the job ends, and until then the resident can do nothing but talk or leave."""
+
+    resident_id: str
+    quarry_id: str
+
+
+@dataclass(frozen=True)
+class RefineCrystal:
+    """Spend the recipe's shards, energy and lower crystal at the workshop the resident stands
+    at to refine a crystal of `tier`, see `workshop.py`: it arrives when the job ends, and until
+    then the resident can do nothing but talk or leave."""
+
+    resident_id: str
+    tier: str
+
+
+@dataclass(frozen=True)
 class SellEnergy:
     """Sell `quantity` carried energy to the market the resident stands at, for coins at the
     market price, see `market.py`. Selling the last energy owned takes them out of the game."""
@@ -290,6 +313,8 @@ Action = (
     | CancelContract
     | LeaveGame
     | Harvest
+    | DigShards
+    | RefineCrystal
     | SellEnergy
     | BuyCrystal
     | Say
@@ -377,6 +402,16 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return start_harvesting(world, action.resident_id, action.spring_id)
             except HarvestError as error:
+                raise ActionRejected(error.code, error.message) from error
+        case DigShards():
+            try:
+                return start_digging(world, action.resident_id, action.quarry_id)
+            except ShardError as error:
+                raise ActionRejected(error.code, error.message) from error
+        case RefineCrystal():
+            try:
+                return start_refining(world, action.resident_id, action.tier)
+            except WorkshopError as error:
                 raise ActionRejected(error.code, error.message) from error
         case SellEnergy():
             try:

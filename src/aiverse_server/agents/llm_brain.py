@@ -8,7 +8,7 @@ see `server/config.py`; `LLMSettings` carries them and `over` lays one on anothe
 Each round is a conversation of its own: the system prompt gives the rules (`system_prompt.py`), the
 first message the observation and a summary of the previous round, and the model then calls
 tools, sees their results and calls more, until it replies without a tool call, its tools
-leave the resident walking or harvesting, or `MAX_STEPS` requests have gone by. A busy resident
+leave the resident walking or in a job, or `MAX_STEPS` requests have gone by. A busy resident
 can only talk and take notes, which the model does in the same reply; asking again would
 only have it wait out the job in notes, and the runner wakes it when the job ends. When a
 free resident's model has called no tool yet and replies with nothing to act on, empty or
@@ -335,8 +335,9 @@ def _detail(details: object, key: str) -> object:
 
 
 def _busy(status: dict[str, Any]) -> bool:
-    """Whether a tool's status shows the resident walking or harvesting."""
-    return "walking_to" in status or "harvesting_spring" in status
+    """Whether a tool's status shows the resident walking or in a job."""
+    busy = ("walking_to", "harvesting_spring", "digging_quarry", "refining_crystal")
+    return any(key in status for key in busy)
 
 
 def _summary(calls: list[ToolCall], remark: str | None) -> str:
