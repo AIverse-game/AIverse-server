@@ -102,6 +102,8 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "rank": 1,
                         "energy": 100,
                         "crystals": {"C1": 1},
+                        "shards": 0,
+                        "crystalsRefined": 0,
                     },
                     {
                         "id": "b",
@@ -116,9 +118,21 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "rank": 1,
                         "energy": 100,
                         "crystals": {"C1": 1},
+                        "shards": 0,
+                        "crystalsRefined": 0,
                     },
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
+                "quarries": [],
+                "exchange": {
+                    "books": [
+                        {"item": item, "bids": [], "asks": []}
+                        for item in ("energy", "shard", "C1", "C2", "C3")
+                    ],
+                    "fills": [],
+                    "orders": [],
+                    "maxOrders": 8,
+                },
                 "speech": [],
                 "offers": [],
                 "contractProposals": [],

@@ -2,7 +2,7 @@
 
 AIverse 的权威游戏服务端。游戏状态只在这里计算，网页客户端（同级目录 `aiverse-client`）只接收并渲染。开发规则见本仓库的 `AGENTS.md` 与 `.agents/`；架构、设计与决策记录在客户端仓库的 `docs/` 中，从 `docs/architecture.md` 读起。
 
-当前功能：生成一张固定布局的正方形地图（边长 150）和 4 名居民，所有居民从地图中心的收购点出生，每人开局 10000 金币，客户端经 WebSocket 读取；通过操作原语改变世界，客户端可用的有“走到坐标”（`move_to`，按固定速度走过去，`walking.py`）、“退出游戏”（`leave_game`）、“汲取”（`harvest`）、“卖能量”（`sell_energy`）、“买晶核”（`buy_crystal`）和“说话”（`say`）。一局 20 分钟（可配置），到点自动结束并给出按金币的最终排名（`lifecycle.py`）；居民可以中途出局，游戏照常进行。居民可以持有物品，服务端内部有存入、移出、计数、列出和清空的接口（`inventory.py`），尚未开放给客户端或 AI。居民之间需要对方同意的请求（如购买）作为事件排进世界中的队列，由收件人同意或拒绝、发件人撤回（`events.py`）；第一批事件是交易（`trade.py`）：买方或卖方任一方用原语 `OfferToBuy`、`OfferToSell` 发起报价，自己的金币或物品立即预留，对方同意后互换，拒绝或撤回后退回；金币是居民的独立余额。这些原语和答复原语 `RespondToEvent`、`WithdrawEvent` 都还没有进入协议。居民的体力是能量（`energy.py`）：开局每人 200，是物品种类 `"energy"`，可以用上述报价买卖；走路按直线距离消耗，每单位 0.5 能量（向上取整），每秒走 2.5 单位，途中不能做别的；能量由正变零的居民出局。开局时随机放置 6 个能量泉，整局固定，居民站在能量泉范围内、手上有晶核时可以花 10 秒汲取一次能量（`harvesting.py`）。晶核（`crystals.py`）开局谁都没有，要在收购点用金币按定价买：C1 600 金币、每次汲取 30 能量，C2 2400 金币、60 能量，C3 6000 金币、100 能量；有几块时用最好的一块，汲取期间守着晶核，不能走开或卖掉。晶核是以阶命名的物品，可以用报价转手，出局时清空。晶核也可以自己炼：开局随机放置 3 座晶矿（`shards.py`，编号 `q1`～`q3`，半径 4，储量 300～600），站在晶矿里不需要晶核就能花 10 秒挖 6 个晶砂（物品种类 `"shard"`，收购点不买也不卖）；地图上一座工坊（`workshop.py`，半径 5），按配方开工时扣原料：C1 = 5 晶砂 + 15 能量（15 秒），C2 = 15 晶砂 + 40 能量 + 1 块 C1（30 秒），C3 = 30 晶砂 + 80 能量 + 1 块 C2（45 秒），每炼成一块晶核所有配方用时减少 10%，最低一半。挖砂和炼制期间与汲取一样忙碌；出局或结束时挖出的晶砂退回晶矿，炼制作废、原料不退。晶矿与工坊的位置和储量对 Agent 公开，还没有进入协议和页面。地图中心有一个收购点（`market.py`），代表镇外的买家，是除开局资金外金币唯一的新来源：居民站在收购点范围内可以卖出携带的能量换金币、买晶核，能量单价随近期卖出量下跌（近期卖出 400 个减半）、随时间回升，长时间没人卖会涨过基准价 20、最高到 40，所有人共用一个价格；AI 居民在本轮开始后 30 秒内卖出时按本轮开始时看到的价格计价（之后价格回升则按现价），这期间别人的卖出不压低它，自己的卖出照常压价，超过 30 秒按现价；收购点的实际卖压照常累加；能量泉离收购点至少 20 单位。收购点同时是匿名的挂单交易所（`exchange.py`），能量、晶砂和 C1～C3 各一本挂单簿：站在收购点下买单或卖单（数量 1～10000，单价 1～1000000 金币，有效期 30～600 秒，默认 300），买单预留“数量 × 单价”的金币、卖单预留物品；新订单先与对面价格最优、同价最早的挂单按挂单价连续成交，买方多预留的差价退回，剩余部分挂在簿上。每人最多 8 张挂单，不能与自己的挂单成交（`self_cross`）；撤单在任何地方、忙碌时也可以；到期、出局和对局结束时退回预留。买单预留的金币计入排名，卖单里的能量算作拥有。成交按渠道 `exchange` 记入流水账，世界保留最近 500 笔成交。交易所还没有进入协议和页面。居民有感知与发现（`perception.py`）：每轮工作开始时调用 `begin_turn`，居民注意到周围 20 单位内的能量泉、其他居民，无论站在哪里都能看到收购点及其现价和晶核价目，以及自上次查看以来别人在附近的出发、到达、开始或完成汲取、出局；见过的能量泉记在居民的记忆里，走远后仍记得位置和当时的储量；走路时路线两侧 20 单位内还不认识的能量泉也会被发现（走完时按整条线段结算，途中查看则按已走过的一段），下次查看时列入 `discovered`，已认识的能量泉路过不刷新，只有能量泉走这套路径发现，居民和动态仍按站立处感知。这些动态来自世界中的活动日志，由原语和对局时钟自动记录。居民还有由 Agent 自己决定的记忆（`memory.py`）：`remember` 写下一条文字笔记并选择长期（整局保留）或短期（120 秒游戏时间后清除），`forget` 忘掉任意一条；每条最多 300 字符，长期最多 30 条、短期最多 20 条，满了要先忘掉一条，每轮感知时一并交回。居民可以对话（`speech.py`）：当众说的话由说话那一刻 20 单位内的在局居民听到，私聊不论远近只有对方听到，每句最多 100 字符；当众说每句 2 能量、私聊 1 能量，行走、汲取中也能说，每轮感知时交回自上次查看以来自己说的和听到的话。游戏结束前默认 180 秒和 60 秒（可在 `game/config/game.yml` 配置，对局时长须大于对应提前量），服务端分别向全体居民发送含剩余时间的公告，每名居民在下一轮感知中读到，出现在观察的 `notices` 里，并唤醒正在等待的 Agent；公告不在协议中。`remember` 不给 `term` 时按短期笔记保存。页面上显示所有当众说的话，私聊只发给选中了说话人或对象的页面（`view_as`）。居民可以由服务端里的 Agent 驱动（`agents/`，见下文“AI 居民”），由启动参数指定，或在页面上把选中的居民交给玩家配置的大模型：每轮调用 `Game.begin_turn`，它先推进游戏时间再感知；原语与 `Game.act` 一样执行并经 `Game.commit` 保存，与网页的操作走同一条路径并广播；记笔记用 `Game.remember`、`Game.forget`。感知和记忆都不在协议中。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
+当前功能：生成一张固定布局的正方形地图（边长 150）和 4 名居民，所有居民从地图中心的收购点出生，每人开局 10000 金币，客户端经 WebSocket 读取；通过操作原语改变世界，客户端可用的有“走到坐标”（`move_to`，按固定速度走过去，`walking.py`）、“退出游戏”（`leave_game`）、“汲取”（`harvest`）、“卖能量”（`sell_energy`）、“买晶核”（`buy_crystal`）、“挖晶砂”（`dig_shards`）、“炼晶核”（`refine_crystal`）和“说话”（`say`）。一局 20 分钟（可配置），到点自动结束并给出按金币的最终排名（`lifecycle.py`）；居民可以中途出局，游戏照常进行。居民可以持有物品，服务端内部有存入、移出、计数、列出和清空的接口（`inventory.py`），尚未开放给客户端或 AI。居民之间需要对方同意的请求（如购买）作为事件排进世界中的队列，由收件人同意或拒绝、发件人撤回（`events.py`）；第一批事件是交易（`trade.py`）：买方或卖方任一方用原语 `OfferToBuy`、`OfferToSell` 发起报价，自己的金币或物品立即预留，对方同意后互换，拒绝或撤回后退回；金币是居民的独立余额。这些原语和答复原语 `RespondToEvent`、`WithdrawEvent` 都还没有进入协议。居民的体力是能量（`energy.py`）：开局每人 200，是物品种类 `"energy"`，可以用上述报价买卖；走路按直线距离消耗，每单位 0.5 能量（向上取整），每秒走 2.5 单位，途中不能做别的；能量由正变零的居民出局。开局时随机放置 6 个能量泉，整局固定，居民站在能量泉范围内、手上有晶核时可以花 10 秒汲取一次能量（`harvesting.py`）。晶核（`crystals.py`）开局谁都没有，要在收购点用金币按定价买：C1 600 金币、每次汲取 30 能量，C2 2400 金币、60 能量，C3 6000 金币、100 能量；有几块时用最好的一块，汲取期间守着晶核，不能走开或卖掉。晶核是以阶命名的物品，可以用报价转手，出局时清空。晶核也可以自己炼：开局随机放置 3 座晶矿（`shards.py`，编号 `q1`～`q3`，半径 4，储量 300～600），站在晶矿里不需要晶核就能花 10 秒挖 6 个晶砂（物品种类 `"shard"`，收购点不买也不卖）；地图上一座工坊（`workshop.py`，半径 5），按配方开工时扣原料：C1 = 5 晶砂 + 15 能量（15 秒），C2 = 15 晶砂 + 40 能量 + 1 块 C1（30 秒），C3 = 30 晶砂 + 80 能量 + 1 块 C2（45 秒），每炼成一块晶核所有配方用时减少 10%，最低一半。挖砂和炼制期间与汲取一样忙碌；出局或结束时挖出的晶砂退回晶矿，炼制作废、原料不退。晶矿与工坊的位置和储量公开，Agent 的观察和页面状态里都有。地图中心有一个收购点（`market.py`），代表镇外的买家，是除开局资金外金币唯一的新来源：居民站在收购点范围内可以卖出携带的能量换金币、买晶核，能量单价随近期卖出量下跌（近期卖出 400 个减半）、随时间回升，长时间没人卖会涨过基准价 20、最高到 40，所有人共用一个价格；AI 居民在本轮开始后 30 秒内卖出时按本轮开始时看到的价格计价（之后价格回升则按现价），这期间别人的卖出不压低它，自己的卖出照常压价，超过 30 秒按现价；收购点的实际卖压照常累加；能量泉离收购点至少 20 单位。收购点同时是匿名的挂单交易所（`exchange.py`），能量、晶砂和 C1～C3 各一本挂单簿：站在收购点下买单或卖单（数量 1～10000，单价 1～1000000 金币，有效期 30～600 秒，默认 300），买单预留“数量 × 单价”的金币、卖单预留物品；新订单先与对面价格最优、同价最早的挂单按挂单价连续成交，买方多预留的差价退回，剩余部分挂在簿上。每人最多 8 张挂单，不能与自己的挂单成交（`self_cross`）；撤单在任何地方、忙碌时也可以；到期、出局和对局结束时退回预留。买单预留的金币计入排名，卖单里的能量算作拥有。成交按渠道 `exchange` 记入流水账，世界保留最近 500 笔成交。页面状态里有挂单簿、最近成交和所选居民的挂单，但页面还不能下单或撤单。居民有感知与发现（`perception.py`）：每轮工作开始时调用 `begin_turn`，居民注意到周围 20 单位内的能量泉、其他居民，无论站在哪里都能看到收购点及其现价和晶核价目，以及自上次查看以来别人在附近的出发、到达、开始或完成汲取、出局；见过的能量泉记在居民的记忆里，走远后仍记得位置和当时的储量；走路时路线两侧 20 单位内还不认识的能量泉也会被发现（走完时按整条线段结算，途中查看则按已走过的一段），下次查看时列入 `discovered`，已认识的能量泉路过不刷新，只有能量泉走这套路径发现，居民和动态仍按站立处感知。这些动态来自世界中的活动日志，由原语和对局时钟自动记录。居民还有由 Agent 自己决定的记忆（`memory.py`）：`remember` 写下一条文字笔记并选择长期（整局保留）或短期（120 秒游戏时间后清除），`forget` 忘掉任意一条；每条最多 300 字符，长期最多 30 条、短期最多 20 条，满了要先忘掉一条，每轮感知时一并交回。居民可以对话（`speech.py`）：当众说的话由说话那一刻 20 单位内的在局居民听到，私聊不论远近只有对方听到，每句最多 100 字符；当众说每句 2 能量、私聊 1 能量，行走、汲取中也能说，每轮感知时交回自上次查看以来自己说的和听到的话。游戏结束前默认 180 秒和 60 秒（可在 `game/config/game.yml` 配置，对局时长须大于对应提前量），服务端分别向全体居民发送含剩余时间的公告，每名居民在下一轮感知中读到，出现在观察的 `notices` 里，并唤醒正在等待的 Agent；公告不在协议中。`remember` 不给 `term` 时按短期笔记保存。页面上显示所有当众说的话，私聊只发给选中了说话人或对象的页面（`view_as`）。居民可以由服务端里的 Agent 驱动（`agents/`，见下文“AI 居民”），由启动参数指定，或在页面上把选中的居民交给玩家配置的大模型：每轮调用 `Game.begin_turn`，它先推进游戏时间再感知；原语与 `Game.act` 一样执行并经 `Game.commit` 保存，与网页的操作走同一条路径并广播；记笔记用 `Game.remember`、`Game.forget`。感知和记忆都不在协议中。所有连接共享同一个世界，世界变化后推送给每个已握手的连接。
 
 ## 坐标系
 
@@ -104,18 +104,18 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 18。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 19。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 18}` | 连接后发送；多余字段忽略 |
-| 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价与合约，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 19}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价、合约与挂单，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
-| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 18, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
+| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 19, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
 | 服务端 → 客户端 | `{"type": "state", "world": {...}}` | 紧跟 `welcome`；世界变化后、游戏结束时也推送给每个已握手的连接。内容见下 |
-| 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`not_enough_energy`、`busy`、`not_at_spring`、`spring_empty`、`unknown_spring`、`not_at_market`、`invalid_quantity`、`price_too_low`、`no_crystal`、`unknown_crystal`、`not_enough_coins`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
+| 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`not_enough_energy`、`busy`、`not_at_spring`、`spring_empty`、`unknown_spring`、`not_at_market`、`invalid_quantity`、`price_too_low`、`no_crystal`、`unknown_crystal`、`not_enough_coins`、`not_at_quarry`、`quarry_empty`、`unknown_quarry`、`not_at_workshop`、`not_enough_shards`、`no_lower_crystal`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
 | 服务端 → 客户端 | `{"type": "agent_result", "residentId": "r1", "ok": true}` | 回应发送者对 `residentId` 的 `start_agent` 或 `stop_agent`，成功后所有连接收到新的 `state`。被拒绝时 `ok` 为 `false`，附 `code`（`unknown_resident`、`resident_left`、`game_over`，与配置文件合并后缺项的 `missing_llm_setting`，地址不是 http(s) URL 或 key 不是不含空格的可打印 ASCII 的 `invalid_llm_setting`；客户端应接受未知代码）和 `message`，不含 key |
 | 服务端 → 客户端 | `{"type": "error", "code": "...", "message": "..."}` | `bad_message` 或 `protocol_mismatch`；`message` 不超过 200 字，连接保持可用 |
 
@@ -127,6 +127,8 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 { "type": "harvest", "residentId": "r1", "springId": "s1" }
 { "type": "sell_energy", "residentId": "r1", "quantity": 30 }
 { "type": "buy_crystal", "residentId": "r1", "tier": "C1" }
+{ "type": "dig_shards", "residentId": "r1", "quarryId": "q1" }
+{ "type": "refine_crystal", "residentId": "r1", "tier": "C2" }
 { "type": "say", "residentId": "r1", "text": "有人卖能量吗？" }
 { "type": "say", "residentId": "r1", "text": "我出高价", "to": "r4" }
 ```
@@ -136,6 +138,8 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 `harvest` 要求居民站在能量泉半径内（含边缘），并携带至少一块晶核（出售报价中预留的不算），否则以 `no_crystal` 拒绝。携带几种晶核时用产量最高的一块：开始时从能量泉扣出该阶每次的产量（剩余不足时扣剩余量），10 秒（游戏时间）后发放给居民并推送状态；期间居民忙碌，除 `leave_game` 和 `say` 外的原语以 `busy` 拒绝。中途出局时能量退回能量泉，游戏结束时作废。汲取期间晶核留在居民手上，忙碌规则也让它不能被报价卖出。
 
 `buy_crystal` 要求居民站在收购点半径内（含边缘），按 `market.crystals` 中的定价用携带的金币（报价中预留的不算）买一块该阶的晶核。阶区分大小写，不在出售列表中以 `unknown_crystal` 拒绝，金币不够以 `not_enough_coins` 拒绝，不在范围内或没有收购点以 `not_at_market` 拒绝。
+
+`dig_shards` 要求居民站在晶矿半径内（含边缘），否则以 `not_at_quarry` 拒绝，晶矿不存在以 `unknown_quarry`、挖空以 `quarry_empty` 拒绝；10 秒后得到晶砂，期间与汲取一样忙碌。`refine_crystal` 要求居民站在工坊半径内，否则以 `not_at_workshop` 拒绝；开工时从携带的物品扣除配方的晶砂、能量和上一阶晶核，缺哪样以 `not_enough_shards`、`not_enough_energy`、`no_lower_crystal` 拒绝，阶不存在以 `unknown_crystal` 拒绝；完工得到晶核，期间忙碌。
 
 `sell_energy` 要求居民站在收购点半径内（含边缘），卖出携带的能量（出售报价中预留的不算），`quantity` 必须是整数（否则 `bad_message`），不是正数时以 `invalid_quantity` 拒绝，超过携带量以 `not_enough_energy` 拒绝，不在范围内以 `not_at_market` 拒绝。收入按市场价计算：近期卖出压力 p 下，再卖一个能量值 `basePrice × depth / (depth + p)` 金币，一次卖 q 个得 `⌊basePrice × depth × ln((depth + p + q) / (depth + p))⌋` 金币，不足 1 金币时以 `price_too_low` 拒绝；之后 p 增加 q，并每 `halfLifeSeconds` 秒减半。卖光拥有的能量按能量耗尽出局，金币保留。
 
@@ -154,17 +158,38 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
       "id": "r1", "name": "阿青", "color": "#e4572e", "position": { "x": 20.0, "y": 25.0 },
       "coins": 9700, "spendableCoins": 9700, "towerBalance": 0,
       "left": false, "rank": 2, "energy": 200, "crystals": { "C1": 1 }, "carriedCrystals": { "C1": 1 },
+      "shards": 12, "crystalsRefined": 0,
       "harvesting": { "springId": "s1", "amount": 30, "crystal": "C1", "remainingSeconds": 9.5 }
     },
     {
       "id": "r2", "name": "小麦", "color": "#f3a712", "position": { "x": 60.0, "y": 30.0 },
       "coins": 10000, "spendableCoins": 10000, "towerBalance": 0,
       "left": false, "rank": 1, "energy": 150, "crystals": {}, "carriedCrystals": {},
+      "shards": 0, "crystalsRefined": 2,
       "walking": { "target": { "x": 40.0, "y": 50.0 }, "remainingSeconds": 11.3 },
       "agent": { "model": "vendor/model-name" }
     }
   ],
   "game": { "ended": false, "remainingSeconds": 1199.5 },
+  "quarries": [{ "id": "q1", "position": { "x": 110.2, "y": 30.4 }, "radius": 4.0, "reserve": 412 }],
+  "workshop": {
+    "position": { "x": 40.0, "y": 120.0 }, "radius": 5.0, "speedupPerCrystal": 0.1, "fastestShare": 0.5,
+    "recipes": [
+      { "tier": "C1", "shards": 5, "energy": 15, "seconds": 15.0 },
+      { "tier": "C2", "shards": 15, "energy": 40, "consumes": "C1", "seconds": 30.0 },
+      { "tier": "C3", "shards": 30, "energy": 80, "consumes": "C2", "seconds": 45.0 }
+    ]
+  },
+  "exchange": {
+    "books": [
+      { "item": "energy", "bids": [{ "price": 14, "quantity": 30 }], "asks": [{ "price": 18, "quantity": 50 }] },
+      { "item": "shard", "bids": [], "asks": [] }
+    ],
+    "fills": [{ "seq": 1, "time": 80.5, "item": "energy", "quantity": 20, "price": 16, "own": "bought" }],
+    "viewerId": "r1",
+    "orders": [{ "id": 3, "side": "buy", "item": "energy", "quantity": 30, "price": 14, "remainingSeconds": 240.0 }],
+    "maxOrders": 8
+  },
   "towers": [],
   "towerRules": { "price": 9000, "capacity": 4, "cycleSeconds": 20, "yieldMultiplier": 2, "rentPer100": 50, "upkeepPer100": 20 },
   "speech": [
@@ -200,6 +225,9 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 - `agent` 只在居民由 Agent 驱动时出现，`model` 是所用的模型，脚本机器人没有这一项。居民出局、游戏结束或 Agent 被停止后消失。
 - `energy` 是拥有的能量：携带的加出售报价中预留的。`crystals` 是拥有的晶核，阶到块数，同样含出售报价中预留的，没有的阶省略。`harvesting` 只在汲取期间出现，`crystal` 是干活的晶核阶，`remainingSeconds` 是发送时该次汲取的剩余秒数。`springs` 的位置和半径整局不变，`reserve` 是剩余储量。
 - `market` 是收购点；没有收购点的地图省略它。`basePrice`、`depth`、`halfLifeSeconds`、`restingPressure` 是定价参数，`pressure` 是发送时的近期卖出压力：单价为 `basePrice × depth ÷ (depth + pressure)`，`pressure` 与 `restingPressure` 的差每 `halfLifeSeconds` 减半；`restingPressure` 为负，所以长时间无人卖出时卖压降到 0 以下、单价高于 `basePrice`。`crystals` 是出售的晶核阶，按从差到好排列，`price` 是固定价格，`energyPerJob` 是每次汲取的产量。客户端可以按收到时刻起经过的时间推算当前单价，只用于显示，成交以服务端为准。`priceHistory` 是价格历史（协议 17），按时间从旧到新排列的 `{time, price}`，`time` 是游戏秒数、`price` 是当时再卖一个能量的单价（未取整）：每次卖出记下卖出前和卖出后两个点（同一 `time`，折线上是台阶），其余时间每 5 秒记一点，所以无人卖出时的回升也有记录；最多 600 点，超出丢弃最旧的。
+- `shards` 是拥有的晶砂（含报价和卖单中预留的），`crystalsRefined` 是已炼成的晶核数。`digging` 只在挖砂期间出现（`quarryId`、完工得到的 `amount`、`remainingSeconds`），`refining` 只在炼制期间出现（`tier`、`remainingSeconds`）。`crystals`、`energy` 也含卖单中预留的。
+- `quarries` 是晶矿，位置和半径整局不变，`reserve` 是剩余储量。`workshop` 是工坊，没有工坊的地图省略它；`recipes` 按阶从差到好排列，`consumes` 是消耗的上一阶晶核（C1 省略），`seconds` 是没炼过晶核的居民的用时，每炼成一块少 `speedupPerCrystal` 倍，最少为 `fastestShare` 倍。
+- `exchange` 是收购点的匿名交易所。`books` 每种商品一本，`bids` 是最高的 5 个买价、`asks` 是最低的 5 个卖价，每个价位给出单价和总数量，不显示是谁挂的。`fills` 是所有商品最近 100 笔成交，从旧到新，只有时间（取到 0.1 秒）、商品、数量和单价；`view_as` 所选居民参与的那笔带 `own`（`bought` 或 `sold`）。`viewerId` 是生成这份状态时所选的居民，没选时省略，页面换选居民后可以据此认出还没换过来的旧状态。`orders` 是所选居民的挂单，没选居民时为空，`remainingSeconds` 是发送时距到期的秒数。`maxOrders` 是每人最多的挂单数。
 - `speech` 是这个连接可见的最近 50 句，按先后排列：所有当众说的话，加上 `view_as` 所选居民发出或收到的私聊；没选居民时没有私聊。`time` 是开局以来的游戏秒数，`to` 只在私聊时出现，`listeners` 是听到的居民（不含说话人）。居民本人只从感知中拿到自己听到的。
 - `offers`、`contractProposals`、`contracts` 是 `view_as` 所选居民参与的待答复报价、待答复合约提议和生效的合约，按先后排列；和私聊一样，没选居民时为空，别人的交易不发给这个连接。报价的 `side` 为 `sell` 时发件人卖、为 `buy` 时发件人买，`price` 是整批总价；合约的 `price` 是每次交付的价款，`deposit` 是供货方每次的押金（0 为不押），`escrow` 是托管的余款（`price × deliveriesLeft`），`depositHeld` 是托管的押金（`deposit × deliveriesLeft`），`remainingSeconds` 是发送时距到期的秒数。页面还不能发起或答复它们。
 - `remainingSeconds` 是发送时的剩余秒数，结束后为 0。状态只在变化时推送，客户端应以收到时刻为起点本地倒计时，到点后以服务端的 `ended` 为准。
@@ -259,7 +287,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/agents/config/` | 大模型配置：示例 `llm.example.yml`；本地的 `llm.yml` 被 Git 忽略 |
 | `src/aiverse_server/__main__.py` | 启动入口，`--config` 读模型配置、`--game-config` 读游戏配置、`--duration` 覆盖对局时长，`--agent` 指定由 Agent 驱动的居民，`--agent-log` 写每轮记录 |
 | `tests/unit/` | 单元测试：世界模型、操作原语、物品栏与金币、事件、交易、合约、对局生命周期、能量、汲取、晶核、晶砂与工坊、收购点、行走、感知、记忆、对话、AI 居民的工具、观察、每轮记录与大模型设置的合并和校验、`Game` 的执行入口与发件箱、协议视图、配置文件、命令行参数 |
-| `tests/integration/` | 集成测试：WebSocket 接口、从页面启动与停止 Agent、Agent 循环的唤醒、模拟 HTTP 的大模型大脑、脚本机器人的快进对局 |
+| `tests/integration/` | 集成测试：WebSocket 接口（含汲能塔、挖砂与炼制）、从页面启动与停止 Agent、Agent 循环的唤醒、模拟 HTTP 的大模型大脑、脚本机器人的快进对局 |
 
 ## 页面 AI 行动时间线与经营方针
 
@@ -267,7 +295,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 `start_agent` 可附带 `strategy`（最多 1000 个 Unicode 字符，留空不追加方针），传给模型系统提示；不受 YAML 的接口配置覆盖。页面按居民保存草稿，修改后需重新交给 AI。
 
-协议版本为 18。`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
+`state.world.agentTimeline` 只在选择了 `view_as` 时出现，包含 `residentId` 与 `turns`。记录保存在 `Game.agent_turns` 中，与可选的控制台/JSONL 记录独立；停止、更换 Agent 和重连不清除，重启服务端清除。页面投影不包含完整观察和异常原文；文本与调用数有上限，模型回显的当前 API key 会替换为 `***`。没有居民归属时，任何页面仍可选中任意居民查看。
 
 `agents/tools.py` 的 `ResourceBalance` 和 `resource_balance` 测量动作前后总额，`runner.py` 生成带首尾资源的 `TurnRecord`，`server/protocol.py` 转为有界的 `AgentTurnView`，`server/app.py` 按观看者发送。
 

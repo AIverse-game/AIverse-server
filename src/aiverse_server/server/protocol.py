@@ -23,11 +23,12 @@ from pydantic.alias_generators import to_camel
 from ..agents.llm_brain import LLMSetting, LLMSettings
 from ..agents.runner import TurnRecord
 from ..core.events import Event
-from ..core.orders import order_items
+from ..core.orders import Fill, order_items
 from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.crystals import CRYSTAL_TIERS
 from ..economy.energy import energy_total
+from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
 from ..economy.market import (
     MARKET_BASE_PRICE,
     MARKET_DEPTH,
@@ -35,6 +36,7 @@ from ..economy.market import (
     MARKET_RESTING_PRESSURE,
     pressure_at,
 )
+from ..economy.shards import SHARD
 from ..economy.towers import (
     RENT_PER_100,
     TOWER_CAPACITY,
@@ -48,16 +50,19 @@ from ..economy.towers import (
     tower_coins,
 )
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_items
+from ..economy.workshop import FASTEST_SHARE, RECIPES, SPEEDUP_PER_CRYSTAL
 from ..game.actions import (
     Action,
     ActionRejected,
     BuildTower,
     BuyCrystal,
+    DigShards,
     FundTower,
     Harvest,
     InstallCrystal,
     LeaveGame,
     MoveTo,
+    RefineCrystal,
     RejectionCode,
     RemoveCrystal,
     Say,
@@ -66,12 +71,19 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 18
+PROTOCOL_VERSION = 19
 
 ERROR_MAX_LENGTH = 200
 
 SPEECH_VIEW_LIMIT = 50
 """Latest lines of speech each state carries, so a long game does not grow every state."""
+
+BOOK_LEVELS_SHOWN = 5
+"""Best prices on each side of an item's book each state carries."""
+
+FILL_VIEW_LIMIT = 100
+"""Latest exchange fills each state carries, of every item together; they make up most of a
+state once the exchange is busy, so pages get only enough for a short price line."""
 
 
 class _Message(BaseModel):
@@ -114,6 +126,18 @@ class SellEnergyInput(_Message):
 
 class BuyCrystalInput(_Message):
     type: Literal["buy_crystal"]
+    resident_id: str
+    tier: str
+
+
+class DigShardsInput(_Message):
+    type: Literal["dig_shards"]
+    resident_id: str
+    quarry_id: str
+
+
+class RefineCrystalInput(_Message):
+    type: Literal["refine_crystal"]
     resident_id: str
     tier: str
 
@@ -161,6 +185,8 @@ ActionInput = Annotated[
     | HarvestInput
     | SellEnergyInput
     | BuyCrystalInput
+    | DigShardsInput
+    | RefineCrystalInput
     | SayInput
     | BuildTowerInput
     | InstallCrystalInput
@@ -176,9 +202,9 @@ class HelloMessage(_Message):
 
 
 class ViewAsMessage(_Message):
-    """Choose whose whispers, offers and contracts this connection sees: the resident's, or
-    none for None. Pages send it when the player picks a resident; there is no ownership yet,
-    so any resident may be chosen."""
+    """Choose whose whispers, offers, contracts and exchange orders this connection sees: the
+    resident's, or none for None. Pages send it when the player picks a resident; there is no
+    ownership yet, so any resident may be chosen."""
 
     type: Literal["view_as"]
     resident_id: str | None
@@ -186,8 +212,8 @@ class ViewAsMessage(_Message):
 
 class ActionMessage(_Message):
     type: Literal["action"]
-    # Only the primitives clients can use so far; pages see offers and contracts now, but
-    # making and answering them is still left to agents.
+    # Only the primitives clients can use so far; pages see offers, contracts and the
+    # exchange now, but making and answering offers and placing orders is still left to agents.
     action: ActionInput
 
 
@@ -251,6 +277,19 @@ class HarvestView(_Message):
     """Time left in the job when this was sent."""
 
 
+class DigView(_Message):
+    quarry_id: str
+    amount: int
+    """Shards paid out when the job ends."""
+    remaining_seconds: float
+
+
+class RefineView(_Message):
+    tier: str
+    """Tier of the crystal the job makes."""
+    remaining_seconds: float
+
+
 class WalkingView(_Message):
     target: PositionView
     remaining_seconds: float
@@ -285,8 +324,16 @@ class ResidentView(_Message):
     carried_crystals: dict[str, int]
     """Crystals owned, tier to count, including those set aside by pending offers and sell orders;
     tiers with none are left out."""
+    shards: int
+    """Shards owned, including those set aside by pending offers and sell orders."""
+    crystals_refined: int
+    """Crystals the resident has refined so far; each makes the next job quicker."""
     harvesting: HarvestView | None = None
     """Present while the resident is busy harvesting."""
+    digging: DigView | None = None
+    """Present while the resident is busy digging shards."""
+    refining: RefineView | None = None
+    """Present while the resident is busy refining a crystal."""
     walking: WalkingView | None = None
     """Present while the resident is walking; they head straight for `target` at a steady
     pace and arrive after `remaining_seconds`."""
@@ -299,6 +346,97 @@ class SpringView(_Message):
     position: PositionView
     radius: float
     reserve: int
+
+
+class QuarryView(_Message):
+    id: str
+    position: PositionView
+    radius: float
+    reserve: int
+
+
+class RecipeView(_Message):
+    tier: str
+    shards: int
+    energy: int
+    consumes: str | None = None
+    """Tier of the crystal it uses up; left out for the first tier."""
+    seconds: float
+    """Game seconds the job takes for a resident who has refined nothing yet."""
+
+
+class WorkshopView(_Message):
+    """Where crystals are refined: a job takes a recipe's `seconds`, less
+    `speedup_per_crystal` of them for every crystal the resident refined before, but never
+    less than `fastest_share` of them."""
+
+    position: PositionView
+    radius: float
+    recipes: list[RecipeView]
+    """One per tier, worst first."""
+    speedup_per_crystal: float
+    fastest_share: float
+
+
+class LevelView(_Message):
+    price: int
+    """Coins per unit."""
+    quantity: int
+    """Units resting at that price, of every order together."""
+
+
+class BookView(_Message):
+    item: str
+    bids: list[LevelView]
+    """The best `BOOK_LEVELS_SHOWN` buy prices, highest first."""
+    asks: list[LevelView]
+    """The best `BOOK_LEVELS_SHOWN` sell prices, lowest first."""
+
+
+class FillView(_Message):
+    """Units that changed hands on the exchange, without who traded."""
+
+    seq: int
+    time: float
+    """Game seconds since the start, to a tenth of a second."""
+    item: str
+    quantity: int
+    price: int
+    """Coins per unit."""
+    own: Literal["bought", "sold"] | None = None
+    """Present when the resident the connection views as took part."""
+
+
+class OrderView(_Message):
+    """A resting order of the resident the connection views as."""
+
+    id: int
+    side: Literal["buy", "sell"]
+    item: str
+    quantity: int
+    """Units still wanted or offered."""
+    price: int
+    """Coins per unit."""
+    remaining_seconds: float
+    """Time until it expires when this was sent."""
+
+
+class ExchangeView(_Message):
+    """The anonymous exchange at the market, see `exchange.py`."""
+
+    books: list[BookView]
+    """One per item traded, in a fixed order."""
+    fills: list[FillView]
+    """The latest `FILL_VIEW_LIMIT` fills of every item, oldest first."""
+    viewer_id: str | None = None
+    """The resident the connection viewed as when this was sent, whose orders `orders` lists
+    and whose fills `own` marks; left out for nobody. A page that has since chosen someone
+    else can tell this state is not about them yet."""
+    orders: list[OrderView]
+    """Resting orders of the resident the connection views as, oldest first; none when it views
+    as nobody. Others' orders show only as totals in the books."""
+    max_orders: int
+    """Resting orders a resident may have at once."""
 
 
 class CrystalTierView(_Message):
@@ -564,6 +702,10 @@ class WorldView(_Message):
     tower_rules: TowerRulesView
     market: MarketView | None = None
     """Left out on a map without a market."""
+    quarries: list[QuarryView]
+    workshop: WorkshopView | None = None
+    """Left out on a map without a workshop."""
+    exchange: ExchangeView
     speech: list[SpeechView]
     """The latest `SPEECH_VIEW_LIMIT` lines the connection may see, oldest first: every line
     spoken aloud, and the whispers to or from the resident it views as."""
@@ -573,8 +715,8 @@ class WorldView(_Message):
     contract_proposals: list[ContractProposalView]
     """Contract proposals to or from the viewed resident, oldest first."""
     contracts: list[ContractView]
-    agent_timeline: AgentTimelineView | None = None
     """Contracts in force the viewed resident is a party to, oldest first."""
+    agent_timeline: AgentTimelineView | None = None
 
 
 LLMSettingName = Literal["baseUrl", "apiKey", "model"]
@@ -646,8 +788,8 @@ def world_view(
     agent_turns: Mapping[str, Sequence[AgentTurnView]] | None = None,
 ) -> WorldView:
     """The world as a connection viewing as resident `viewer`, or as nobody, sees it: the
-    same for everyone except whispers, offers and contracts, of which it sees only the
-    viewer's. `agents` maps
+    same for everyone except whispers, offers, contracts and exchange orders, of which it sees
+    only the viewer's. `agents` maps
     the residents agents drive to the model each asks, None for a scripted brain."""
     driven = agents or {}
     places = ranks(world)
@@ -697,6 +839,8 @@ def world_view(
                 rank=places[resident.id],
                 energy=energy_total(world, resident.id),
                 crystals=_crystals_owned(world, resident.id),
+                shards=_owned(world, resident.id, SHARD),
+                crystals_refined=resident.crystals_refined,
                 harvesting=None
                 if resident.harvesting is None
                 else HarvestView(
@@ -704,6 +848,19 @@ def world_view(
                     amount=resident.harvesting.amount,
                     crystal=resident.harvesting.crystal,
                     remaining_seconds=max(resident.harvesting.ends_at - world.time, 0.0),
+                ),
+                digging=None
+                if resident.digging is None
+                else DigView(
+                    quarry_id=resident.digging.quarry_id,
+                    amount=resident.digging.amount,
+                    remaining_seconds=max(resident.digging.ends_at - world.time, 0.0),
+                ),
+                refining=None
+                if resident.refining is None
+                else RefineView(
+                    tier=resident.refining.tier,
+                    remaining_seconds=max(resident.refining.ends_at - world.time, 0.0),
                 ),
                 walking=None
                 if resident.walking is None
@@ -739,6 +896,34 @@ def world_view(
                 PricePointView(time=point.time, price=point.price) for point in world.market.history
             ],
         ),
+        quarries=[
+            QuarryView(
+                id=quarry.id,
+                position=_position_view(quarry.position),
+                radius=quarry.radius,
+                reserve=quarry.reserve,
+            )
+            for quarry in world.quarries
+        ],
+        workshop=None
+        if world.workshop is None
+        else WorkshopView(
+            position=_position_view(world.workshop.position),
+            radius=world.workshop.radius,
+            recipes=[
+                RecipeView(
+                    tier=recipe.tier,
+                    shards=recipe.shards,
+                    energy=recipe.energy,
+                    consumes=recipe.consumes,
+                    seconds=recipe.seconds,
+                )
+                for recipe in RECIPES
+            ],
+            speedup_per_crystal=SPEEDUP_PER_CRYSTAL,
+            fastest_share=FASTEST_SHARE,
+        ),
+        exchange=_exchange_view(world, viewer),
         speech=[
             SpeechView(
                 seq=line.seq,
@@ -808,14 +993,67 @@ def _proposal_view(event: Event, proposal: ContractProposal) -> ContractProposal
     )
 
 
-def _crystals_owned(world: World, resident_id: str) -> dict[str, int]:
+def _exchange_view(world: World, viewer: str | None) -> ExchangeView:
+    def own(fill: Fill) -> Literal["bought", "sold"] | None:
+        if viewer == fill.buyer_id:
+            return "bought"
+        return "sold" if viewer == fill.seller_id else None
+
+    return ExchangeView(
+        books=[
+            BookView(
+                item=item,
+                bids=[
+                    LevelView(price=price, quantity=quantity)
+                    for price, quantity in depth(world, item, "buy", BOOK_LEVELS_SHOWN)
+                ],
+                asks=[
+                    LevelView(price=price, quantity=quantity)
+                    for price, quantity in depth(world, item, "sell", BOOK_LEVELS_SHOWN)
+                ],
+            )
+            for item in EXCHANGE_ITEMS
+        ],
+        fills=[
+            FillView(
+                seq=fill.seq,
+                time=round(fill.time, 1),
+                item=fill.item,
+                quantity=fill.quantity,
+                price=fill.price,
+                own=own(fill),
+            )
+            for fill in world.orders.fills[-FILL_VIEW_LIMIT:]
+        ],
+        viewer_id=viewer,
+        orders=[
+            OrderView(
+                id=order.id,
+                side=order.side,
+                item=order.item,
+                quantity=order.quantity,
+                price=order.price,
+                remaining_seconds=max(order.expires_at - world.time, 0.0),
+            )
+            for order in world.orders.orders
+            if viewer is not None and order.resident_id == viewer
+        ],
+        max_orders=MAX_ORDERS,
+    )
+
+
+def _owned(world: World, resident_id: str, item: str) -> int:
+    """Items of `item` the resident carries or has set aside in offers and sell orders."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
-    owned = {
-        tier.tier: resident.inventory.count(tier.tier)
-        + reserved_items(world, resident_id, tier.tier)
-        + order_items(world.orders, resident_id, tier.tier)
-        for tier in CRYSTAL_TIERS
-    }
+    return (
+        resident.inventory.count(item)
+        + reserved_items(world, resident_id, item)
+        + order_items(world.orders, resident_id, item)
+    )
+
+
+def _crystals_owned(world: World, resident_id: str) -> dict[str, int]:
+    owned = {tier.tier: _owned(world, resident_id, tier.tier) for tier in CRYSTAL_TIERS}
     return {tier: count for tier, count in owned.items() if count > 0}
 
 
@@ -837,6 +1075,10 @@ def to_action(message: ActionMessage) -> Action:
             return SellEnergy(resident_id=action.resident_id, quantity=action.quantity)
         case BuyCrystalInput():
             return BuyCrystal(resident_id=action.resident_id, tier=action.tier)
+        case DigShardsInput():
+            return DigShards(action.resident_id, action.quarry_id)
+        case RefineCrystalInput():
+            return RefineCrystal(action.resident_id, action.tier)
         case BuildTowerInput():
             return BuildTower(action.resident_id, action.spring_id)
         case InstallCrystalInput():

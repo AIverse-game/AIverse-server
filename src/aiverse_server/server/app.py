@@ -470,7 +470,7 @@ class Game:
 
     def broadcast_world(self) -> None:
         """Send the world to every greeted connection as its viewer sees it; one encoding
-        per viewer, since only the whispers and deals differ."""
+        per viewer, since only the whispers, deals and exchange orders differ."""
         remaining = self.remaining()
         agents = self.agents()
         texts: dict[str | None, str] = {}
