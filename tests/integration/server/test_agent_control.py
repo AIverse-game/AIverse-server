@@ -10,18 +10,18 @@ from aiverse_server.agents.llm_brain import NO_SETTINGS, LLMSettings
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.economy.energy import ENERGY
 from aiverse_server.server.app import create_app
 from aiverse_server.server.protocol import PROTOCOL_VERSION
 
 WORLD = World(
     map=WorldMap(size=50),
     residents=(
-        Resident("a", "甲", "#112233", Position(0, 0), Inventory(((TOKEN, 100),))),
-        Resident("b", "乙", "#445566", Position(10, 10), Inventory(((TOKEN, 100),))),
+        Resident("a", "甲", "#112233", Position(0, 0), Inventory(((ENERGY, 100),))),
+        Resident("b", "乙", "#445566", Position(10, 10), Inventory(((ENERGY, 100),))),
         Resident("c", "丙", "#778899", Position(20, 20), Inventory(), left=True),
     ),
-    pools=(),
+    springs=(),
 )
 
 HELLO = json.dumps({"type": "hello", "protocolVersion": PROTOCOL_VERSION})
@@ -95,7 +95,7 @@ def test_a_page_hands_a_resident_to_a_model_and_everyone_sees_it() -> None:
 
             ws.send_text(start("a", **PAGE))
             result = ws.receive_json()
-            mine = ws.receive_json()["world"]
+            own = ws.receive_json()["world"]
             theirs = other.receive_json()["world"]
             # A new connection sees it from its first state.
             with client.websocket_connect("/ws") as late:
@@ -104,7 +104,7 @@ def test_a_page_hands_a_resident_to_a_model_and_everyone_sees_it() -> None:
     assert welcome["llmOverrides"] == [] and agents(before) == {}
     assert result == {"type": "agent_result", "residentId": "a", "ok": True}
     shown = {"a": {"model": "page-model"}}
-    assert agents(mine) == agents(theirs) == agents(first) == shown
+    assert agents(own) == agents(theirs) == agents(first) == shown
     assert brains.made[0].settings == ("https://page.example/v1", "page-key", "page-model")
 
 
@@ -314,8 +314,8 @@ def test_completed_turns_follow_the_viewer_and_survive_reconnecting() -> None:
     class TalkingBrain:
         async def take_turn(self, observation: Observation, tools: ResidentTools) -> str:
             tools.say("hello")
-            tools.buy_chip("MK1")  # No market in WORLD: show the rejected action too.
-            return "准备采矿"
+            tools.buy_crystal("C1")  # No market in WORLD: show the rejected action too.
+            return "准备汲取"
 
     with TestClient(
         create_app(
@@ -344,8 +344,8 @@ def test_completed_turns_follow_the_viewer_and_survive_reconnecting() -> None:
 
     turn = shown["agentTimeline"]["turns"][0]
     assert shown["agentTimeline"]["residentId"] == "a"
-    assert turn["summary"] == "准备采矿"
-    assert turn["before"]["tokens"] == 100 and turn["after"]["tokens"] == 98
+    assert turn["summary"] == "准备汲取"
+    assert turn["before"]["energy"] == 100 and turn["after"]["energy"] == 98
     assert [call["ok"] for call in turn["calls"]] == [True, False]
     assert other["agentTimeline"] == {"residentId": "b", "turns": []}
     assert "agentTimeline" not in nobody

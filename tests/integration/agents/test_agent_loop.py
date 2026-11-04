@@ -8,9 +8,9 @@ import pytest
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord, record_to_json
 from aiverse_server.agents.tools import ResidentTools
-from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
+from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
+from aiverse_server.economy.energy import ENERGY
 from aiverse_server.economy.market import quote
-from aiverse_server.economy.tokens import TOKEN
 from aiverse_server.game.actions import (
     CancelContract,
     LeaveGame,
@@ -19,17 +19,17 @@ from aiverse_server.game.actions import (
     ProposeContract,
     RespondToEvent,
     Say,
-    SellTokens,
+    SellEnergy,
 )
 from aiverse_server.server.app import Game
 
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((TOKEN, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((TOKEN, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((ENERGY, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((ENERGY, 100),)), coins=5000),
     ),
-    pools=(Pool("p1", Position(80, 50), 4, 300),),
+    springs=(Spring("p1", Position(80, 50), 4, 300),),
     market=Market(Position(50, 50), 5),
 )
 
@@ -180,7 +180,7 @@ def test_the_loop_wakes_for_an_offer_when_free() -> None:
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
 
-        game.act(OfferToSell("b", "a", TOKEN, 5, 80))
+        game.act(OfferToSell("b", "a", ENERGY, 5, 80))
         await _until(lambda: len(brain.seen) == 2)
 
         assert len(brain.seen[1].offers_to_me) == 1
@@ -192,7 +192,7 @@ def test_the_loop_wakes_for_an_offer_when_free() -> None:
 def test_the_loop_wakes_a_party_when_a_contract_ends_not_by_their_doing() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        game.act(ProposeContract("a", "b", False, TOKEN, 10, 100, 2, 60, deposit=10))
+        game.act(ProposeContract("a", "b", False, ENERGY, 10, 100, 2, 60, deposit=10))
         game.act(RespondToEvent("b", 1, True))
         buyer, supplier = Recorder(), Recorder()
         tasks = [
@@ -272,13 +272,13 @@ def test_an_agent_sells_at_the_price_it_saw_though_another_sold_meanwhile(
         clock.now = begins_at
         market = game.world.market
         assert market is not None
-        # What 30 tokens fetch at the round's start; it holds whenever in the game that is.
+        # What 30 energy fetch at the round's start; it holds whenever in the game that is.
         seen_price = quote(market, begins_at, 30)
         results = []
 
         def sell(seen: Observation, tools: ResidentTools) -> None:
-            game.act(SellTokens("b", 100))
-            results.append(tools.sell_tokens(30))
+            game.act(SellEnergy("b", 100))
+            results.append(tools.sell_energy(30))
 
         brain = Recorder(lambda seen, tools: None if results else sell(seen, tools))
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())

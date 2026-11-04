@@ -5,21 +5,21 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from aiverse_server.core.world import Inventory
-from aiverse_server.economy.rigs import RIG_PRICE
+from aiverse_server.economy.towers import TOWER_PRICE
 from aiverse_server.game.layout import create_default_world
 from aiverse_server.server.app import create_app
 from aiverse_server.server.protocol import PROTOCOL_VERSION
 
 
-def test_rig_actions_flow_through_websocket_and_broadcast_production() -> None:
+def test_tower_actions_flow_through_websocket_and_broadcast_production() -> None:
     initial = create_default_world(7)
     world = replace(
         initial,
         residents=tuple(
             replace(
                 r,
-                position=initial.pools[0].position,
-                inventory=Inventory((("token", 100), ("MK1", 1))),
+                position=initial.springs[0].position,
+                inventory=Inventory((("energy", 100), ("C1", 1))),
             )
             for r in initial.residents
         ),
@@ -38,23 +38,29 @@ def test_rig_actions_flow_through_websocket_and_broadcast_production() -> None:
             assert ws.receive_json() == {"type": "action_result", "ok": True}
             return ws.receive_json()["world"]  # type: ignore[no-any-return]
 
-        built = act({"type": "build_rig", "residentId": "r1", "poolId": world.pools[0].id})
+        built = act({"type": "build_tower", "residentId": "r1", "springId": world.springs[0].id})
         installed = act(
-            {"type": "install_chip", "residentId": "r2", "rigId": 1, "chip": "MK1", "deposit": 500}
+            {
+                "type": "install_crystal",
+                "residentId": "r2",
+                "towerId": 1,
+                "crystal": "C1",
+                "deposit": 500,
+            }
         )
         now[0] = 20
         ws.send_json({"type": "view_as", "residentId": "r2"})
         paid = ws.receive_json()["world"]
-        removed = act({"type": "remove_chip", "residentId": "r2", "rigId": 1, "slotId": 1})
+        removed = act({"type": "remove_crystal", "residentId": "r2", "towerId": 1, "slotId": 1})
         # A boolean must never be accepted as a payment amount.
         ws.send_text(
             json.dumps(
                 {
                     "type": "action",
                     "action": {
-                        "type": "fund_rig",
+                        "type": "fund_tower",
                         "residentId": "r2",
-                        "rigId": 1,
+                        "towerId": 1,
                         "slotId": 1,
                         "amount": True,
                     },
@@ -63,12 +69,12 @@ def test_rig_actions_flow_through_websocket_and_broadcast_production() -> None:
         )
         refused = ws.receive_json()
 
-    assert built["rigs"][0]["ownerId"] == "r1"
-    assert installed["residents"][1]["carriedChips"] == {}
-    assert installed["residents"][1]["rigBalance"] == 500
-    # Twice an MK1's 30 a job, for 30 rent and 12 electricity, as in the rig unit tests.
-    assert paid["residents"][1]["tokens"] == 160
-    assert paid["residents"][0]["coins"] == 10_000 - RIG_PRICE + 30
-    assert removed["rigs"][0]["slots"] == []
+    assert built["towers"][0]["ownerId"] == "r1"
+    assert installed["residents"][1]["carriedCrystals"] == {}
+    assert installed["residents"][1]["towerBalance"] == 500
+    # Twice an C1's 30 a job, for 30 rent and 12 upkeep, as in the tower unit tests.
+    assert paid["residents"][1]["energy"] == 160
+    assert paid["residents"][0]["coins"] == 10_000 - TOWER_PRICE + 30
+    assert removed["towers"][0]["slots"] == []
     assert removed["residents"][1]["spendableCoins"] == 9958
     assert refused["type"] == "error" and refused["code"] == "bad_message"

@@ -24,10 +24,10 @@ def test_the_prompt_says_a_longer_note_is_refused() -> None:
 def test_the_prompt_states_what_walking_costs() -> None:
     prompt = system_prompt("甲", "a")
 
-    assert "Walking costs 0.5 token per map unit, rounded up per walk" in prompt
+    assert "Walking costs 0.5 energy per map unit, rounded up per walk" in prompt
 
 
 def test_the_move_tool_quotes_the_same_walking_price_as_the_prompt() -> None:
     move = next(tool for tool in TOOLS if tool.name == "move_to")
 
-    assert "Costs 0.5 token per map unit" in move.description
+    assert "Costs 0.5 energy per map unit" in move.description

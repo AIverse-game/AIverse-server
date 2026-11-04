@@ -10,19 +10,19 @@ from aiverse_server.agents.llm_brain import ChatCompletionsBrain, LLMError
 from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord
 from aiverse_server.agents.tools import ResidentTools
-from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
-from aiverse_server.economy.rigs import RIG_PRICE
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
+from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.towers import TOWER_PRICE
 from aiverse_server.game.actions import MoveTo
 from aiverse_server.server.app import Game
 
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((TOKEN, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((TOKEN, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((ENERGY, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((ENERGY, 100),)), coins=5000),
     ),
-    pools=(Pool("p1", Position(80, 50), 4, 300),),
+    springs=(Spring("p1", Position(80, 50), 4, 300),),
     market=Market(Position(50, 50), 5),
 )
 
@@ -71,11 +71,11 @@ def test_llm_brain_runs_the_tools_the_model_calls() -> None:
         call = {
             "id": "c1",
             "type": "function",
-            "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'},
+            "function": {"name": "buy_crystal", "arguments": '{"tier": "C2"}'},
         }
         replies = [
             httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
-            httpx.Response(200, json=_reply({"content": "Bought MK2, off to mine."})),
+            httpx.Response(200, json=_reply({"content": "Bought C2, off to harvest."})),
         ]
         requests: list[httpx.Request] = []
         brain = ChatCompletionsBrain(
@@ -84,14 +84,14 @@ def test_llm_brain_runs_the_tools_the_model_calls() -> None:
 
         remark = await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
-        assert remark == "Bought MK2, off to mine."
-        assert me(game, "a").inventory.count("MK2") == 1
+        assert remark == "Bought C2, off to harvest."
+        assert me(game, "a").inventory.count("C2") == 1
         assert brain.requests == 2
         first = json.loads(requests[0].content)
         assert requests[0].url == "https://llm.example/v1/chat/completions"
         assert requests[0].headers["Authorization"] == "Bearer secret"
         assert first["model"] == "vendor/test"
-        assert {tool["function"]["name"] for tool in first["tools"]} >= {"move_to", "mine"}
+        assert {tool["function"]["name"] for tool in first["tools"]} >= {"move_to", "harvest"}
         assert "甲" in first["messages"][0]["content"]
         second = json.loads(requests[1].content)["messages"]
         assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "c1"
@@ -104,10 +104,10 @@ def test_llm_brain_runs_the_tools_the_model_calls() -> None:
 def test_the_next_round_hears_what_the_tools_did_in_this_one() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        call = {"id": "c1", "function": {"name": "buy_crystal", "arguments": '{"tier": "C2"}'}}
         replies = [
             httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
-            httpx.Response(200, json=_reply({"content": "Bought MK2, off to mine."})),
+            httpx.Response(200, json=_reply({"content": "Bought C2, off to harvest."})),
             httpx.Response(200, json=_reply({"content": "Waiting."})),
         ]
         requests: list[httpx.Request] = []
@@ -117,21 +117,21 @@ def test_the_next_round_hears_what_the_tools_did_in_this_one() -> None:
         await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
         next_round = json.loads(requests[2].content)["messages"][1]["content"]
-        assert "buy_chip(model='MK2') -> ok" in next_round
+        assert "buy_crystal(tier='C2') -> ok" in next_round
 
     asyncio.run(scenario())
 
 
 def test_the_next_round_hears_what_a_tool_told_the_model() -> None:
-    at_pool = replace(WORLD.residents[0], position=Position(80, 50), coins=RIG_PRICE)
-    world = replace(WORLD, residents=(at_pool, WORLD.residents[1]))
+    at_spring = replace(WORLD.residents[0], position=Position(80, 50), coins=TOWER_PRICE)
+    world = replace(WORLD, residents=(at_spring, WORLD.residents[1]))
 
     async def scenario() -> None:
         game, _ = make_game(world)
-        call = {"id": "c1", "function": {"name": "build_rig", "arguments": '{"pool_id": "p1"}'}}
+        call = {"id": "c1", "function": {"name": "build_tower", "arguments": '{"spring_id": "p1"}'}}
         replies = [
             httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
-            httpx.Response(200, json=_reply({"content": "Built a rig."})),
+            httpx.Response(200, json=_reply({"content": "Built a tower."})),
             httpx.Response(200, json=_reply({"content": "Waiting."})),
         ]
         requests: list[httpx.Request] = []
@@ -141,7 +141,7 @@ def test_the_next_round_hears_what_a_tool_told_the_model() -> None:
         await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
         next_round = json.loads(requests[2].content)["messages"][1]["content"]
-        assert "build_rig(pool_id='p1') -> ok (built rig 1;" in next_round
+        assert "build_tower(spring_id='p1') -> ok (built tower 1;" in next_round
 
     asyncio.run(scenario())
 
@@ -155,7 +155,7 @@ def test_a_round_ends_once_its_tools_leave_the_resident_walking() -> None:
                 "id": "c2",
                 "function": {
                     "name": "remember",
-                    "arguments": '{"text": "mine p1", "term": "short_term"}',
+                    "arguments": '{"text": "harvest p1", "term": "short_term"}',
                 },
             },
         ]
@@ -176,14 +176,14 @@ def test_a_round_ends_once_its_tools_leave_the_resident_walking() -> None:
     asyncio.run(scenario())
 
 
-def test_a_round_ends_once_its_tools_leave_the_resident_mining() -> None:
-    tokens_and_chip = Inventory(((TOKEN, 100), ("MK1", 1)))
-    miner = replace(WORLD.residents[0], position=Position(80, 50), inventory=tokens_and_chip)
-    world = replace(WORLD, residents=(miner, WORLD.residents[1]))
+def test_a_round_ends_once_its_tools_leave_the_resident_harvesting() -> None:
+    energy_and_crystal = Inventory(((ENERGY, 100), ("C1", 1)))
+    harvester = replace(WORLD.residents[0], position=Position(80, 50), inventory=energy_and_crystal)
+    world = replace(WORLD, residents=(harvester, WORLD.residents[1]))
 
     async def scenario() -> None:
         game, _ = make_game(world)
-        call = {"id": "c1", "function": {"name": "mine", "arguments": '{"pool_id": "p1"}'}}
+        call = {"id": "c1", "function": {"name": "harvest", "arguments": '{"spring_id": "p1"}'}}
         replies = [httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]}))]
         requests: list[httpx.Request] = []
         brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
@@ -191,7 +191,7 @@ def test_a_round_ends_once_its_tools_leave_the_resident_mining() -> None:
         await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
         assert len(requests) == 1
-        assert me(game, "a").mining is not None
+        assert me(game, "a").harvesting is not None
 
     asyncio.run(scenario())
 
@@ -199,7 +199,7 @@ def test_a_round_ends_once_its_tools_leave_the_resident_mining() -> None:
 def test_an_empty_reply_after_acting_ends_the_round() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        call = {"id": "c1", "function": {"name": "buy_crystal", "arguments": '{"tier": "C2"}'}}
         replies = [
             httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
             httpx.Response(200, json=_reply({"content": ""})),
@@ -328,10 +328,10 @@ def test_a_round_reduces_the_limit_when_it_enters_the_last_three_minutes() -> No
     async def scenario() -> None:
         game, clock = make_game()
         clock.now = 419
-        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        call = {"id": "c1", "function": {"name": "buy_crystal", "arguments": '{"tier": "C2"}'}}
         replies = [
             httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
-            httpx.Response(200, json=_reply({"content": "Bought MK2."})),
+            httpx.Response(200, json=_reply({"content": "Bought C2."})),
         ]
         requests: list[httpx.Request] = []
 
@@ -389,20 +389,20 @@ def test_the_brain_uses_the_configured_early_warning_threshold() -> None:
 def test_an_empty_reply_is_asked_again() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        call = {"id": "c1", "function": {"name": "buy_chip", "arguments": '{"model": "MK2"}'}}
+        call = {"id": "c1", "function": {"name": "buy_crystal", "arguments": '{"tier": "C2"}'}}
         replies = [
             httpx.Response(200, json=_reply({"content": ""})),
             httpx.Response(200, json=_reply({"content": None, "tool_calls": [call]})),
-            httpx.Response(200, json=_reply({"content": "Bought MK2."})),
+            httpx.Response(200, json=_reply({"content": "Bought C2."})),
         ]
         requests: list[httpx.Request] = []
         brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
 
         remark = await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
-        assert remark == "Bought MK2."
+        assert remark == "Bought C2."
         assert len(requests) == 3
-        assert me(game, "a").inventory.count("MK2") == 1
+        assert me(game, "a").inventory.count("C2") == 1
 
     asyncio.run(scenario())
 
@@ -410,7 +410,7 @@ def test_an_empty_reply_is_asked_again() -> None:
 def test_a_round_that_gets_nothing_to_act_on_twice_raises_why() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        cut_off = {"message": {"content": "I'm at the pool and"}, "finish_reason": "length"}
+        cut_off = {"message": {"content": "I'm at the spring and"}, "finish_reason": "length"}
         replies = [
             httpx.Response(200, json=_reply({"content": None})),
             httpx.Response(200, json={"choices": [cut_off]}),

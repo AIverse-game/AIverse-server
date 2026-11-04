@@ -1,6 +1,6 @@
 """Contracts: standing deals that settle future deliveries between two residents.
 
-A contract says "the supplier delivers 30 tokens to the buyer 4 times within the next 300
+A contract says "the supplier delivers 30 energy to the buyer 4 times within the next 300
 seconds, and each delivery pays them 500 coins". A single delivery is a contract for one.
 Either party proposes it with a `ContractProposal`, an event, see `events.py`, and it comes
 into force when the other accepts. The clock starts then.

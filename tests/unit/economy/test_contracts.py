@@ -25,7 +25,7 @@ from aiverse_server.economy.contracts import (
     contract_coins,
     contracts_of,
 )
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.economy.energy import ENERGY
 from aiverse_server.game.actions import (
     ActionRejected,
     CancelContract,
@@ -37,18 +37,18 @@ from aiverse_server.game.actions import (
 from aiverse_server.game.clock import next_due, settle_due
 from aiverse_server.game.lifecycle import end_game, total_coins
 
-# a has coins and wants tokens; b mines tokens for a.
+# a has coins and wants energy; b harvests energy for a.
 WORLD = World(
     map=WorldMap(size=10),
     residents=(
-        Resident("a", "a", "#ffffff", Position(1, 1), Inventory(((TOKEN, 10),)), coins=2000),
-        Resident("b", "b", "#000000", Position(9, 9), Inventory(((TOKEN, 100),)), coins=0),
+        Resident("a", "a", "#ffffff", Position(1, 1), Inventory(((ENERGY, 10),)), coins=2000),
+        Resident("b", "b", "#000000", Position(9, 9), Inventory(((ENERGY, 100),)), coins=0),
     ),
 )
 
-# 30 tokens per delivery for 500 coins, up to 3 times within 60 seconds, proposed by the
+# 30 energy per delivery for 500 coins, up to 3 times within 60 seconds, proposed by the
 # supplier or by the buyer.
-BY_SUPPLIER = ContractProposal(True, TOKEN, 30, 500, 3, 60)
+BY_SUPPLIER = ContractProposal(True, ENERGY, 30, 500, 3, 60)
 BY_BUYER = replace(BY_SUPPLIER, sender_supplies=False)
 
 
@@ -141,8 +141,8 @@ def test_unworkable_terms_are_refused(changes: dict[str, Any]) -> None:
 
 def test_each_delivery_moves_the_items_and_pays_from_the_coins_set_aside() -> None:
     world = perform(signed(), Deliver("b", 1))
-    assert holdings(world, "b") == ({TOKEN: 70}, 500)
-    assert holdings(world, "a") == ({TOKEN: 40}, 500)
+    assert holdings(world, "b") == ({ENERGY: 70}, 500)
+    assert holdings(world, "a") == ({ENERGY: 40}, 500)
     assert the_contract(world).deliveries_left == 2
     assert the_contract(world).escrow == 1000
 
@@ -151,8 +151,8 @@ def test_the_last_delivery_ends_the_contract() -> None:
     world = signed()
     for _ in range(3):
         world = perform(world, Deliver("b", 1))
-    assert holdings(world, "b") == ({TOKEN: 10}, 1500)
-    assert holdings(world, "a") == ({TOKEN: 100}, 500)
+    assert holdings(world, "b") == ({ENERGY: 10}, 1500)
+    assert holdings(world, "a") == ({ENERGY: 100}, 500)
     assert world.contracts.active == ()
     with pytest.raises(ActionRejected) as rejection:
         perform(world, Deliver("b", 1))
@@ -165,7 +165,7 @@ def test_a_supplier_without_the_items_cannot_deliver() -> None:
         world,
         residents=(
             world.residents[0],
-            replace(world.residents[1], inventory=Inventory(((TOKEN, 29),))),
+            replace(world.residents[1], inventory=Inventory(((ENERGY, 29),))),
         ),
     )
     with pytest.raises(ActionRejected) as rejection:
@@ -193,13 +193,13 @@ def test_outsiders_see_no_contract() -> None:
     assert contracts_of(world, "c") == ()
 
 
-def test_a_delivery_of_the_last_token_takes_the_supplier_out() -> None:
+def test_a_delivery_of_the_last_energy_takes_the_supplier_out() -> None:
     world = signed()
     world = replace(
         world,
         residents=(
             world.residents[0],
-            replace(world.residents[1], inventory=Inventory(((TOKEN, 30),))),
+            replace(world.residents[1], inventory=Inventory(((ENERGY, 30),))),
         ),
     )
     world = perform(world, Deliver("b", 1))
@@ -238,8 +238,8 @@ def test_the_supplier_may_cancel_and_the_buyer_gets_the_rest_back() -> None:
     world = perform(signed(), Deliver("b", 1))
     world = perform(world, CancelContract("b", 1))
     assert world.contracts.active == ()
-    assert holdings(world, "a") == ({TOKEN: 40}, 1500)
-    assert holdings(world, "b") == ({TOKEN: 70}, 500)
+    assert holdings(world, "a") == ({ENERGY: 40}, 1500)
+    assert holdings(world, "b") == ({ENERGY: 70}, 500)
 
 
 @pytest.mark.parametrize("leaver", ["a", "b"])
@@ -318,7 +318,7 @@ def test_each_delivery_hands_back_its_deposit() -> None:
     assert coin_balance(once, "b") == 600
     assert the_contract(once).deposit_held == 200
     assert contract_coins(once, "b") == 200
-    assert holdings(done, "b") == ({TOKEN: 10}, 1800)
+    assert holdings(done, "b") == ({ENERGY: 10}, 1800)
     end = last_end(done)
     assert (end.reason, end.by, end.forfeit, end.contract.deliveries_left) == (
         "completed",
@@ -386,7 +386,7 @@ def test_the_world_keeps_only_the_latest_endings() -> None:
 
 
 def test_propose_contract_sends_a_proposal_either_side_may_make() -> None:
-    world = perform(WORLD, ProposeContract("a", "b", False, TOKEN, 30, 500, 3, 60))
+    world = perform(WORLD, ProposeContract("a", "b", False, ENERGY, 30, 500, 3, 60))
 
     (event,) = world.events.pending
     assert event.payload == BY_BUYER
@@ -396,8 +396,8 @@ def test_propose_contract_sends_a_proposal_either_side_may_make() -> None:
 @pytest.mark.parametrize(
     ("action", "code"),
     [
-        (ProposeContract("a", "a", True, TOKEN, 30, 500, 3, 60), "self_addressed"),
-        (ProposeContract("a", "b", False, TOKEN, 30, 1000, 3, 60), "not_enough_coins"),
+        (ProposeContract("a", "a", True, ENERGY, 30, 500, 3, 60), "self_addressed"),
+        (ProposeContract("a", "b", False, ENERGY, 30, 1000, 3, 60), "not_enough_coins"),
     ],
 )
 def test_proposals_that_cannot_be_sent_are_rejected(action: ProposeContract, code: str) -> None:

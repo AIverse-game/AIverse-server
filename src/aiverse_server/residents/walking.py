@@ -1,8 +1,8 @@
 """Walking: residents cross the map at a fixed speed instead of arriving at once.
 
 `MoveTo` starts a walk in a straight line at `WALK_SPEED`. The resident pays for the whole
-walk when setting off, see `tokens.walk_cost`, and arrives `walk_seconds` of game time later.
-Until then they are busy, as when mining: they can do nothing but talk or leave the game.
+walk when setting off, see `energy.walk_cost`, and arrives `walk_seconds` of game time later.
+Until then they are busy, as when harvesting: they can do nothing but talk or leave the game.
 During the walk `Resident.position` stays where they set off; `position_at` tells where they
 are on the way, which is what others see. Leaving the game, or the game ending, stops them
 there.
@@ -21,8 +21,8 @@ from dataclasses import replace
 from ..core.world import Position, Resident, WalkJob, World
 
 WALK_SPEED = 2.5
-"""Map units a resident walks per game second. A pool is about 20 units from the nearest
-spot on the default map, some 8 seconds away, close to the 10 seconds one mining job takes;
+"""Map units a resident walks per game second. A spring is about 20 units from the nearest
+spot on the default map, some 8 seconds away, close to the 10 seconds one harvesting job takes;
 crossing the whole map takes 40."""
 
 

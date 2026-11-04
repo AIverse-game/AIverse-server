@@ -9,9 +9,9 @@ WORLD = World(WorldMap(10), (Resident("a", "a", "#123456", Position(1, 1), coins
 
 
 def test_a_transfer_is_noted_at_the_current_game_time() -> None:
-    world = record_transfer(replace(WORLD, time=12.5), SYSTEM, "a", 40, "market", "token", 2)
+    world = record_transfer(replace(WORLD, time=12.5), SYSTEM, "a", 40, "market", "energy", 2)
 
-    assert world.ledger == Ledger((Transfer(12.5, SYSTEM, "a", 40, "market", "token", 2),))
+    assert world.ledger == Ledger((Transfer(12.5, SYSTEM, "a", 40, "market", "energy", 2),))
 
 
 def test_noting_a_transfer_moves_no_coins() -> None:
@@ -23,7 +23,7 @@ def test_noting_a_transfer_moves_no_coins() -> None:
 def test_a_full_ledger_drops_the_oldest_transfer_and_counts_it() -> None:
     full = Ledger(tuple(Transfer(0, SYSTEM, "a", n + 1, "market") for n in range(LEDGER_LIMIT)))
 
-    world = record_transfer(replace(WORLD, ledger=full), "a", SYSTEM, 7, "rig_build")
+    world = record_transfer(replace(WORLD, ledger=full), "a", SYSTEM, 7, "tower_build")
 
     assert len(world.ledger.transfers) == LEDGER_LIMIT
     assert world.ledger.transfers[0].amount == 2
@@ -37,7 +37,7 @@ def test_a_full_ledger_drops_the_oldest_transfer_and_counts_it() -> None:
         (SYSTEM, "a", 0, None, 0),
         (SYSTEM, "a", True, None, 0),
         ("a", "a", 5, None, 0),
-        (SYSTEM, "a", 5, "token", 0),
+        (SYSTEM, "a", 5, "energy", 0),
         (SYSTEM, "a", 5, None, 3),
     ],
 )

@@ -61,7 +61,7 @@ def main() -> None:
         "--seed",
         type=int,
         default=None,
-        help="seed for where the token pools go (default: different every game)",
+        help="seed for where the springs go (default: different every game)",
     )
     parser.add_argument(
         "--config",

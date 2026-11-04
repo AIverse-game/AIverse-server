@@ -5,20 +5,20 @@ import pytest
 
 from aiverse_server.core.inventory import item_count
 from aiverse_server.core.world import (
+    HarvestJob,
     Inventory,
-    MiningJob,
-    Pool,
     Position,
     Resident,
+    Spring,
     WalkJob,
     World,
     WorldMap,
 )
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.economy.energy import ENERGY
 from aiverse_server.game.actions import (
     ActionRejected,
+    Harvest,
     LeaveGame,
-    Mine,
     MoveTo,
     OfferToSell,
     RespondToEvent,
@@ -31,13 +31,13 @@ from aiverse_server.server.app import Game, Outbox
 from aiverse_server.server.protocol import world_view
 
 
-def resident(resident_id: str, x: float, y: float, tokens: int = 100) -> Resident:
+def resident(resident_id: str, x: float, y: float, energy: int = 100) -> Resident:
     return Resident(
         id=resident_id,
         name=resident_id,
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((TOKEN, tokens), ("MK1", 1)) if tokens else ()),
+        inventory=Inventory(((ENERGY, energy), ("C1", 1)) if energy else ()),
         coins=100,
     )
 
@@ -45,11 +45,11 @@ def resident(resident_id: str, x: float, y: float, tokens: int = 100) -> Residen
 WORLD = World(
     map=WorldMap(size=100),
     residents=(resident("a", 0, 0), resident("b", 50, 50)),
-    pools=(Pool("p", Position(40, 0), radius=4, reserve=100),),
+    springs=(Spring("p", Position(40, 0), radius=4, reserve=100),),
     time=2.0,
 )
 
-# a sets off east along the top edge: 40 units, so 20 tokens and 40 / WALK_SPEED seconds.
+# a sets off east along the top edge: 40 units, so 20 energy and 40 / WALK_SPEED seconds.
 WALKING = perform(WORLD, MoveTo("a", Position(40, 0)))
 ARRIVAL = 2.0 + 40 / WALK_SPEED
 
@@ -62,7 +62,7 @@ def test_a_walk_takes_its_distance_over_the_speed_and_is_paid_when_setting_off()
     a = WALKING.residents[0]
     assert a.walking == WalkJob(Position(40, 0), departs_at=2.0, arrives_at=ARRIVAL)
     assert a.position == Position(0, 0)
-    assert item_count(WALKING, "a", TOKEN) == 80
+    assert item_count(WALKING, "a", ENERGY) == 80
     assert walk_seconds(Position(0, 0), Position(3, 4)) == 5 / WALK_SPEED
     assert next_due(WALKING) == ARRIVAL
 
@@ -90,8 +90,8 @@ def test_standing_still_starts_no_walk() -> None:
     assert perform(WORLD, MoveTo("a", Position(0, 0))).residents[0].walking is None
 
 
-@pytest.mark.parametrize("action", [MoveTo("a", Position(5, 5)), Mine("a", "p")])
-def test_a_walker_can_do_nothing_but_leave(action: MoveTo | Mine) -> None:
+@pytest.mark.parametrize("action", [MoveTo("a", Position(5, 5)), Harvest("a", "p")])
+def test_a_walker_can_do_nothing_but_leave(action: MoveTo | Harvest) -> None:
     with pytest.raises(ActionRejected) as raised:
         perform(WALKING, action)
 
@@ -101,7 +101,7 @@ def test_a_walker_can_do_nothing_but_leave(action: MoveTo | Mine) -> None:
 def test_a_walker_can_act_again_once_there() -> None:
     arrived = at(WALKING, ARRIVAL)
 
-    assert perform(arrived, Mine("a", "p")).residents[0].mining is not None
+    assert perform(arrived, Harvest("a", "p")).residents[0].harvesting is not None
 
 
 def test_leaving_on_the_way_stops_the_walker_where_they_are() -> None:
@@ -120,9 +120,9 @@ def test_the_end_of_the_game_stops_walkers_where_they_are() -> None:
     assert world.residents[0].walking is None
 
 
-def test_selling_the_last_tokens_on_the_way_takes_the_walker_out_on_arrival() -> None:
-    world = replace(WORLD, residents=(resident("a", 0, 0, tokens=30), WORLD.residents[1]))
-    world = perform(world, OfferToSell("a", "b", TOKEN, 10, 5))
+def test_selling_the_last_energy_on_the_way_takes_the_walker_out_on_arrival() -> None:
+    world = replace(WORLD, residents=(resident("a", 0, 0, energy=30), WORLD.residents[1]))
+    world = perform(world, OfferToSell("a", "b", ENERGY, 10, 5))
     world = perform(world, MoveTo("a", Position(40, 0)))
 
     sold = perform(world, RespondToEvent("b", 1, accept=True))
@@ -181,7 +181,7 @@ def test_beginning_a_turn_through_the_game_brings_the_world_up_to_now_first() ->
     assert seen.position == Position(40, 0)
     assert seen.discovered == ("p",)
     # What a noticed stays with the game's world.
-    assert [s.pool_id for s in game.world.residents[0].memory.known_pools] == ["p"]
+    assert [s.spring_id for s in game.world.residents[0].memory.known_springs] == ["p"]
 
 
 def test_beginning_a_turn_through_the_game_is_refused_for_an_unknown_resident() -> None:
@@ -197,7 +197,7 @@ def test_beginning_a_turn_through_the_game_is_refused_for_an_unknown_resident() 
     ("change", "message"),
     [
         ({"left": True}, "left the game but is still walking"),
-        ({"mining": MiningJob("p", 9.0, 1, "MK1")}, "walking and mining at once"),
+        ({"harvesting": HarvestJob("p", 9.0, 1, "C1")}, "walking and harvesting at once"),
         ({"walking": WalkJob(Position(1, 1), 5.0, 4.0)}, "ends early"),
     ],
 )

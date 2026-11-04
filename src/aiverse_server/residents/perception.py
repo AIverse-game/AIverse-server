@@ -5,17 +5,17 @@ start of each round before choosing what to do; it brings the game time up to no
 calls `begin_turn` here. The resident looks around within `PERCEPTION_RADIUS`
 of where they stand and notices:
 
-- the pools and other residents in range, as they are right now, walkers where they have got
+- the springs and other residents in range, as they are right now, walkers where they have got
   to on their way (see `walking.py`);
 - what others did in range since the resident last looked, from the world's activity log.
 
-Seeing a pool discovers it: the resident remembers where it is, and its reserve as last
+Seeing a spring discovers it: the resident remembers where it is, and its reserve as last
 seen, after walking away (`Resident.memory`). That holds on the way too: a walk discovers
-every pool within `PERCEPTION_RADIUS` of the line walked, on either side, not only those near
+every spring within `PERCEPTION_RADIUS` of the line walked, on either side, not only those near
 where it starts or ends. A resident who looks while still walking has seen the stretch
 walked so far; the whole line is settled when the walk ends, see `record_discoveries`, and
-what it turned up is reported by the next look in `Perception.discovered`. Passing a pool
-already known refreshes nothing, as what it held at that moment is not known. Only pools are
+what it turned up is reported by the next look in `Perception.discovered`. Passing a spring
+already known refreshes nothing, as what it held at that moment is not known. Only springs are
 found this way: residents and their activity are noticed from where one stands, since the
 world keeps no history of where they were. Other residents are not remembered, since
 their positions are public anyway (see the observation rules in the design document of the
@@ -23,8 +23,8 @@ client repository). Range is measured from where the perceiver stands now, not w
 stood when something happened; a move is in range when either end is.
 
 The market is in sight wherever the resident stands: its place and price are public, like a
-price board in town, see `market.py`, and so are the chips on sale there, see
-`chips.py`.
+price board in town, see `market.py`, and so are the crystals on sale there, see
+`crystals.py`.
 
 Each look also hands back the notes the resident chose to keep, long and short term, with
 the expired ones cleared first, see `memory.py`, and what was said in their hearing since
@@ -32,7 +32,7 @@ they last looked, their own words included, see `speech.py`, and the server's no
 everyone, see `lifecycle.announce`.
 
 `record_activity` fills the log by comparing the world before and after a change.
-`actions.perform` and the server's clock call it, so every walk, mining job and departure is
+`actions.perform` and the server's clock call it, so every walk, harvesting job and departure is
 logged however it came about. The log keeps the latest `ACTIVITY_LIMIT` entries, so a
 resident who looks rarely may miss the oldest.
 
@@ -49,12 +49,12 @@ from ..core.world import (
     ActivityLog,
     Note,
     Notice,
-    PoolSighting,
     Position,
     Speech,
+    SpringSighting,
     World,
 )
-from ..economy.chips import CHIP_MODELS, ChipModel
+from ..economy.crystals import CRYSTAL_TIERS, CrystalTier
 from ..economy.market import unit_price
 from ..game.lifecycle import check_can_act
 from .memory import forget_expired
@@ -71,8 +71,8 @@ class ResidentSighting:
     resident_id: str
     name: str
     position: Position
-    mining_pool_id: str | None
-    """The pool they are busy mining, or None."""
+    harvesting_spring_id: str | None
+    """The spring they are busy harvesting, or None."""
     walking_to: Position | None
     """Where they are walking to, or None."""
     left: bool
@@ -85,10 +85,10 @@ class MarketSighting:
     position: Position
     radius: float
     price: float
-    """Coins one more token fetches right now, before rounding; it falls as tokens are sold
+    """Coins one more energy fetches right now, before rounding; it falls as energy is sold
     and recovers with time."""
-    chips: tuple[ChipModel, ...]
-    """Chips on sale here at fixed prices, worst first."""
+    crystals: tuple[CrystalTier, ...]
+    """Crystals on sale here at fixed prices, worst first."""
 
 
 @dataclass(frozen=True)
@@ -98,17 +98,17 @@ class Perception:
     time: float
     position: Position
     """Where the resident was when looking."""
-    pools: tuple[PoolSighting, ...]
-    """Pools in range right now."""
+    springs: tuple[SpringSighting, ...]
+    """Springs in range right now."""
     residents: tuple[ResidentSighting, ...]
     """Other residents in range right now."""
     activity: tuple[Activity, ...]
     """What others did in range since the resident last looked, oldest first."""
     discovered: tuple[str, ...]
-    """Ids of the pools seen for the first time since the last look, from where the resident
+    """Ids of the springs seen for the first time since the last look, from where the resident
     stands, along the stretch walked, or on walks finished meanwhile."""
-    known_pools: tuple[PoolSighting, ...]
-    """Every pool discovered so far, including this round's, at its latest sighting."""
+    known_springs: tuple[SpringSighting, ...]
+    """Every spring discovered so far, including this round's, at its latest sighting."""
     long_term: tuple[Note, ...]
     """The notes the resident keeps for the whole game, oldest first, see `memory.py`."""
     short_term: tuple[Note, ...]
@@ -125,21 +125,23 @@ class Perception:
 def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
     """Look around at the start of a round: returns the world with the resident's memory
     brought up to date, and what they noticed. Refused with `GameError` for a resident who
-    does not exist or has left, and once the game is over; a busy miner can still look."""
+    does not exist or has left, and once the game is over; a busy harvester can still look."""
     check_can_act(world, resident_id)
     me = next(resident for resident in world.residents if resident.id == resident_id)
     here = position_at(me, world.time)
-    pools = tuple(
-        PoolSighting(pool.id, pool.position, pool.radius, pool.reserve, world.time)
-        for pool in world.pools
-        if _in_range(here, pool.position)
+    springs = tuple(
+        SpringSighting(spring.id, spring.position, spring.radius, spring.reserve, world.time)
+        for spring in world.springs
+        if _in_range(here, spring.position)
     )
     residents = tuple(
         ResidentSighting(
             resident_id=other.id,
             name=other.name,
             position=there,
-            mining_pool_id=other.mining.pool_id if other.mining is not None else None,
+            harvesting_spring_id=other.harvesting.spring_id
+            if other.harvesting is not None
+            else None,
             walking_to=other.walking.target if other.walking is not None else None,
             left=other.left,
         )
@@ -165,21 +167,21 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
     notices = tuple(
         notice for notice in world.notices.entries if notice.seq > me.memory.notices_seen
     )
-    known = {sighting.pool_id: sighting for sighting in me.memory.known_pools}
-    # The stretch walked so far, if walking, may turn up pools not seen before.
+    known = {sighting.spring_id: sighting for sighting in me.memory.known_springs}
+    # The stretch walked so far, if walking, may turn up springs not seen before.
     passed = _unknown_along(world, known, me.position, here)
     discovered = tuple(
         dict.fromkeys(
             (
                 *me.memory.found_on_walks,
-                *(s.pool_id for s in (*passed, *pools) if s.pool_id not in known),
+                *(s.spring_id for s in (*passed, *springs) if s.spring_id not in known),
             )
         )
     )
-    known.update((sighting.pool_id, sighting) for sighting in (*passed, *pools))
+    known.update((sighting.spring_id, sighting) for sighting in (*passed, *springs))
     memory = replace(
         forget_expired(me.memory, world.time),
-        known_pools=tuple(known.values()),
+        known_springs=tuple(known.values()),
         found_on_walks=(),
         activity_seen=world.activity.next_seq - 1,
         speech_seen=world.speech.next_seq - 1,
@@ -192,11 +194,11 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
     perception = Perception(
         time=world.time,
         position=here,
-        pools=pools,
+        springs=springs,
         residents=residents,
         activity=activity,
         discovered=discovered,
-        known_pools=memory.known_pools,
+        known_springs=memory.known_springs,
         long_term=memory.long_term,
         short_term=memory.short_term,
         market=None
@@ -205,7 +207,7 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
             world.market.position,
             world.market.radius,
             unit_price(world.market, world.time),
-            CHIP_MODELS,
+            CRYSTAL_TIERS,
         ),
         speech=speech,
         notices=notices,
@@ -213,17 +215,17 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
     return replace(world, residents=residents_after), perception
 
 
-def pools_in_sight(world: World, resident_id: str) -> frozenset[str]:
-    """Ids of the pools within `PERCEPTION_RADIUS` of where the resident stands right now."""
+def springs_in_sight(world: World, resident_id: str) -> frozenset[str]:
+    """Ids of the springs within `PERCEPTION_RADIUS` of where the resident stands right now."""
     me = next(resident for resident in world.residents if resident.id == resident_id)
     here = position_at(me, world.time)
-    return frozenset(pool.id for pool in world.pools if _in_range(here, pool.position))
+    return frozenset(spring.id for spring in world.springs if _in_range(here, spring.position))
 
 
 def record_activity(before: World, after: World) -> World:
     """Log, at `after.time`, what residents did between the two worlds: set off on a walk,
-    moved (arrived, or stopped on the way), started or finished mining, or left the game.
-    Mining that stops because the miner left is logged as leaving only. Returns `after`
+    moved (arrived, or stopped on the way), started or finished harvesting, or left the game.
+    Harvesting that stops because the harvester left is logged as leaving only. Returns `after`
     itself when there is nothing to log."""
     previous = {resident.id: resident for resident in before.residents}
     # Numbered once all are found; 0 is a placeholder.
@@ -238,12 +240,12 @@ def record_activity(before: World, after: World) -> World:
             found.append(Activity(0, now, who, "started_walking", target, origin=here))
         if here != old.position:
             found.append(Activity(0, now, who, "moved", here, origin=old.position))
-        if old.mining is None and resident.mining is not None:
-            pool_id = resident.mining.pool_id
-            found.append(Activity(0, now, who, "started_mining", here, pool_id=pool_id))
-        if old.mining is not None and resident.mining is None and not resident.left:
-            pool_id = old.mining.pool_id
-            found.append(Activity(0, now, who, "finished_mining", here, pool_id=pool_id))
+        if old.harvesting is None and resident.harvesting is not None:
+            spring_id = resident.harvesting.spring_id
+            found.append(Activity(0, now, who, "started_harvesting", here, spring_id=spring_id))
+        if old.harvesting is not None and resident.harvesting is None and not resident.left:
+            spring_id = old.harvesting.spring_id
+            found.append(Activity(0, now, who, "finished_harvesting", here, spring_id=spring_id))
         if resident.left:
             found.append(Activity(0, now, who, "left_game", here))
     if not found:
@@ -255,7 +257,7 @@ def record_activity(before: World, after: World) -> World:
 
 
 def record_discoveries(before: World, after: World) -> World:
-    """Discover, for each resident whose walk ended between the two worlds, the pools within
+    """Discover, for each resident whose walk ended between the two worlds, the springs within
     `PERCEPTION_RADIUS` of the line they walked that they did not know: they are remembered
     as of `after.time` and held for the resident's next look to report. Residents who left
     are skipped. Returns `after` itself when nothing was found."""
@@ -266,13 +268,13 @@ def record_discoveries(before: World, after: World) -> World:
         if old is None or old.walking is None or resident.walking is not None or resident.left:
             continue
         memory = resident.memory
-        known = {sighting.pool_id: sighting for sighting in memory.known_pools}
+        known = {sighting.spring_id: sighting for sighting in memory.known_springs}
         sighted = _unknown_along(after, known, old.position, resident.position)
         if not sighted:
             continue
-        known.update((sighting.pool_id, sighting) for sighting in sighted)
-        found = (*memory.found_on_walks, *(sighting.pool_id for sighting in sighted))
-        memory = replace(memory, known_pools=tuple(known.values()), found_on_walks=found)
+        known.update((sighting.spring_id, sighting) for sighting in sighted)
+        found = (*memory.found_on_walks, *(sighting.spring_id for sighting in sighted))
+        memory = replace(memory, known_springs=tuple(known.values()), found_on_walks=found)
         residents[index] = replace(resident, memory=memory)
     if all(new is old for new, old in zip(residents, after.residents, strict=True)):
         return after
@@ -280,16 +282,16 @@ def record_discoveries(before: World, after: World) -> World:
 
 
 def _unknown_along(
-    world: World, known: dict[str, PoolSighting], start: Position, end: Position
-) -> tuple[PoolSighting, ...]:
-    """The pools within range of the segment from `start` to `end` that are not in `known`,
-    as they are now. Known pools are left as last seen: passing one on the way refreshes
+    world: World, known: dict[str, SpringSighting], start: Position, end: Position
+) -> tuple[SpringSighting, ...]:
+    """The springs within range of the segment from `start` to `end` that are not in `known`,
+    as they are now. Known springs are left as last seen: passing one on the way refreshes
     nothing, since what it held at that moment is not known."""
     return tuple(
-        PoolSighting(pool.id, pool.position, pool.radius, pool.reserve, world.time)
-        for pool in world.pools
-        if pool.id not in known
-        and _distance_to_segment(pool.position, start, end) <= PERCEPTION_RADIUS
+        SpringSighting(spring.id, spring.position, spring.radius, spring.reserve, world.time)
+        for spring in world.springs
+        if spring.id not in known
+        and _distance_to_segment(spring.position, start, end) <= PERCEPTION_RADIUS
     )
 
 

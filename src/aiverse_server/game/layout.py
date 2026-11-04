@@ -1,7 +1,7 @@
-"""The starting layout: a fixed map, residents and market, with token pools scattered at random.
+"""The starting layout: a fixed map, residents and market, with springs scattered at random.
 
 Every match uses the same map, residents and market, which stands in the middle of the map.
-The pools are placed when the world is created, from a seed, and stay where they are for the
+The springs are placed when the world is created, from a seed, and stay where they are for the
 whole game.
 """
 
@@ -11,34 +11,35 @@ import random
 from ..core.world import (
     Inventory,
     Market,
-    Pool,
     Position,
     PricePoint,
     Resident,
+    Spring,
     World,
     WorldMap,
 )
+from ..economy.energy import ENERGY
 from ..economy.market import MARKET_BASE_PRICE, MARKET_RADIUS
-from ..economy.tokens import TOKEN
 
 MAP_SIZE = 150.0
 
 STARTING_COINS = 10_000
 
-STARTING_TOKENS = 200
+STARTING_ENERGY = 200
 
-POOL_COUNT = 6
-POOL_RADIUS = 4.0
-POOL_RESERVE = (1_500, 4_000)
-"""Smallest and largest number of tokens a pool starts with."""
-POOL_MARGIN = 15.0
-"""Least distance from a pool's centre to the map edge."""
-POOL_SPACING = 30.0
-"""Least distance between two pools' centres, so they do not overlap."""
+SPRING_COUNT = 6
+SPRING_RADIUS = 4.0
+SPRING_RESERVE = (1_500, 4_000)
+"""Smallest and largest number of energy a spring starts with."""
+SPRING_MARGIN = 15.0
+"""Least distance from a spring's centre to the map edge."""
+SPRING_SPACING = 30.0
+"""Least distance between two springs' centres, so they do not overlap."""
 MARKET_CLEARANCE = 30.0
-"""Least distance from a pool's centre to the market's, so selling takes a walk from mining."""
+"""Least distance from a spring's centre to the market's, so selling takes a walk from
+harvesting."""
 
-_STARTING_INVENTORY = Inventory(((TOKEN, STARTING_TOKENS),))
+_STARTING_INVENTORY = Inventory(((ENERGY, STARTING_ENERGY),))
 
 
 def market_position(size: float = MAP_SIZE) -> Position:
@@ -57,7 +58,7 @@ def _resident(id: str, name: str, color: str, position: Position) -> Resident:
     )
 
 
-# All residents begin at the market so they can buy a chip before heading to a pool.
+# All residents begin at the market so they can buy a crystal before heading to a spring.
 DEFAULT_RESIDENTS = (
     _resident("r1", "阿青", "#e4572e", market_position()),
     _resident("r2", "小麦", "#f3a712", market_position()),
@@ -66,38 +67,38 @@ DEFAULT_RESIDENTS = (
 )
 
 
-def scatter_pools(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Pool, ...]:
-    """`POOL_COUNT` pools at random spots at least `POOL_SPACING` apart and `MARKET_CLEARANCE`
-    from the market, each with a random reserve. The same seed gives the same pools; without
+def scatter_springs(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Spring, ...]:
+    """`SPRING_COUNT` springs at random spots at least `SPRING_SPACING` apart and `MARKET_CLEARANCE`
+    from the market, each with a random reserve. The same seed gives the same springs; without
     one, every call differs."""
     rng = random.Random(seed)
     market = market_position(size)
-    pools: list[Pool] = []
+    springs: list[Spring] = []
     # The spacing leaves plenty of room on the default map; the bound only guards a
     # misconfigured one from looping forever.
     for _ in range(10_000):
-        if len(pools) == POOL_COUNT:
+        if len(springs) == SPRING_COUNT:
             break
         position = Position(
-            round(rng.uniform(POOL_MARGIN, size - POOL_MARGIN), 1),
-            round(rng.uniform(POOL_MARGIN, size - POOL_MARGIN), 1),
+            round(rng.uniform(SPRING_MARGIN, size - SPRING_MARGIN), 1),
+            round(rng.uniform(SPRING_MARGIN, size - SPRING_MARGIN), 1),
         )
         if math.dist((market.x, market.y), (position.x, position.y)) >= MARKET_CLEARANCE and all(
-            math.dist((p.position.x, p.position.y), (position.x, position.y)) >= POOL_SPACING
-            for p in pools
+            math.dist((p.position.x, p.position.y), (position.x, position.y)) >= SPRING_SPACING
+            for p in springs
         ):
-            reserve = rng.randint(*POOL_RESERVE)
-            pools.append(Pool(f"p{len(pools) + 1}", position, POOL_RADIUS, reserve))
-    if len(pools) < POOL_COUNT:
-        raise ValueError(f"cannot fit {POOL_COUNT} pools on a map of size {size:g}")
-    return tuple(pools)
+            reserve = rng.randint(*SPRING_RESERVE)
+            springs.append(Spring(f"s{len(springs) + 1}", position, SPRING_RADIUS, reserve))
+    if len(springs) < SPRING_COUNT:
+        raise ValueError(f"cannot fit {SPRING_COUNT} springs on a map of size {size:g}")
+    return tuple(springs)
 
 
 def create_default_world(seed: int | None = None) -> World:
     return World(
         map=WorldMap(size=MAP_SIZE),
         residents=DEFAULT_RESIDENTS,
-        pools=scatter_pools(seed),
+        springs=scatter_springs(seed),
         market=Market(
             market_position(), MARKET_RADIUS, history=(PricePoint(0.0, MARKET_BASE_PRICE),)
         ),

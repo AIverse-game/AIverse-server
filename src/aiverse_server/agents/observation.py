@@ -1,7 +1,7 @@
 """What an agent is shown at the start of each round: its perception, put together with what
 the resident knows of themselves and what is public.
 
-`observe` adds to the perception (`perception.py`) the resident's own coins, tokens, chips
+`observe` adds to the perception (`perception.py`) the resident's own coins, energy, crystals
 and what they are busy with; the offers and contract proposals waiting for them and those
 they sent, the contracts they are party to and the last few of theirs that ended; and every
 resident's name, coins and place, which the page shows anyway and which an agent needs to
@@ -16,24 +16,24 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
 from ..core.events import Event, pending_for, pending_from
-from ..core.rigs import MiningRig, RigSlot
-from ..core.world import Contract, ContractEnd, PoolSighting, Position, World
-from ..economy.chips import CHIP_MODELS
+from ..core.towers import Tower, TowerSlot
+from ..core.world import Contract, ContractEnd, Position, SpringSighting, World
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
-from ..economy.rigs import (
-    ENERGY_PER_100,
+from ..economy.crystals import CRYSTAL_TIERS
+from ..economy.energy import ENERGY, walk_cost
+from ..economy.towers import (
     RENT_PER_100,
-    RIG_CAPACITY,
-    RIG_PRICE,
-    RIG_SECONDS,
-    RIG_YIELD,
+    TOWER_CAPACITY,
+    TOWER_PRICE,
+    TOWER_SECONDS,
+    TOWER_YIELD,
+    UPKEEP_PER_100,
     cycle_amount,
     cycle_cost,
-    pool_draw_rate,
-    rig_coins,
     slot_status,
+    spring_draw_rate,
+    tower_coins,
 )
-from ..economy.tokens import TOKEN, walk_cost
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
@@ -53,61 +53,61 @@ class Me:
     """Spendable coins."""
     coins_in_offers: int
     """Coins set aside in purchase offers still waiting for an answer."""
-    tokens: int
-    """Tokens carried, which walking and speaking spend."""
-    tokens_in_offers: int
+    energy: int
+    """Energy carried, which walking and speaking spend."""
+    energy_in_offers: int
     coins_in_contracts: int
     """Coins set aside as a buyer's payments or a supplier's deposits, in contracts in force
     and in proposals not yet answered."""
-    chips: dict[str, int]
-    """Chips carried, model to count."""
+    crystals: dict[str, int]
+    """Crystals carried, tier to count."""
     walking_to: Position | None
     arrives_in: float | None
     """Seconds until the walk ends."""
-    mining_pool: str | None
-    mining_done_in: float | None
-    """Seconds until the mining job pays out."""
+    harvesting_spring: str | None
+    harvesting_done_in: float | None
+    """Seconds until the harvesting job pays out."""
     at_market: bool
-    at_pool: str | None
-    """The pool the resident stands close enough to mine, if any."""
+    at_spring: str | None
+    """The spring the resident stands close enough to harvest, if any."""
 
 
 @dataclass(frozen=True)
-class ChipOnSale:
-    model: str
+class CrystalOnSale:
+    tier: str
     price: int
-    tokens_per_job: int
+    energy_per_job: int
 
 
 @dataclass(frozen=True)
 class MarketView:
     position: Position
     radius: float
-    token_price: float
-    """Coins one more token fetches right now; it falls as tokens are sold."""
+    energy_price: float
+    """Coins one more energy fetches right now; it falls as energy is sold."""
     distance: float
     walk_cost: int
-    """Tokens a walk from here to the market's centre costs."""
+    """Energy a walk from here to the market's centre costs."""
     walk_seconds: float
-    chips: tuple[ChipOnSale, ...]
+    crystals: tuple[CrystalOnSale, ...]
 
 
 @dataclass(frozen=True)
-class PoolView:
+class SpringView:
     id: str
     position: Position
     radius: float
     reserve: int
-    """Tokens left when last seen."""
+    """Energy left when last seen."""
     seen_ago: float
     """Seconds since the reserve was seen; 0 when in sight."""
     in_sight: bool
     """Seen this round, so the reserve is current."""
-    rig_draw_per_second: float | None
-    """Tokens per second the running rigs on this pool take out of it; None unless in sight,
-    since a pool out of sight is not watched. Manual mining is not counted."""
+    tower_draw_per_second: float | None
+    """Energy per second the running towers on this spring take out of it; None unless in sight,
+    since a spring out of sight is not watched. Manual harvesting is not counted."""
     seconds_to_empty: float | None
-    """Seconds until the reserve is gone at that rate; None unless in sight and rigs are
+    """Seconds until the reserve is gone at that rate; None unless in sight and towers are
     drawing on it."""
     distance: float
     walk_cost: int
@@ -119,7 +119,7 @@ class NearbyResident:
     id: str
     name: str
     position: Position
-    mining_pool: str | None
+    harvesting_spring: str | None
     walking_to: Position | None
 
 
@@ -236,7 +236,7 @@ class Happening:
     resident_id: str
     kind: str
     position: Position
-    pool_id: str | None
+    spring_id: str | None
 
 
 @dataclass(frozen=True)
@@ -254,10 +254,10 @@ class Observation:
     remaining_seconds: float
     me: Me
     market: MarketView | None
-    known_pools: tuple[PoolView, ...]
-    """Every pool discovered so far, nearest first."""
+    known_springs: tuple[SpringView, ...]
+    """Every spring discovered so far, nearest first."""
     discovered: tuple[str, ...]
-    """Pools seen for the first time since the last round: from where the resident stands, or
+    """Springs seen for the first time since the last round: from where the resident stands, or
     on the way there."""
     nearby_residents: tuple[NearbyResident, ...]
     residents: tuple[Standing, ...]
@@ -276,9 +276,9 @@ class Observation:
     """What others did nearby since the resident last looked."""
     long_term_notes: tuple[NoteView, ...]
     short_term_notes: tuple[NoteView, ...]
-    rig_balance: int
-    rig_rules: dict[str, int | float]
-    mining_rigs: tuple[dict[str, object], ...]
+    tower_balance: int
+    tower_rules: dict[str, int | float]
+    towers: tuple[dict[str, object], ...]
     notices: tuple[NoticeView, ...] = ()
     """What the server announced to everyone since the resident last looked."""
     last_thinking_seconds: float | None = None
@@ -300,36 +300,36 @@ def observe(
     resident's earlier rounds took, oldest first."""
     me = next(resident for resident in world.residents if resident.id == resident_id)
     here = perception.position
-    chip_models = {chip.model for chip in CHIP_MODELS}
+    crystal_tiers = {crystal.tier for crystal in CRYSTAL_TIERS}
     walk = me.walking
-    job = me.mining
+    job = me.harvesting
     market = world.market
     standings = ranks(world)
-    at_pool = next(
-        (pool.id for pool in world.pools if pool.reaches(here) and walk is None),
+    at_spring = next(
+        (spring.id for spring in world.springs if spring.reaches(here) and walk is None),
         None,
     )
-    in_sight = frozenset(sighting.pool_id for sighting in perception.pools)
-    # A neighbour's or a happening's pool is named only if the resident has seen that pool.
-    known_ids = {sighting.pool_id for sighting in perception.known_pools}
-    pools = sorted(
+    in_sight = frozenset(sighting.spring_id for sighting in perception.springs)
+    # A neighbour's or a happening's spring is named only if the resident has seen that spring.
+    known_ids = {sighting.spring_id for sighting in perception.known_springs}
+    springs = sorted(
         (
-            _pool_view(world, sighting, here, sighting.pool_id in in_sight)
-            for sighting in perception.known_pools
+            _spring_view(world, sighting, here, sighting.spring_id in in_sight)
+            for sighting in perception.known_springs
         ),
-        key=lambda pool: pool.distance,
+        key=lambda spring: spring.distance,
     )
     return Observation(
-        rig_balance=rig_coins(world, resident_id),
-        rig_rules={
-            "price": RIG_PRICE,
-            "capacity": RIG_CAPACITY,
-            "cycle_seconds": RIG_SECONDS,
-            "yield_multiplier": RIG_YIELD,
+        tower_balance=tower_coins(world, resident_id),
+        tower_rules={
+            "price": TOWER_PRICE,
+            "capacity": TOWER_CAPACITY,
+            "cycle_seconds": TOWER_SECONDS,
+            "yield_multiplier": TOWER_YIELD,
             "rent_per_100": RENT_PER_100,
-            "energy_per_100": ENERGY_PER_100,
+            "upkeep_per_100": UPKEEP_PER_100,
         },
-        mining_rigs=_rig_views(world, resident_id, in_sight),
+        towers=_tower_views(world, resident_id, in_sight),
         time=perception.time,
         remaining_seconds=remaining,
         last_thinking_seconds=thinking[-1] if thinking else None,
@@ -340,42 +340,44 @@ def observe(
             position=here,
             coins=me.coins,
             coins_in_offers=reserved_coins(world, resident_id),
-            tokens=me.inventory.count(TOKEN),
-            tokens_in_offers=reserved_items(world, resident_id, TOKEN),
+            energy=me.inventory.count(ENERGY),
+            energy_in_offers=reserved_items(world, resident_id, ENERGY),
             coins_in_contracts=contract_coins(world, resident_id),
-            chips={
-                kind: count for kind, count in me.inventory.counts().items() if kind in chip_models
+            crystals={
+                kind: count
+                for kind, count in me.inventory.counts().items()
+                if kind in crystal_tiers
             },
             walking_to=walk.target if walk is not None else None,
             arrives_in=max(walk.arrives_at - world.time, 0.0) if walk is not None else None,
-            mining_pool=job.pool_id if job is not None else None,
-            mining_done_in=max(job.ends_at - world.time, 0.0) if job is not None else None,
+            harvesting_spring=job.spring_id if job is not None else None,
+            harvesting_done_in=max(job.ends_at - world.time, 0.0) if job is not None else None,
             at_market=market is not None and walk is None and market.reaches(here),
-            at_pool=at_pool,
+            at_spring=at_spring,
         ),
         market=None
         if perception.market is None
         else MarketView(
             position=perception.market.position,
             radius=perception.market.radius,
-            token_price=perception.market.price,
+            energy_price=perception.market.price,
             distance=_distance(here, perception.market.position),
             walk_cost=walk_cost(here, perception.market.position),
             walk_seconds=walk_seconds(here, perception.market.position),
-            chips=tuple(
-                ChipOnSale(chip.model, chip.price, chip.tokens_per_job)
-                for chip in perception.market.chips
+            crystals=tuple(
+                CrystalOnSale(crystal.tier, crystal.price, crystal.energy_per_job)
+                for crystal in perception.market.crystals
             ),
         ),
-        known_pools=tuple(pools),
+        known_springs=tuple(springs),
         discovered=perception.discovered,
         nearby_residents=tuple(
             NearbyResident(
                 id=sighting.resident_id,
                 name=sighting.name,
                 position=sighting.position,
-                mining_pool=sighting.mining_pool_id
-                if sighting.mining_pool_id in known_ids
+                harvesting_spring=sighting.harvesting_spring_id
+                if sighting.harvesting_spring_id in known_ids
                 else None,
                 walking_to=sighting.walking_to,
             )
@@ -419,7 +421,7 @@ def observe(
                 entry.resident_id,
                 entry.kind,
                 entry.position,
-                entry.pool_id if entry.pool_id in known_ids else None,
+                entry.spring_id if entry.spring_id in known_ids else None,
             )
             for entry in perception.activity
         ),
@@ -533,44 +535,46 @@ def _ended(end: ContractEnd, resident_id: str, now: float) -> EndedContractView:
 
 
 def known_slots(
-    rig: MiningRig, resident_id: str, in_sight: frozenset[str]
-) -> tuple[RigSlot, ...] | None:
-    """The slots of a machine the resident can know of: all of them when its pool is in sight
-    or the resident owns it, else only their own; None when they know nothing of it. A machine
-    on a pool they have not seen would give the pool's state away."""
-    if rig.pool_id in in_sight or rig.owner_id == resident_id:
-        return rig.slots
-    mine = tuple(slot for slot in rig.slots if slot.resident_id == resident_id)
-    return mine or None
+    tower: Tower, resident_id: str, in_sight: frozenset[str]
+) -> tuple[TowerSlot, ...] | None:
+    """The slots of a tower the resident can know of: all of them when its spring is in sight
+    or the resident owns it, else only their own; None when they know nothing of it. A tower
+    on a spring they have not seen would give the spring's state away."""
+    if tower.spring_id in in_sight or tower.owner_id == resident_id:
+        return tower.slots
+    own = tuple(slot for slot in tower.slots if slot.resident_id == resident_id)
+    return own or None
 
 
-def _rig_views(
+def _tower_views(
     world: World, resident_id: str, in_sight: frozenset[str]
 ) -> tuple[dict[str, object], ...]:
-    """The machines the resident can know of, see `known_slots`."""
+    """The towers the resident can know of, see `known_slots`."""
     views: list[dict[str, object]] = []
-    for rig in world.rigs:
-        slots = known_slots(rig, resident_id, in_sight)
+    for tower in world.towers:
+        slots = known_slots(tower, resident_id, in_sight)
         if slots is None:
             continue
         views.append(
             {
-                "id": rig.id,
-                "owner_id": rig.owner_id,
-                "pool_id": rig.pool_id,
-                "position": asdict(next(p.position for p in world.pools if p.id == rig.pool_id)),
+                "id": tower.id,
+                "owner_id": tower.owner_id,
+                "spring_id": tower.spring_id,
+                "position": asdict(
+                    next(p.position for p in world.springs if p.id == tower.spring_id)
+                ),
                 "slots": [
                     {
                         "id": s.id,
                         "resident_id": s.resident_id,
-                        "chip": s.chip,
+                        "crystal": s.crystal,
                         "balance": s.balance,
-                        "mined": s.mined,
+                        "harvested": s.harvested,
                         "rent_paid": s.rent_paid,
-                        "status": slot_status(world, rig, s),
+                        "status": slot_status(world, tower, s),
                         "next_in": max(s.next_at - world.time, 0.0),
-                        "tokens_per_cycle": cycle_amount(world, rig, s),
-                        "rent_and_energy": sum(cycle_cost(rig, s, cycle_amount(world, rig, s))),
+                        "energy_per_cycle": cycle_amount(world, tower, s),
+                        "rent_and_upkeep": sum(cycle_cost(tower, s, cycle_amount(world, tower, s))),
                     }
                     for s in slots
                 ],
@@ -579,17 +583,19 @@ def _rig_views(
     return tuple(views)
 
 
-def _pool_view(world: World, sighting: PoolSighting, here: Position, in_sight: bool) -> PoolView:
-    """A known pool; how fast rigs drain it is told only while the resident can see it."""
-    draw = pool_draw_rate(world, sighting.pool_id) if in_sight else None
-    return PoolView(
-        id=sighting.pool_id,
+def _spring_view(
+    world: World, sighting: SpringSighting, here: Position, in_sight: bool
+) -> SpringView:
+    """A known spring; how fast towers drain it is told only while the resident can see it."""
+    draw = spring_draw_rate(world, sighting.spring_id) if in_sight else None
+    return SpringView(
+        id=sighting.spring_id,
         position=sighting.position,
         radius=sighting.radius,
         reserve=sighting.reserve,
         seen_ago=0.0 if in_sight else max(world.time - sighting.seen_at, 0.0),
         in_sight=in_sight,
-        rig_draw_per_second=draw,
+        tower_draw_per_second=draw,
         seconds_to_empty=sighting.reserve / draw if draw else None,
         distance=_distance(here, sighting.position),
         walk_cost=walk_cost(here, sighting.position),

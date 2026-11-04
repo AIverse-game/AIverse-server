@@ -8,19 +8,19 @@ from aiverse_server.core.world import (
     SPEECH_LIMIT,
     Inventory,
     Memory,
-    Pool,
     Position,
     Resident,
     Speech,
     SpeechLog,
+    Spring,
     World,
     WorldMap,
 )
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.economy.energy import ENERGY
 from aiverse_server.game.actions import (
     ActionRejected,
+    Harvest,
     LeaveGame,
-    Mine,
     MoveTo,
     OfferToSell,
     Say,
@@ -37,7 +37,7 @@ def resident(resident_id: str, x: float, y: float) -> Resident:
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((TOKEN, 1000), ("MK1", 1))),
+        inventory=Inventory(((ENERGY, 1000), ("C1", 1))),
     )
 
 
@@ -50,7 +50,7 @@ WORLD = World(
         resident("c", 80, 80),
         resident("d", 10, 10 + HEARING_RADIUS),
     ),
-    pools=(Pool("p", Position(10, 10), radius=4, reserve=100),),
+    springs=(Spring("p", Position(10, 10), radius=4, reserve=100),),
     time=4.0,
 )
 
@@ -62,18 +62,18 @@ def heard(world: World, resident_id: str) -> tuple[World, list[tuple[str, str]]]
 
 
 def test_words_spoken_aloud_reach_everyone_in_earshot_and_no_further() -> None:
-    world = perform(WORLD, Say("a", "  anyone selling tokens?  "))
+    world = perform(WORLD, Say("a", "  anyone selling energy?  "))
     line = world.speech.entries[0]
-    assert line == Speech(1, 4.0, "a", "anyone selling tokens?", Position(10, 10), None, ("b", "d"))
+    assert line == Speech(1, 4.0, "a", "anyone selling energy?", Position(10, 10), None, ("b", "d"))
     for listener in ("b", "d"):
-        assert heard(world, listener)[1] == [("a", "anyone selling tokens?")]
+        assert heard(world, listener)[1] == [("a", "anyone selling energy?")]
     assert heard(world, "c")[1] == []
 
 
 def test_a_whisper_reaches_only_its_listener_wherever_they_are() -> None:
-    world = perform(WORLD, Say("a", "meet me at the pool", to="c"))
+    world = perform(WORLD, Say("a", "meet me at the spring", to="c"))
     assert world.speech.entries[0].listeners == ("c",)
-    assert heard(world, "c")[1] == [("a", "meet me at the pool")]
+    assert heard(world, "c")[1] == [("a", "meet me at the spring")]
     # b stands right next to a and still hears nothing.
     assert heard(world, "b")[1] == []
 
@@ -137,10 +137,10 @@ def test_walkers_hear_and_speak_where_they_have_got_to() -> None:
 @pytest.mark.parametrize(
     ("busy", "line"),
     [
-        (perform(WORLD, Mine("a", "p")), Say("a", "digging")),
+        (perform(WORLD, Harvest("a", "p")), Say("a", "digging")),
         (perform(WORLD, MoveTo("b", Position(50, 50))), Say("b", "walking", to="c")),
     ],
-    ids=["mining", "walking"],
+    ids=["harvesting", "walking"],
 )
 def test_busy_residents_can_still_talk(busy: World, line: Say) -> None:
     spoken = perform(busy, line).speech.entries[-1]
@@ -223,12 +223,12 @@ def test_the_log_keeps_only_the_latest_lines_and_numbering_goes_on() -> None:
     assert len(lines) == SPEECH_LIMIT
 
 
-def tokens(world: World, resident_id: str) -> int:
-    return next(r for r in world.residents if r.id == resident_id).inventory.count(TOKEN)
+def energy(world: World, resident_id: str) -> int:
+    return next(r for r in world.residents if r.id == resident_id).inventory.count(ENERGY)
 
 
-def with_tokens(world: World, resident_id: str, count: int) -> World:
-    items = Inventory(((TOKEN, count),)) if count else Inventory()
+def with_energy(world: World, resident_id: str, count: int) -> World:
+    items = Inventory(((ENERGY, count),)) if count else Inventory()
     residents = tuple(
         replace(r, inventory=items) if r.id == resident_id else r for r in world.residents
     )
@@ -238,8 +238,8 @@ def with_tokens(world: World, resident_id: str, count: int) -> World:
 def test_speaking_aloud_costs_more_than_a_whisper() -> None:
     aloud = perform(WORLD, Say("a", "hello all"))
     whisper = perform(WORLD, Say("a", "hello b", to="b"))
-    assert tokens(aloud, "a") == 1000 - SPEECH_COSTS["aloud"]
-    assert tokens(whisper, "a") == 1000 - SPEECH_COSTS["to_one"]
+    assert energy(aloud, "a") == 1000 - SPEECH_COSTS["aloud"]
+    assert energy(whisper, "a") == 1000 - SPEECH_COSTS["to_one"]
     assert SPEECH_COSTS == {"aloud": 2, "to_one": 1}
 
 
@@ -249,17 +249,17 @@ def test_speaking_moves_nothing_on_the_map() -> None:
     assert world.activity == WORLD.activity
 
 
-def test_too_few_tokens_to_speak_is_refused_and_changes_nothing() -> None:
-    world = with_tokens(WORLD, "a", 1)
+def test_too_little_energy_to_speak_is_refused_and_changes_nothing() -> None:
+    world = with_energy(WORLD, "a", 1)
 
     with pytest.raises(ActionRejected) as refused:
         perform(world, Say("a", "hello all"))
 
-    assert refused.value.code == "not_enough_tokens"
+    assert refused.value.code == "not_enough_energy"
 
 
-def test_whispering_with_the_last_token_takes_the_speaker_out() -> None:
-    world = with_tokens(WORLD, "a", 1)
+def test_whispering_with_the_last_energy_takes_the_speaker_out() -> None:
+    world = with_energy(WORLD, "a", 1)
 
     after = perform(world, Say("a", "goodbye", to="b"))
 
@@ -267,12 +267,12 @@ def test_whispering_with_the_last_token_takes_the_speaker_out() -> None:
     assert after.speech.entries[-1].text == "goodbye"
 
 
-def test_tokens_set_aside_in_an_offer_do_not_pay_for_speech() -> None:
-    world = with_tokens(WORLD, "a", 2)
-    world = perform(world, OfferToSell("a", "b", TOKEN, 1, 10))
+def test_energy_set_aside_in_an_offer_do_not_pay_for_speech() -> None:
+    world = with_energy(WORLD, "a", 2)
+    world = perform(world, OfferToSell("a", "b", ENERGY, 1, 10))
     with pytest.raises(ActionRejected) as refused:
         perform(world, Say("a", "hello all"))
-    assert refused.value.code == "not_enough_tokens"
+    assert refused.value.code == "not_enough_energy"
 
 
 LINE = Speech(1, 0.0, "a", "hi", Position(0, 0), None, ("b",))

@@ -6,8 +6,8 @@ a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
-leaving and speaking, for a resident who is busy mining or walking. A resident whose last
-token is spent by a primitive, their own or one they agreed to, is out of the game
+leaving and speaking, for a resident who is busy harvesting or walking. A resident whose last
+energy is spent by a primitive, their own or one they agreed to, is out of the game
 afterwards, see `lifecycle.py`. What a primitive changes on the map goes into the activity
 log for others nearby to notice, see `perception.py`.
 """
@@ -25,7 +25,6 @@ from ..core.events import (
 )
 from ..core.inventory import InventoryError, InventoryErrorCode
 from ..core.world import Position, World
-from ..economy.chips import ChipError, ChipErrorCode, buy_chip
 from ..economy.contracts import (
     ContractError,
     ContractErrorCode,
@@ -33,17 +32,18 @@ from ..economy.contracts import (
     cancel_contract,
     deliver,
 )
-from ..economy.market import MarketError, MarketErrorCode, sell_tokens
-from ..economy.mining import MiningError, MiningErrorCode, check_not_busy, start_mining
-from ..economy.rigs import (
-    RigError,
-    RigErrorCode,
-    build_rig,
+from ..economy.crystals import CrystalError, CrystalErrorCode, buy_crystal
+from ..economy.energy import EnergyError, EnergyErrorCode, pay_for_walk
+from ..economy.harvesting import HarvestError, HarvestErrorCode, check_not_busy, start_harvesting
+from ..economy.market import MarketError, MarketErrorCode, sell_energy
+from ..economy.towers import (
+    TowerError,
+    TowerErrorCode,
+    build_tower,
     fund_slot,
-    install_chip,
-    remove_chip,
+    install_crystal,
+    remove_crystal,
 )
-from ..economy.tokens import TokenError, TokenErrorCode, pay_for_walk
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
 from ..residents.memory import NoteError, NoteErrorCode
@@ -59,13 +59,13 @@ RejectionCode = (
     | InventoryErrorCode
     | TradeErrorCode
     | GameErrorCode
-    | TokenErrorCode
-    | MiningErrorCode
+    | EnergyErrorCode
+    | HarvestErrorCode
     | MarketErrorCode
-    | ChipErrorCode
+    | CrystalErrorCode
     | SpeechErrorCode
     | ContractErrorCode
-    | RigErrorCode
+    | TowerErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -80,12 +80,12 @@ class ActionRejected(Exception):
 
 @dataclass(frozen=True)
 class MoveTo:
-    """Set a resident walking to `target`, paying for the walk in tokens, see `tokens.py`.
+    """Set a resident walking to `target`, paying for the walk in energy, see `energy.py`.
 
     The walk is a straight line at a fixed speed, see `walking.py`; the resident is busy
     until they arrive. Per-round distance and obstacles are still open design questions, see
     docs/status.md in the client repository. A walk the resident cannot pay for is refused;
-    one that spends their last token takes them out of the game when they arrive.
+    one that spends their last energy takes them out of the game when they arrive.
     """
 
     resident_id: str
@@ -208,19 +208,19 @@ class LeaveGame:
 
 
 @dataclass(frozen=True)
-class Mine:
-    """Spend time at a token pool the resident stands next to with the best chip
-    they carry, see `mining.py`: the tokens arrive when the job ends, and until then the
-    resident stays with the chip and can do nothing but leave."""
+class Harvest:
+    """Spend time at a spring the resident stands next to with the best crystal
+    they carry, see `harvesting.py`: the energy arrive when the job ends, and until then the
+    resident stays with the crystal and can do nothing but leave."""
 
     resident_id: str
-    pool_id: str
+    spring_id: str
 
 
 @dataclass(frozen=True)
-class SellTokens:
-    """Sell `quantity` carried tokens to the market the resident stands at, for coins at the
-    market price, see `market.py`. Selling the last token owned takes them out of the game."""
+class SellEnergy:
+    """Sell `quantity` carried energy to the market the resident stands at, for coins at the
+    market price, see `market.py`. Selling the last energy owned takes them out of the game."""
 
     resident_id: str
     quantity: int
@@ -230,19 +230,19 @@ class SellTokens:
 
 
 @dataclass(frozen=True)
-class BuyChip:
-    """Buy one chip of `model` at the market the resident stands at, for its fixed
-    price in coins, see `chips.py`."""
+class BuyCrystal:
+    """Buy one crystal of `tier` at the market the resident stands at, for its fixed
+    price in coins, see `crystals.py`."""
 
     resident_id: str
-    model: str
+    tier: str
 
 
 @dataclass(frozen=True)
 class Say:
     """Say `text` aloud to everyone within earshot, or, given `to`, to that one resident
-    wherever they are, see `speech.py`. Costs a few carried tokens, more aloud than to one
-    resident, and works while walking or mining."""
+    wherever they are, see `speech.py`. Costs a few carried energy, more aloud than to one
+    resident, and works while walking or harvesting."""
 
     resident_id: str
     text: str
@@ -250,31 +250,31 @@ class Say:
 
 
 @dataclass(frozen=True)
-class BuildRig:
+class BuildTower:
     resident_id: str
-    pool_id: str
+    spring_id: str
 
 
 @dataclass(frozen=True)
-class InstallChip:
+class InstallCrystal:
     resident_id: str
-    rig_id: int
-    chip: str
+    tower_id: int
+    crystal: str
     deposit: int
 
 
 @dataclass(frozen=True)
-class FundRig:
+class FundTower:
     resident_id: str
-    rig_id: int
+    tower_id: int
     slot_id: int
     amount: int
 
 
 @dataclass(frozen=True)
-class RemoveChip:
+class RemoveCrystal:
     resident_id: str
-    rig_id: int
+    tower_id: int
     slot_id: int
 
 
@@ -289,14 +289,14 @@ Action = (
     | Deliver
     | CancelContract
     | LeaveGame
-    | Mine
-    | SellTokens
-    | BuyChip
+    | Harvest
+    | SellEnergy
+    | BuyCrystal
     | Say
-    | BuildRig
-    | InstallChip
-    | FundRig
-    | RemoveChip
+    | BuildTower
+    | InstallCrystal
+    | FundTower
+    | RemoveCrystal
 )
 
 
@@ -305,29 +305,39 @@ def perform(world: World, action: Action) -> World:
         check_can_act(world, action.resident_id)
         if not isinstance(action, LeaveGame | Say):
             check_not_busy(world, action.resident_id)
-    except (GameError, MiningError) as error:
+    except (GameError, HarvestError) as error:
         raise ActionRejected(error.code, error.message) from error
     return record_activity(world, knock_out_exhausted(world, _carry_out(world, action)))
 
 
 def _carry_out(world: World, action: Action) -> World:
     match action:
-        case BuildRig() | InstallChip() | FundRig() | RemoveChip():
+        case BuildTower() | InstallCrystal() | FundTower() | RemoveCrystal():
             try:
                 match action:
-                    case BuildRig():
-                        return build_rig(world, action.resident_id, action.pool_id)
-                    case InstallChip():
-                        return install_chip(
-                            world, action.resident_id, action.rig_id, action.chip, action.deposit
+                    case BuildTower():
+                        return build_tower(world, action.resident_id, action.spring_id)
+                    case InstallCrystal():
+                        return install_crystal(
+                            world,
+                            action.resident_id,
+                            action.tower_id,
+                            action.crystal,
+                            action.deposit,
                         )
-                    case FundRig():
+                    case FundTower():
                         return fund_slot(
-                            world, action.resident_id, action.rig_id, action.slot_id, action.amount
+                            world,
+                            action.resident_id,
+                            action.tower_id,
+                            action.slot_id,
+                            action.amount,
                         )
-                    case RemoveChip():
-                        return remove_chip(world, action.resident_id, action.rig_id, action.slot_id)
-            except (RigError, InventoryError) as error:
+                    case RemoveCrystal():
+                        return remove_crystal(
+                            world, action.resident_id, action.tower_id, action.slot_id
+                        )
+            except (TowerError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case MoveTo():
             return _move_to(world, action)
@@ -363,25 +373,25 @@ def _carry_out(world: World, action: Action) -> World:
                 raise ActionRejected(error.code, error.message) from error
         case LeaveGame():
             return leave_game(world, action.resident_id)
-        case Mine():
+        case Harvest():
             try:
-                return start_mining(world, action.resident_id, action.pool_id)
-            except MiningError as error:
+                return start_harvesting(world, action.resident_id, action.spring_id)
+            except HarvestError as error:
                 raise ActionRejected(error.code, error.message) from error
-        case SellTokens():
+        case SellEnergy():
             try:
-                return sell_tokens(world, action.resident_id, action.quantity, action.seen_pressure)
-            except (MarketError, TokenError) as error:
+                return sell_energy(world, action.resident_id, action.quantity, action.seen_pressure)
+            except (MarketError, EnergyError) as error:
                 raise ActionRejected(error.code, error.message) from error
-        case BuyChip():
+        case BuyCrystal():
             try:
-                return buy_chip(world, action.resident_id, action.model)
-            except (ChipError, InventoryError) as error:
+                return buy_crystal(world, action.resident_id, action.tier)
+            except (CrystalError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case Say():
             try:
                 return say(world, action.resident_id, action.text, action.to)
-            except (SpeechError, TokenError) as error:
+            except (SpeechError, EnergyError) as error:
                 raise ActionRejected(error.code, error.message) from error
 
 
@@ -429,6 +439,6 @@ def _move_to(world: World, action: MoveTo) -> World:
     start = next(r.position for r in world.residents if r.id == action.resident_id)
     try:
         world = pay_for_walk(world, action.resident_id, start, target)
-    except TokenError as error:
+    except EnergyError as error:
         raise ActionRejected(error.code, error.message) from error
     return start_walk(world, action.resident_id, target)

@@ -6,7 +6,7 @@ it runs out, `end_game` settles every pending event and ends every contract, ret
 offers and contracts set aside, and from then on nothing changes. Residents may leave
 earlier, of their own accord or because the server makes them; the game goes on without
 them. They stay in the world and in the ranking with the coins they had, but lose their
-items and can no longer act or trade. Running out of tokens, the residents' stamina, takes
+items and can no longer act or trade. Running out of energy, the residents' stamina, takes
 them out the same way, see `knock_out_exhausted` and `knock_out_arrivals`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
@@ -21,9 +21,9 @@ from ..core.events import Event, withdraw_event
 from ..core.inventory import clear_items
 from ..core.world import Notice, NoticeLog, World
 from ..economy.contracts import contract_coins, end_contracts
-from ..economy.mining import cancel_mining
-from ..economy.rigs import release_rigs, rig_coins
-from ..economy.tokens import token_total
+from ..economy.energy import energy_total
+from ..economy.harvesting import cancel_harvesting
+from ..economy.towers import release_towers, tower_coins
 from ..economy.trade import reserved_coins
 from ..residents.walking import stop_walking
 
@@ -59,13 +59,13 @@ def check_can_act(world: World, resident_id: str) -> None:
 
 
 def leave_game(world: World, resident_id: str) -> World:
-    """Take the resident out of the game: a mining job stops and its tokens go back to the
-    pool, a walk stops where they are, their pending events are declined and their contracts
+    """Take the resident out of the game: a harvesting job stops and its energy goes back to the
+    spring, a walk stops where they are, their pending events are declined and their contracts
     end, which hands back whatever offers and contracts set aside, a supplier's deposit
     going to the buyer, then their items are cleared. Their coins stay."""
     check_can_act(world, resident_id)
-    world = cancel_mining(world, resident_id)
-    world = release_rigs(world, resident_id)
+    world = cancel_harvesting(world, resident_id)
+    world = release_towers(world, resident_id)
     world = stop_walking(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
     world = end_contracts(
@@ -84,38 +84,38 @@ def leave_game(world: World, resident_id: str) -> World:
 
 def knock_out_exhausted(before: World, after: World) -> World:
     """Take out of the game, as `leave_game` does, every resident still in it who owned
-    tokens in `before` and owns none in `after`. Tokens set aside in sale offers count, and
-    so do those a running mining job has already dug out, since both come back to them.
-    Comparing the two worlds catches whatever spent the last token: a walk or a sale.
+    energy in `before` and owns none in `after`. Energy set aside in sale offers count, and
+    so do those a running harvesting job has already drawn, since both come back to them.
+    Comparing the two worlds catches whatever spent the last energy: a walk or a sale.
     Residents still walking are left alone: they reach where they paid to go, and
     `knock_out_arrivals` takes them out there."""
     already_out = {
         resident.id for resident in after.residents if resident.left or resident.walking is not None
     }
     for resident in before.residents:
-        if resident.id in already_out or _owned_tokens(before, resident.id) == 0:
+        if resident.id in already_out or _owned_energy(before, resident.id) == 0:
             continue
-        if _owned_tokens(after, resident.id) == 0:
+        if _owned_energy(after, resident.id) == 0:
             after = leave_game(after, resident.id)
     return after
 
 
 def knock_out_arrivals(before: World, after: World) -> World:
     """Take out of the game, as `leave_game` does, every resident who was walking in `before`,
-    has arrived in `after` and owns no tokens: the walk or a sale on the way spent the last."""
+    has arrived in `after` and owns no energy: the walk or a sale on the way spent the last."""
     for resident in before.residents:
         if resident.walking is None:
             continue
         now = next(other for other in after.residents if other.id == resident.id)
-        if not now.left and now.walking is None and _owned_tokens(after, resident.id) == 0:
+        if not now.left and now.walking is None and _owned_energy(after, resident.id) == 0:
             after = leave_game(after, resident.id)
     return after
 
 
-def _owned_tokens(world: World, resident_id: str) -> int:
+def _owned_energy(world: World, resident_id: str) -> int:
     resident = next(resident for resident in world.residents if resident.id == resident_id)
-    mined = resident.mining.amount if resident.mining is not None else 0
-    return token_total(world, resident_id) + mined
+    harvested = resident.harvesting.amount if resident.harvesting is not None else 0
+    return energy_total(world, resident_id) + harvested
 
 
 def announce(world: World, text: str) -> World:
@@ -127,15 +127,15 @@ def announce(world: World, text: str) -> World:
 
 
 def end_game(world: World) -> World:
-    """Stop every mining job and walk, decline every pending event, end every contract and
+    """Stop every harvesting job and walk, decline every pending event, end every contract and
     freeze the world; ending twice changes nothing."""
     if world.ended:
         return world
     for resident in world.residents:
-        world = cancel_mining(world, resident.id)
+        world = cancel_harvesting(world, resident.id)
         world = stop_walking(world, resident.id)
     world = end_contracts(_settle(world, lambda event: True), lambda contract: True, "game_ended")
-    world = release_rigs(world)
+    world = release_towers(world)
     return replace(world, ended=True)
 
 
@@ -147,7 +147,7 @@ def total_coins(world: World, resident_id: str) -> int:
         resident.coins
         + reserved_coins(world, resident_id)
         + contract_coins(world, resident_id)
-        + rig_coins(world, resident_id)
+        + tower_coins(world, resident_id)
     )
 
 

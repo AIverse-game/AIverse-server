@@ -1,9 +1,9 @@
 """The coin ledger: every time coins really change hands, who paid whom, how much and why.
 
 Only real changes of hands are recorded. Coins set aside and handed back, as offers,
-contracts and rig prepayments do, stay their owner's and are not; the payment made from them
+contracts and tower prepayments do, stay their owner's and are not; the payment made from them
 when a deal settles is. Coins coming from or going to outside the town, such as the market
-buying tokens or the electricity rigs burn, have `SYSTEM` on that side.
+buying energy or the upkeep towers burn, have `SYSTEM` on that side.
 
 The ledger exists to measure the economy, see `game/economy_report.py`: how much of the
 money residents make comes from each other rather than from the system. It keeps at most
@@ -30,17 +30,17 @@ four residents makes a few thousand."""
 
 Channel = Literal[
     "market",
-    "chip_import",
-    "rig_build",
-    "electricity",
+    "crystal_import",
+    "tower_build",
+    "upkeep",
     "rent",
     "offer",
     "contract_payment",
     "contract_forfeit",
     "information",
 ]
-"""What the coins paid for: the market buying tokens, the market selling a chip, building a
-rig, a rig's electricity, rent to a rig's owner, an accepted trade offer, a delivery under a
+"""What the coins paid for: the market buying energy, the market selling a crystal, building a
+tower, a tower's upkeep, rent to a tower's owner, an accepted trade offer, a delivery under a
 contract, a supplier's deposit forfeited to the buyer, or information sold."""
 
 

@@ -4,7 +4,7 @@ Each round the runner calls `Game.begin_turn`, turns the perception into an obse
 hands it, with tools bound to the resident, to the brain. Then it sleeps until one of these
 happens, see decision 0003 in the client repository:
 
-- the resident stops being busy: a walk or a mining job has ended;
+- the resident stops being busy: a walk or a harvesting job has ended;
 - while free, an offer arrives for them, or a contract of theirs ends other than by their
   own doing, such as the supplier's last delivery or the contract lapsing;
 - someone says something they hear, even while busy, since they can still answer;
@@ -184,7 +184,7 @@ class _Attention:
     heard: int = 0
     """Sequence number of the latest line said by someone else in the resident's hearing."""
     done: int = 0
-    """Sequence number of the resident's latest activity ending a walk or a mining job."""
+    """Sequence number of the resident's latest activity ending a walk or a harvesting job."""
     announced: int = 0
     """Sequence number of the latest notice the server announced to everyone."""
 
@@ -357,7 +357,7 @@ class AgentRunner:
         world = self.game.world
         me = next(resident for resident in world.residents if resident.id == self.resident_id)
         return _Attention(
-            free=me.walking is None and me.mining is None,
+            free=me.walking is None and me.harvesting is None,
             offers=frozenset(
                 event.id for event in world.events.pending if event.recipient_id == me.id
             ),
@@ -375,7 +375,7 @@ class AgentRunner:
                 (
                     entry.seq
                     for entry in world.activity.entries
-                    if entry.resident_id == me.id and entry.kind in ("moved", "finished_mining")
+                    if entry.resident_id == me.id and entry.kind in ("moved", "finished_harvesting")
                 ),
                 default=0,
             ),

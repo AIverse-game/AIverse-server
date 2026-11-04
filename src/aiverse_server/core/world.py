@@ -2,7 +2,7 @@
 
 Coordinates: the origin (0, 0) is the north-west (top-left) corner, x grows east
 (right) and y grows south (down), matching screen space. Both axes cover the closed
-range [0, size]. Positions are real numbers, not grid cells: residents, token pools, the
+range [0, size]. Positions are real numbers, not grid cells: residents, springs, the
 market and later other places can stand anywhere inside the map.
 """
 
@@ -13,7 +13,7 @@ from typing import Literal
 
 from .events import EventQueue
 from .ledger import Ledger
-from .rigs import MiningRig
+from .towers import Tower
 
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 
@@ -57,16 +57,17 @@ class Inventory:
 
 
 @dataclass(frozen=True)
-class MiningJob:
-    """A resident mining a pool, see `mining.py`; they can do nothing else until it ends."""
+class HarvestJob:
+    """A resident harvesting a spring, see `harvesting.py`; they can do nothing else until it
+    ends."""
 
-    pool_id: str
+    spring_id: str
     ends_at: float
-    """Game time when the tokens are paid out, see `World.time`."""
+    """Game time when the energy is paid out, see `World.time`."""
     amount: int
-    """Tokens taken out of the pool when the job started, paid to the miner when it ends."""
-    chip: str
-    """Model of the chip doing the work, see `chips.py`; the miner holds it until the job
+    """Energy taken out of the spring when the job started, paid to the harvester when it ends."""
+    crystal: str
+    """Tier of the crystal doing the work, see `crystals.py`; the harvester holds it until the job
     ends."""
 
 
@@ -82,14 +83,14 @@ class WalkJob:
 
 
 @dataclass(frozen=True)
-class PoolSighting:
-    """A pool as a resident last saw it, see `perception.py`."""
+class SpringSighting:
+    """A spring as a resident last saw it, see `perception.py`."""
 
-    pool_id: str
+    spring_id: str
     position: Position
     radius: float
     reserve: int
-    """Tokens left when it was seen; the pool may hold fewer by now."""
+    """Energy left when it was seen; the spring may hold fewer by now."""
     seen_at: float
     """Game time of the sighting, see `World.time`."""
 
@@ -122,11 +123,11 @@ class Memory:
     """What a resident has noticed so far, see `perception.py`, and the notes they chose to
     keep, see `memory.py`. Empty when the game starts."""
 
-    known_pools: tuple[PoolSighting, ...] = ()
-    """Every pool the resident has discovered, at its latest sighting, ordered by pool id."""
+    known_springs: tuple[SpringSighting, ...] = ()
+    """Every spring the resident has discovered, at its latest sighting, ordered by spring id."""
     found_on_walks: tuple[str, ...] = ()
-    """Ids of the pools first noticed from a finished walk and not yet reported by a look,
-    see `perception.record_discoveries`; each is also in `known_pools`."""
+    """Ids of the springs first noticed from a finished walk and not yet reported by a look,
+    see `perception.record_discoveries`; each is also in `known_springs`."""
     activity_seen: int = 0
     """Sequence number of the last activity entry already looked at; 0 before the first look."""
     long_term: tuple[Note, ...] = ()
@@ -142,15 +143,15 @@ class Memory:
     """Sequence number of the last server notice already looked at; 0 before the first look."""
 
     def __post_init__(self) -> None:
-        ids = [sighting.pool_id for sighting in self.known_pools]
+        ids = [sighting.spring_id for sighting in self.known_springs]
         if len(set(ids)) != len(ids):
-            raise ValueError("known pools must be unique")
+            raise ValueError("known springs must be unique")
         if not set(self.found_on_walks) <= set(ids) or len(set(self.found_on_walks)) != len(
             self.found_on_walks
         ):
-            raise ValueError("pools found on walks must be unique known pools")
+            raise ValueError("springs found on walks must be unique known springs")
         object.__setattr__(
-            self, "known_pools", tuple(sorted(self.known_pools, key=lambda s: s.pool_id))
+            self, "known_springs", tuple(sorted(self.known_springs, key=lambda s: s.spring_id))
         )
         if type(self.activity_seen) is not int or self.activity_seen < 0:
             raise ValueError(f"activity seen must be an integer >= 0, got {self.activity_seen!r}")
@@ -190,7 +191,9 @@ class Memory:
             object.__setattr__(self, term, tuple(sorted(notes, key=lambda note: note.id)))
 
 
-ActivityKind = Literal["started_walking", "moved", "started_mining", "finished_mining", "left_game"]
+ActivityKind = Literal[
+    "started_walking", "moved", "started_harvesting", "finished_harvesting", "left_game"
+]
 
 
 @dataclass(frozen=True)
@@ -207,8 +210,8 @@ class Activity:
     resident got to: the end of the walk, or where it stopped."""
     origin: Position | None = None
     """Where a walk or move started; None for every other kind."""
-    pool_id: str | None = None
-    """The pool mined, for the two mining kinds; None otherwise."""
+    spring_id: str | None = None
+    """The spring harvested, for the two harvesting kinds; None otherwise."""
 
 
 ACTIVITY_LIMIT = 500
@@ -456,7 +459,7 @@ class Resident:
     `trade.py` and `contracts.py`."""
     left: bool = False
     """Left the game: stays in the world and the ranking, but can no longer act or trade."""
-    mining: MiningJob | None = None
+    harvesting: HarvestJob | None = None
     walking: WalkJob | None = None
     """On the way somewhere: `position` is where they set off, see `walking.position_at`."""
     memory: Memory = Memory()
@@ -469,20 +472,22 @@ class Resident:
             raise ValueError(
                 f"resident {self.id} has {self.coins!r} coins, must be an integer >= 0"
             )
-        if self.mining is not None:
+        if self.harvesting is not None:
             if self.left:
-                raise ValueError(f"resident {self.id} left the game but is still mining")
-            if type(self.mining.amount) is not int or self.mining.amount < 1:
-                raise ValueError(f"resident {self.id} is mining {self.mining.amount!r} tokens")
-            if not math.isfinite(self.mining.ends_at):
-                raise ValueError(f"resident {self.id} has a mining job that never ends")
-            if self.inventory.count(self.mining.chip) < 1:
-                raise ValueError(f"resident {self.id} is mining without carrying its chip")
+                raise ValueError(f"resident {self.id} left the game but is still harvesting")
+            if type(self.harvesting.amount) is not int or self.harvesting.amount < 1:
+                raise ValueError(
+                    f"resident {self.id} is harvesting {self.harvesting.amount!r} energy"
+                )
+            if not math.isfinite(self.harvesting.ends_at):
+                raise ValueError(f"resident {self.id} has a harvesting job that never ends")
+            if self.inventory.count(self.harvesting.crystal) < 1:
+                raise ValueError(f"resident {self.id} is harvesting without carrying its crystal")
         if self.walking is not None:
             if self.left:
                 raise ValueError(f"resident {self.id} left the game but is still walking")
-            if self.mining is not None:
-                raise ValueError(f"resident {self.id} is walking and mining at once")
+            if self.harvesting is not None:
+                raise ValueError(f"resident {self.id} is walking and harvesting at once")
             walk = self.walking
             if not (
                 math.isfinite(walk.departs_at)
@@ -493,22 +498,22 @@ class Resident:
 
 
 @dataclass(frozen=True)
-class Pool:
-    """A token mine on the ground, see `mining.py`. Pools are placed when the game starts and
-    never move or appear later; only their reserve goes down."""
+class Spring:
+    """An energy spring on the ground, see `harvesting.py`. Springs are placed when the game
+    starts and never move or appear later; only their reserve goes down."""
 
     id: str
     position: Position
     radius: float
-    """Residents within this distance of `position` can mine here."""
+    """Residents within this distance of `position` can harvest here."""
     reserve: int
-    """Tokens still in the ground, not counting those miners are digging out right now."""
+    """Energy still in the ground, not counting what harvesters are drawing right now."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.radius) and self.radius > 0):
-            raise ValueError(f"pool {self.id} has radius {self.radius}, must be positive")
+            raise ValueError(f"spring {self.id} has radius {self.radius}, must be positive")
         if type(self.reserve) is not int or self.reserve < 0:
-            raise ValueError(f"pool {self.id} holds {self.reserve!r} tokens, must be >= 0")
+            raise ValueError(f"spring {self.id} holds {self.reserve!r} energy, must be >= 0")
 
     def reaches(self, position: Position) -> bool:
         return (
@@ -518,7 +523,7 @@ class Pool:
 
 @dataclass(frozen=True)
 class PricePoint:
-    """What one more token fetched at the market at a game time, before rounding."""
+    """What one more energy fetched at the market at a game time, before rounding."""
 
     time: float
     price: float
@@ -532,14 +537,14 @@ class PricePoint:
 
 @dataclass(frozen=True)
 class Market:
-    """Where residents sell tokens for coins, see `market.py`. It never moves; only the
+    """Where residents sell energy for coins, see `market.py`. It never moves; only the
     pressure of recent sales, which sets the price, changes."""
 
     position: Position
     radius: float
     """Residents within this distance of `position` can sell here."""
     pressure: float = 0.0
-    """Tokens sold recently, as measured at `pressure_at`; it drifts as time passes, below
+    """Energy sold recently, as measured at `pressure_at`; it drifts as time passes, below
     zero once nobody has sold for a while, see `market.py`."""
     pressure_at: float = 0.0
     """Game time of the last sale, see `World.time`."""
@@ -587,22 +592,22 @@ class World:
     """Requests between residents waiting for an answer, see `events.py`."""
     ended: bool = False
     """The game is over: nothing changes any more, see `lifecycle.py`."""
-    pools: tuple[Pool, ...] = ()
-    """Token pools, fixed for the whole game."""
+    springs: tuple[Spring, ...] = ()
+    """Energy springs, fixed for the whole game."""
     time: float = 0.0
     """Seconds since the game started, as of the latest change; the server moves it on."""
     activity: ActivityLog = ActivityLog()
     """What residents have done where, for others nearby to notice, see `perception.py`."""
     market: Market | None = None
-    """Where tokens sell for coins, see `market.py`; None on a map without one."""
+    """Where energy sell for coins, see `market.py`; None on a map without one."""
     speech: SpeechLog = SpeechLog()
     """What residents have said and who heard it, see `speech.py`."""
     notices: NoticeLog = NoticeLog()
     """What the server has announced to every resident, see `lifecycle.announce`."""
     contracts: ContractBook = ContractBook()
     """Standing deals between residents, see `contracts.py`."""
-    rigs: tuple[MiningRig, ...] = ()
-    next_rig_id: int = 1
+    towers: tuple[Tower, ...] = ()
+    next_tower_id: int = 1
     ledger: Ledger = Ledger()
     """Every coin that changed hands, see `ledger.py`."""
 
@@ -616,31 +621,31 @@ class World:
                 raise ValueError("the market was last sold to after the current time")
             if self.market.history and self.market.history[-1].time > self.time:
                 raise ValueError("the market's price history reaches past the current time")
-        pool_ids = [pool.id for pool in self.pools]
-        if len(set(pool_ids)) != len(pool_ids):
-            raise ValueError("pool ids must be unique")
-        for pool in self.pools:
-            if not self.map.contains(pool.position):
-                raise ValueError(f"pool {pool.id} is outside the map: {pool.position}")
+        spring_ids = [spring.id for spring in self.springs]
+        if len(set(spring_ids)) != len(spring_ids):
+            raise ValueError("spring ids must be unique")
+        for spring in self.springs:
+            if not self.map.contains(spring.position):
+                raise ValueError(f"spring {spring.id} is outside the map: {spring.position}")
         ids = [resident.id for resident in self.residents]
         if len(set(ids)) != len(ids):
             raise ValueError("resident ids must be unique")
         for resident in self.residents:
             if not self.map.contains(resident.position):
                 raise ValueError(f"resident {resident.id} is outside the map: {resident.position}")
-            if resident.mining is not None:
-                if resident.mining.pool_id not in pool_ids:
-                    raise ValueError(f"resident {resident.id} mines unknown pool")
+            if resident.harvesting is not None:
+                if resident.harvesting.spring_id not in spring_ids:
+                    raise ValueError(f"resident {resident.id} harvests unknown spring")
                 if self.ended:
-                    raise ValueError(f"resident {resident.id} is mining after the game ended")
+                    raise ValueError(f"resident {resident.id} is harvesting after the game ended")
             if resident.walking is not None:
                 if not self.map.contains(resident.walking.target):
                     raise ValueError(f"resident {resident.id} walks to outside the map")
                 if self.ended:
                     raise ValueError(f"resident {resident.id} is walking after the game ended")
-            for sighting in resident.memory.known_pools:
-                if sighting.pool_id not in pool_ids:
-                    raise ValueError(f"resident {resident.id} remembers unknown pool")
+            for sighting in resident.memory.known_springs:
+                if sighting.spring_id not in spring_ids:
+                    raise ValueError(f"resident {resident.id} remembers unknown spring")
             if resident.memory.activity_seen >= self.activity.next_seq:
                 raise ValueError(f"resident {resident.id} has seen activity not yet logged")
             if resident.memory.speech_seen >= self.speech.next_seq:
@@ -650,8 +655,8 @@ class World:
         for entry in self.activity.entries:
             if entry.resident_id not in ids:
                 raise ValueError(f"activity {entry.seq} involves unknown resident")
-            if entry.pool_id is not None and entry.pool_id not in pool_ids:
-                raise ValueError(f"activity {entry.seq} involves unknown pool")
+            if entry.spring_id is not None and entry.spring_id not in spring_ids:
+                raise ValueError(f"activity {entry.seq} involves unknown spring")
         for line in self.speech.entries:
             if {line.speaker_id, *line.listeners} - set(ids):
                 raise ValueError(f"speech {line.seq} involves unknown resident")
@@ -663,19 +668,19 @@ class World:
                 raise ValueError(f"event {event.id} is addressed to its own sender")
         # Leaving and ending both settle every pending event first.
         left = {resident.id for resident in self.residents if resident.left}
-        rig_ids = [rig.id for rig in self.rigs]
-        if type(self.next_rig_id) is not int or self.next_rig_id < 1:
-            raise ValueError("invalid next rig id")
-        if len(set(rig_ids)) != len(rig_ids):
-            raise ValueError("duplicate rig id")
-        for rig in self.rigs:
-            if not 1 <= rig.id < self.next_rig_id or rig.pool_id not in pool_ids:
-                raise ValueError("unknown rig or pool")
-            if rig.owner_id not in ids or rig.owner_id in left:
-                raise ValueError("rig owner must still be in the game")
-            for slot in rig.slots:
+        tower_ids = [tower.id for tower in self.towers]
+        if type(self.next_tower_id) is not int or self.next_tower_id < 1:
+            raise ValueError("invalid next tower id")
+        if len(set(tower_ids)) != len(tower_ids):
+            raise ValueError("duplicate tower id")
+        for tower in self.towers:
+            if not 1 <= tower.id < self.next_tower_id or tower.spring_id not in spring_ids:
+                raise ValueError("unknown tower or spring")
+            if tower.owner_id not in ids or tower.owner_id in left:
+                raise ValueError("tower owner must still be in the game")
+            for slot in tower.slots:
                 if self.ended or slot.resident_id not in ids or slot.resident_id in left:
-                    raise ValueError("rig slot outlives its game or resident")
+                    raise ValueError("tower slot outlives its game or resident")
         for event in self.events.pending:
             if self.ended or {event.sender_id, event.recipient_id} & left:
                 raise ValueError(f"event {event.id} is pending after its game or resident ended")

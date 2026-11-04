@@ -16,8 +16,8 @@ from aiverse_server.core.inventory import (
     take_item,
 )
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.tokens import TOKEN
-from aiverse_server.game.layout import STARTING_TOKENS, create_default_world
+from aiverse_server.economy.energy import ENERGY
+from aiverse_server.game.layout import STARTING_ENERGY, create_default_world
 
 WORLD = World(
     map=WorldMap(size=10),
@@ -34,10 +34,10 @@ WORLD = World(
 )
 
 
-def test_residents_start_with_nothing_but_their_tokens() -> None:
+def test_residents_start_with_nothing_but_their_energy() -> None:
     assert list_items(WORLD, "a") == {}
     world = create_default_world()
-    assert all(list_items(world, r.id) == {TOKEN: STARTING_TOKENS} for r in world.residents)
+    assert all(list_items(world, r.id) == {ENERGY: STARTING_ENERGY} for r in world.residents)
 
 
 def test_list_items_is_sorted_by_kind() -> None:

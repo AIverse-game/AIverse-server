@@ -3,17 +3,17 @@ import json
 from aiverse_server.agents.observation import Observation, observe, to_json
 from aiverse_server.agents.runner import TurnRecord, record_to_json
 from aiverse_server.agents.tools import ResidentTools
-from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
+from aiverse_server.economy.energy import ENERGY
 from aiverse_server.server.app import Game
 
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((TOKEN, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((TOKEN, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((ENERGY, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((ENERGY, 100),)), coins=5000),
     ),
-    pools=(Pool("p1", Position(80, 50), 4, 300),),
+    springs=(Spring("p1", Position(80, 50), 4, 300),),
     market=Market(Position(50, 50), 5),
 )
 
@@ -50,38 +50,38 @@ def test_action_balances_count_escrow_as_owned_resources() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
 
-    tools.call("offer_to_buy", {"seller_id": "b", "kind": "token", "quantity": 10, "price": 100})
-    tools.buy_chip("MK1")
-    tools.sell_tokens(30)
+    tools.call("offer_to_buy", {"seller_id": "b", "kind": "energy", "quantity": 10, "price": 100})
+    tools.buy_crystal("C1")
+    tools.sell_energy(30)
     tools.move_to(60, 50)
-    tools.buy_chip("MK1")
+    tools.buy_crystal("C1")
 
     calls = tools.calls
     assert calls[0].coins_change == 0  # Reserving 100 coins does not lower ranked wealth.
     assert calls[1].coins_change == -300
-    assert (calls[2].coins_change, calls[2].tokens_change) == (578, -30)
-    assert (calls[3].coins_change, calls[3].tokens_change) == (0, -5)
+    assert (calls[2].coins_change, calls[2].energy_change) == (578, -30)
+    assert (calls[3].coins_change, calls[3].energy_change) == (0, -5)
     assert calls[4].result.ok is False
-    assert (calls[4].coins_change, calls[4].tokens_change) == (0, 0)
+    assert (calls[4].coins_change, calls[4].energy_change) == (0, 0)
 
 
-def test_finished_mining_is_not_attributed_to_the_next_action() -> None:
-    from aiverse_server.game.actions import BuyChip, Mine, MoveTo
+def test_finished_harvesting_is_not_attributed_to_the_next_action() -> None:
+    from aiverse_server.game.actions import BuyCrystal, Harvest, MoveTo
 
     game, clock = make_game()
-    game.act(BuyChip("a", "MK1"))
+    game.act(BuyCrystal("a", "C1"))
     game.act(MoveTo("a", Position(80, 50)))
     clock.now = 12
     game.tick()
-    game.act(Mine("a", "p1"))
+    game.act(Harvest("a", "p1"))
     tools = ResidentTools(game, "a")
     clock.now = 22
 
-    tools.say("采矿完成")
+    tools.say("汲取完成")
 
     assert tools.calls[0].time == 22
-    assert tools.calls[0].tokens_change == -2
-    assert game.world.residents[0].inventory.count(TOKEN) == 113
+    assert tools.calls[0].energy_change == -2
+    assert game.world.residents[0].inventory.count(ENERGY) == 113
 
 
 def test_page_history_is_bounded_and_has_no_full_observation() -> None:
@@ -130,13 +130,13 @@ def test_redacting_a_short_key_preserves_log_routing_and_schema_fields() -> None
     from aiverse_server.agents.runner import redact_turn
 
     turn = TurnRecord(
-        "jack", 0, '{"me":{"id":"jack","tokens":3},"short_term_notes":[{"text":"k"}]}', (), "k"
+        "jack", 0, '{"me":{"id":"jack","energy":3},"short_term_notes":[{"text":"k"}]}', (), "k"
     )
 
     shown = redact_turn(turn, lambda text: text.replace("k", "***"))
     observation = json.loads(shown.observation)
 
     assert shown.resident_id == "jack"
-    assert observation["me"]["tokens"] == 3
+    assert observation["me"]["energy"] == 3
     assert observation["short_term_notes"][0]["text"] == "***"
     assert shown.remark == "***"

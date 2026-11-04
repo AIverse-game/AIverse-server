@@ -7,7 +7,7 @@ resident's whispers, offers and contracts, and no one else's. It may also hand a
 language model with `start_agent`, or take them back with `stop_agent`; the server's config
 file may override the model settings pages send, see `config.py`.
 The game ends a fixed time after the app is created; every connection then receives the
-final `state`. Mining jobs and walks finish on the same clock, and are broadcast too.
+final `state`. Harvesting jobs and walks finish on the same clock, and are broadcast too.
 """
 
 import asyncio
@@ -267,7 +267,7 @@ class Game:
         return max(self._duration - (self._clock() - self._start), 0.0)
 
     def tick(self) -> None:
-        """Bring the world up to now: move its time on, finish the mining jobs and walks that
+        """Bring the world up to now: move its time on, finish the harvesting jobs and walks that
         are done (see `clock.py`), end the game if its time is up, and tell everyone if
         anything changed. Called by the timer and before each frame, so no action slips in
         late while the timer waits for its turn."""
@@ -445,7 +445,7 @@ class Game:
             self.broadcast_world()
 
     def _until_next(self) -> float:
-        """Seconds until the game ends, the ending is announced, or the next mining job or walk
+        """Seconds until the game ends, the ending is announced, or the next harvesting job or walk
         is due, whichever comes first."""
         wait = self.remaining()
         if self._pending_notices:

@@ -4,8 +4,8 @@ import pytest
 
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.tools import ResidentTools
-from aiverse_server.core.world import Inventory, Market, Pool, Position, Resident, World, WorldMap
-from aiverse_server.economy.tokens import TOKEN
+from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
+from aiverse_server.economy.energy import ENERGY
 from aiverse_server.game.actions import ActionRejected, MoveTo
 from aiverse_server.game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from aiverse_server.server.app import Game, Outbox, create_app
@@ -13,10 +13,10 @@ from aiverse_server.server.app import Game, Outbox, create_app
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((TOKEN, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((TOKEN, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((ENERGY, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((ENERGY, 100),)), coins=5000),
     ),
-    pools=(Pool("p1", Position(80, 50), 4, 300),),
+    springs=(Spring("p1", Position(80, 50), 4, 300),),
     market=Market(Position(50, 50), 5),
 )
 

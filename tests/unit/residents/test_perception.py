@@ -9,17 +9,24 @@ from aiverse_server.core.world import (
     ActivityLog,
     Inventory,
     Memory,
-    Pool,
-    PoolSighting,
     Position,
     Resident,
+    Spring,
+    SpringSighting,
     World,
     WorldMap,
 )
-from aiverse_server.economy.chips import CHIP_MODELS
-from aiverse_server.economy.mining import MINE_SECONDS
-from aiverse_server.economy.tokens import TOKEN, walk_cost
-from aiverse_server.game.actions import LeaveGame, Mine, MoveTo, OfferToBuy, RespondToEvent, perform
+from aiverse_server.economy.crystals import CRYSTAL_TIERS
+from aiverse_server.economy.energy import ENERGY, walk_cost
+from aiverse_server.economy.harvesting import HARVEST_SECONDS
+from aiverse_server.game.actions import (
+    Harvest,
+    LeaveGame,
+    MoveTo,
+    OfferToBuy,
+    RespondToEvent,
+    perform,
+)
 from aiverse_server.game.clock import settle_due
 from aiverse_server.game.lifecycle import GameError, announce, end_game
 from aiverse_server.residents.memory import remember
@@ -27,23 +34,23 @@ from aiverse_server.residents.perception import PERCEPTION_RADIUS, begin_turn, r
 from aiverse_server.residents.walking import WALK_SPEED, next_arrival
 from aiverse_server.server.app import Game
 
-MINE_YIELD = CHIP_MODELS[0].tokens_per_job
-"""What a job pays with MK1, the chip every resident here carries."""
+HARVEST_YIELD = CRYSTAL_TIERS[0].energy_per_job
+"""What a job pays with C1, the crystal every resident here carries."""
 
 
-def resident(resident_id: str, x: float, y: float, tokens: int = 1000) -> Resident:
+def resident(resident_id: str, x: float, y: float, energy: int = 1000) -> Resident:
     return Resident(
         id=resident_id,
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((TOKEN, tokens), ("MK1", 1))),
+        inventory=Inventory(((ENERGY, energy), ("C1", 1))),
         coins=100,
     )
 
 
-# a looks around from (10, 10): b and the near pool are in range, d right on the edge,
-# c and the far pool well outside.
+# a looks around from (10, 10): b and the near spring are in range, d right on the edge,
+# c and the far spring well outside.
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
@@ -52,9 +59,9 @@ WORLD = World(
         resident("c", 60, 60),
         resident("d", 10, 10 + PERCEPTION_RADIUS),
     ),
-    pools=(
-        Pool("near", Position(20, 10), radius=4, reserve=100),
-        Pool("far", Position(80, 80), radius=4, reserve=50),
+    springs=(
+        Spring("near", Position(20, 10), radius=4, reserve=100),
+        Spring("far", Position(80, 80), radius=4, reserve=50),
     ),
     time=3.0,
 )
@@ -67,56 +74,56 @@ def arrive(world: World) -> World:
     return world
 
 
-def test_a_resident_sees_the_pools_and_residents_in_range_and_nothing_further() -> None:
+def test_a_resident_sees_the_springs_and_residents_in_range_and_nothing_further() -> None:
     _, seen = begin_turn(WORLD, "a")
     assert seen.time == 3.0
     assert seen.position == Position(10, 10)
-    assert seen.pools == (PoolSighting("near", Position(20, 10), 4, 100, 3.0),)
+    assert seen.springs == (SpringSighting("near", Position(20, 10), 4, 100, 3.0),)
     assert [other.resident_id for other in seen.residents] == ["b", "d"]
     assert seen.residents[0].name == "B"
-    assert seen.residents[0].mining_pool_id is None
+    assert seen.residents[0].harvesting_spring_id is None
 
 
-def test_seeing_a_pool_for_the_first_time_discovers_it() -> None:
+def test_seeing_a_spring_for_the_first_time_discovers_it() -> None:
     world, first = begin_turn(WORLD, "a")
     _, second = begin_turn(world, "a")
 
     assert first.discovered == ("near",)
-    assert first.known_pools == first.pools
+    assert first.known_springs == first.springs
     assert second.discovered == ()
 
 
 def seen_then_left() -> World:
-    """a sees the near pool, then walks out of sight while b digs some tokens out of it."""
+    """a sees the near spring, then walks out of sight while b digs some energy out of it."""
     world, _ = begin_turn(WORLD, "a")
-    world = perform(world, Mine("b", "near"))
+    world = perform(world, Harvest("b", "near"))
     return arrive(perform(world, MoveTo("a", Position(10, 40))))
 
 
-def test_a_pool_out_of_sight_is_remembered_as_it_was_last_seen() -> None:
+def test_a_spring_out_of_sight_is_remembered_as_it_was_last_seen() -> None:
     _, away = begin_turn(seen_then_left(), "a")
 
-    assert away.pools == ()
-    assert away.known_pools == (PoolSighting("near", Position(20, 10), 4, 100, 3.0),)
+    assert away.springs == ()
+    assert away.known_springs == (SpringSighting("near", Position(20, 10), 4, 100, 3.0),)
 
 
-def test_coming_back_to_a_pool_updates_the_sighting() -> None:
+def test_coming_back_to_a_spring_updates_the_sighting() -> None:
     world, _ = begin_turn(seen_then_left(), "a")
 
     world = arrive(perform(world, MoveTo("a", Position(10, 10))))
     _, back = begin_turn(world, "a")
 
-    sighting = PoolSighting("near", Position(20, 10), 4, 100 - MINE_YIELD, world.time)
-    assert back.known_pools == (sighting,)
+    sighting = SpringSighting("near", Position(20, 10), 4, 100 - HARVEST_YIELD, world.time)
+    assert back.known_springs == (sighting,)
     assert back.discovered == ()
 
 
-def test_known_pools_from_different_places_add_up() -> None:
+def test_known_springs_from_different_places_add_up() -> None:
     world, _ = begin_turn(WORLD, "a")
     world = arrive(perform(world, MoveTo("a", Position(70, 75))))
     world, seen = begin_turn(world, "a")
     assert seen.discovered == ("far",)
-    assert [sighting.pool_id for sighting in seen.known_pools] == ["far", "near"]
+    assert [sighting.spring_id for sighting in seen.known_springs] == ["far", "near"]
 
 
 def test_others_activity_in_range_is_noticed_once_and_own_activity_never() -> None:
@@ -183,19 +190,19 @@ def test_walkers_are_seen_where_they_have_got_to_on_their_way() -> None:
     assert c.position.x == pytest.approx(60 - 60 / 2**0.5)
     # A walker looking around sees from where they have got to.
     assert walker.position == c.position
-    assert [sighting.pool_id for sighting in walker.pools] == ["near"]
+    assert [sighting.spring_id for sighting in walker.springs] == ["near"]
 
 
-def test_mining_is_logged_when_it_starts_and_when_the_clock_pays_it_out() -> None:
+def test_harvesting_is_logged_when_it_starts_and_when_the_clock_pays_it_out() -> None:
     now = [0.0]
     game = Game(replace(WORLD, time=0.0), clock=lambda: now[0])
-    game.world = perform(game.world, Mine("b", "near"))
-    now[0] = MINE_SECONDS
+    game.world = perform(game.world, Harvest("b", "near"))
+    now[0] = HARVEST_SECONDS
     game.tick()
     _, seen = begin_turn(game.world, "a")
-    assert [(entry.kind, entry.pool_id, entry.time) for entry in seen.activity] == [
-        ("started_mining", "near", 0.0),
-        ("finished_mining", "near", MINE_SECONDS),
+    assert [(entry.kind, entry.spring_id, entry.time) for entry in seen.activity] == [
+        ("started_harvesting", "near", 0.0),
+        ("finished_harvesting", "near", HARVEST_SECONDS),
     ]
 
 
@@ -206,23 +213,23 @@ def test_a_tick_with_nothing_due_logs_nothing() -> None:
 
 
 def test_jobs_stopped_by_the_end_of_the_game_are_not_logged() -> None:
-    world = perform(WORLD, Mine("b", "near"))
+    world = perform(WORLD, Harvest("b", "near"))
     now = [0.0]
     game = Game(world, duration=5.0, clock=lambda: now[0])
     now[0] = 5.0
     game.tick()
     assert game.world.ended
-    assert [entry.kind for entry in game.world.activity.entries] == ["started_mining"]
+    assert [entry.kind for entry in game.world.activity.entries] == ["started_harvesting"]
 
 
-def test_a_miner_who_leaves_is_logged_as_leaving_only() -> None:
-    world = perform(WORLD, Mine("b", "near"))
+def test_a_harvester_who_leaves_is_logged_as_leaving_only() -> None:
+    world = perform(WORLD, Harvest("b", "near"))
     world = perform(world, LeaveGame("b"))
-    assert [entry.kind for entry in world.activity.entries] == ["started_mining", "left_game"]
+    assert [entry.kind for entry in world.activity.entries] == ["started_harvesting", "left_game"]
 
 
-def test_a_walk_that_spends_the_last_token_logs_the_move_and_the_exit() -> None:
-    world = replace(WORLD, residents=(*WORLD.residents[:3], resident("d", 10, 30, tokens=3)))
+def test_a_walk_that_spends_the_last_energy_logs_the_move_and_the_exit() -> None:
+    world = replace(WORLD, residents=(*WORLD.residents[:3], resident("d", 10, 30, energy=3)))
 
     world = arrive(perform(world, MoveTo("d", Position(10, 25))))
 
@@ -235,9 +242,9 @@ def test_a_walk_that_spends_the_last_token_logs_the_move_and_the_exit() -> None:
     assert seen.residents[-1].left
 
 
-def test_selling_the_last_token_logs_the_exit() -> None:
-    world = replace(WORLD, residents=(WORLD.residents[0], resident("b", 22, 10, tokens=5)))
-    world = perform(world, OfferToBuy("a", "b", TOKEN, 5, 10))
+def test_selling_the_last_energy_logs_the_exit() -> None:
+    world = replace(WORLD, residents=(WORLD.residents[0], resident("b", 22, 10, energy=5)))
+    world = perform(world, OfferToBuy("a", "b", ENERGY, 5, 10))
     world = perform(world, RespondToEvent("b", 1, accept=True))
     assert [(entry.resident_id, entry.kind) for entry in world.activity.entries] == [
         ("b", "left_game")
@@ -245,19 +252,19 @@ def test_selling_the_last_token_logs_the_exit() -> None:
 
 
 def test_primitives_that_change_nothing_on_the_map_log_nothing() -> None:
-    world = perform(WORLD, OfferToBuy("a", "b", TOKEN, 1, 10))
+    world = perform(WORLD, OfferToBuy("a", "b", ENERGY, 1, 10))
     assert world.activity == ActivityLog()
     assert record_activity(world, world) is world
 
 
-def test_a_busy_miner_can_still_look_around() -> None:
-    world = perform(WORLD, Mine("b", "near"))
+def test_a_busy_harvester_can_still_look_around() -> None:
+    world = perform(WORLD, Harvest("b", "near"))
 
     _, seen = begin_turn(world, "b")
     _, watched = begin_turn(world, "a")
 
-    assert seen.pools[0].reserve == 100 - MINE_YIELD
-    assert watched.residents[0].mining_pool_id == "near"
+    assert seen.springs[0].reserve == 100 - HARVEST_YIELD
+    assert watched.residents[0].harvesting_spring_id == "near"
 
 
 @pytest.mark.parametrize(
@@ -278,7 +285,7 @@ def test_looking_around_leaves_the_rest_of_the_world_as_it_was() -> None:
     world, _ = begin_turn(WORLD, "a")
     assert world.residents[1:] == WORLD.residents[1:]
     assert replace(world.residents[0], memory=Memory()) == WORLD.residents[0]
-    assert world.pools == WORLD.pools
+    assert world.springs == WORLD.springs
 
 
 def test_the_log_keeps_only_the_latest_entries_and_numbering_goes_on() -> None:
@@ -293,9 +300,9 @@ def test_the_log_keeps_only_the_latest_entries_and_numbering_goes_on() -> None:
 
 
 A = WORLD.residents[0]
-GONE = PoolSighting("gone", Position(1, 1), 1, 1, 0.0)
+GONE = SpringSighting("gone", Position(1, 1), 1, 1, 0.0)
 STRAY = Activity(1, 0.0, "ghost", "left_game", Position(1, 1))
-MINED_GONE = Activity(1, 0.0, "a", "started_mining", Position(1, 1), pool_id="gone")
+HARVESTED_GONE = Activity(1, 0.0, "a", "started_harvesting", Position(1, 1), spring_id="gone")
 
 
 @pytest.mark.parametrize(
@@ -303,7 +310,7 @@ MINED_GONE = Activity(1, 0.0, "a", "started_mining", Position(1, 1), pool_id="go
     [
         (
             lambda: replace(WORLD, residents=(replace(A, memory=Memory((GONE,))),)),
-            "remembers unknown pool",
+            "remembers unknown spring",
         ),
         (
             lambda: replace(WORLD, residents=(replace(A, memory=Memory(activity_seen=1)),)),
@@ -311,7 +318,7 @@ MINED_GONE = Activity(1, 0.0, "a", "started_mining", Position(1, 1), pool_id="go
         ),
         (lambda: Memory(found_on_walks=("near",)), "found on walks"),
         (lambda: replace(WORLD, activity=ActivityLog((STRAY,), 2)), "unknown resident"),
-        (lambda: replace(WORLD, activity=ActivityLog((MINED_GONE,), 2)), "unknown pool"),
+        (lambda: replace(WORLD, activity=ActivityLog((HARVESTED_GONE,), 2)), "unknown spring"),
         (lambda: ActivityLog((replace(STRAY, resident_id="a"),), 1), "above 0"),
         (
             lambda: ActivityLog(
@@ -334,31 +341,31 @@ def test_a_world_rejects_memories_and_activity_it_cannot_account_for(
 ROAD = replace(
     WORLD,
     residents=(resident("a", 10, 10),),
-    pools=(
-        Pool("beside", Position(25, 50), radius=4, reserve=70),
-        Pool("wide", Position(40, 50), radius=4, reserve=60),
-        Pool("behind", Position(10, 99), radius=4, reserve=50),
+    springs=(
+        Spring("beside", Position(25, 50), radius=4, reserve=70),
+        Spring("wide", Position(40, 50), radius=4, reserve=60),
+        Spring("behind", Position(10, 99), radius=4, reserve=50),
     ),
 )
 ROAD_END = Position(10, 90)
 
 
-def test_a_walk_discovers_the_pools_within_range_of_its_line_and_no_others() -> None:
+def test_a_walk_discovers_the_springs_within_range_of_its_line_and_no_others() -> None:
     world = arrive(perform(ROAD, MoveTo("a", ROAD_END)))
     _, seen = begin_turn(world, "a")
 
-    assert seen.pools == (PoolSighting("behind", Position(10, 99), 4, 50, seen.time),)
-    assert [sighting.pool_id for sighting in seen.known_pools] == ["behind", "beside"]
+    assert seen.springs == (SpringSighting("behind", Position(10, 99), 4, 50, seen.time),)
+    assert [sighting.spring_id for sighting in seen.known_springs] == ["behind", "beside"]
     assert seen.discovered == ("beside", "behind")
 
 
-def test_a_pool_found_on_a_walk_is_reported_once_and_remembered_as_of_arrival() -> None:
+def test_a_spring_found_on_a_walk_is_reported_once_and_remembered_as_of_arrival() -> None:
     world = arrive(perform(ROAD, MoveTo("a", ROAD_END)))
     world, first = begin_turn(world, "a")
     _, second = begin_turn(world, "a")
 
-    beside = next(s for s in first.known_pools if s.pool_id == "beside")
-    assert beside == PoolSighting("beside", Position(25, 50), 4, 70, world.time)
+    beside = next(s for s in first.known_springs if s.spring_id == "beside")
+    assert beside == SpringSighting("beside", Position(25, 50), 4, 70, world.time)
     assert second.discovered == ()
 
 
@@ -371,12 +378,12 @@ def test_a_resident_who_looks_mid_walk_has_seen_the_stretch_walked_so_far() -> N
     _, late_look = begin_turn(late, "a")
 
     assert early_look.discovered == ()
-    assert late_look.pools == ()
+    assert late_look.springs == ()
     assert late_look.discovered == ("beside",)
-    assert [sighting.pool_id for sighting in late_look.known_pools] == ["beside"]
+    assert [sighting.spring_id for sighting in late_look.known_springs] == ["beside"]
 
 
-def test_a_walk_that_only_passes_a_known_pool_discovers_nothing_new() -> None:
+def test_a_walk_that_only_passes_a_known_spring_discovers_nothing_new() -> None:
     world, _ = begin_turn(arrive(perform(ROAD, MoveTo("a", Position(10, 40)))), "a")
 
     world = arrive(perform(world, MoveTo("a", ROAD_END)))
@@ -385,18 +392,18 @@ def test_a_walk_that_only_passes_a_known_pool_discovers_nothing_new() -> None:
     assert seen.discovered == ("behind",)
 
 
-def test_passing_a_known_pool_leaves_its_sighting_as_it_was() -> None:
+def test_passing_a_known_spring_leaves_its_sighting_as_it_was() -> None:
     world, _ = begin_turn(arrive(perform(ROAD, MoveTo("a", Position(10, 40)))), "a")
-    first = next(s for s in world.residents[0].memory.known_pools if s.pool_id == "beside")
-    world = replace(world, pools=(replace(world.pools[0], reserve=1), *world.pools[1:]))
+    first = next(s for s in world.residents[0].memory.known_springs if s.spring_id == "beside")
+    world = replace(world, springs=(replace(world.springs[0], reserve=1), *world.springs[1:]))
 
     world = arrive(perform(world, MoveTo("a", ROAD_END)))
     _, seen = begin_turn(world, "a")
 
-    assert next(s for s in seen.known_pools if s.pool_id == "beside") == first
+    assert next(s for s in seen.known_springs if s.spring_id == "beside") == first
 
 
-def test_pools_found_on_walks_are_all_reported_by_the_next_look_and_only_once() -> None:
+def test_springs_found_on_walks_are_all_reported_by_the_next_look_and_only_once() -> None:
     world = arrive(perform(ROAD, MoveTo("a", Position(10, 40))))
     world, _ = remember(world, "a", "walking on", "long_term")
 
@@ -408,9 +415,9 @@ def test_pools_found_on_walks_are_all_reported_by_the_next_look_and_only_once() 
     assert again.discovered == ()
 
 
-def test_a_walker_who_runs_out_of_tokens_on_arrival_discovers_nothing() -> None:
+def test_a_walker_who_runs_out_of_energy_on_arrival_discovers_nothing() -> None:
     cost = walk_cost(Position(10, 10), ROAD_END)
-    broke = replace(ROAD, residents=(resident("a", 10, 10, tokens=cost),))
+    broke = replace(ROAD, residents=(resident("a", 10, 10, energy=cost),))
 
     world = arrive(perform(broke, MoveTo("a", ROAD_END)))
 

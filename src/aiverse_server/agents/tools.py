@@ -7,8 +7,8 @@ through `Game.remember` and `Game.forget`, so agents and pages go through the sa
 broadcasts.
 
 Leaving the game is not a tool: it gains a resident nothing, and a model could only do it by
-mistake. For the same reason no tool spends a resident's last token, which would take them
-out as well: a call that would leave them none in hand is refused with `last_token`.
+mistake. For the same reason no tool spends a resident's last energy, which would take them
+out as well: a call that would leave them none in hand is refused with `last_energy`.
 
 A tool's arguments come from a pydantic model, which both checks what a model sends and
 gives the JSON Schema a model is shown (`tool_specs`). `call` never raises for anything a
@@ -29,34 +29,34 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 from ..core.inventory import item_count
 from ..core.world import NOTE_LENGTH_LIMIT, Position, World
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
+from ..economy.energy import ENERGY, ENERGY_PER_UNIT, energy_total
 from ..economy.market import pressure_at
-from ..economy.tokens import TOKEN, TOKENS_PER_UNIT, token_total
 from ..game.actions import (
     Action,
     ActionRejected,
-    BuildRig,
-    BuyChip,
+    BuildTower,
+    BuyCrystal,
     CancelContract,
     Deliver,
-    FundRig,
-    InstallChip,
-    Mine,
+    FundTower,
+    Harvest,
+    InstallCrystal,
     MoveTo,
     OfferInformation,
     OfferToBuy,
     OfferToSell,
     ProposeContract,
-    RemoveChip,
+    RemoveCrystal,
     RespondToEvent,
     Say,
-    SellTokens,
+    SellEnergy,
     WithdrawEvent,
     perform,
 )
 from ..game.lifecycle import GameError, total_coins
 from ..residents.information_offer import SUMMARY_LIMIT
 from ..residents.memory import NoteError
-from ..residents.perception import pools_in_sight
+from ..residents.perception import springs_in_sight
 from .observation import known_slots
 
 if TYPE_CHECKING:
@@ -68,11 +68,11 @@ sales in that time do not lower it; later ones do, so a long round cannot sell a
 market left long ago."""
 
 # What a failed call reports: a rejection code from the game, or one of these.
-CALL_ERRORS = ("unknown_tool", "invalid_arguments", "last_token")
+CALL_ERRORS = ("unknown_tool", "invalid_arguments", "last_energy")
 
 
-class _LastToken(Exception):
-    """A primitive would have left the resident no tokens, taking them out of the game."""
+class _LastEnergy(Exception):
+    """A primitive would have left the resident no energy, taking them out of the game."""
 
 
 class _Args(BaseModel):
@@ -88,36 +88,36 @@ class MoveToArgs(_Args):
     y: Coordinate = Field(description="Target y, from 0 (north) to the map size (south).")
 
 
-class MineArgs(_Args):
-    pool_id: str = Field(description="Id of the pool you stand at, such as p1.")
+class HarvestArgs(_Args):
+    spring_id: str = Field(description="Id of the spring you stand at, such as s1.")
 
 
-class SellTokensArgs(_Args):
-    quantity: StrictInt = Field(description="Tokens to sell; you must stand at the market.")
+class SellEnergyArgs(_Args):
+    quantity: StrictInt = Field(description="Energy to sell; you must stand at the market.")
 
 
-class BuyChipArgs(_Args):
-    model: str = Field(description="Chip model: MK1, MK2 or MK3.")
+class BuyCrystalArgs(_Args):
+    tier: str = Field(description="Crystal tier: C1, C2 or C3.")
 
 
-class BuildRigArgs(_Args):
-    pool_id: str = Field(description="Pool you stand at; build an automatic mining rig here.")
+class BuildTowerArgs(_Args):
+    spring_id: str = Field(description="Spring you stand at; build an automatic tower here.")
 
 
-class InstallChipArgs(_Args):
-    rig_id: StrictInt
-    chip: str = Field(description="Carried chip model to install: MK1, MK2 or MK3.")
-    deposit: StrictInt = Field(description="Coins to prepay for rent and electricity; at least 1.")
+class InstallCrystalArgs(_Args):
+    tower_id: StrictInt
+    crystal: str = Field(description="Carried crystal tier to install: C1, C2 or C3.")
+    deposit: StrictInt = Field(description="Coins to prepay for rent and upkeep; at least 1.")
 
 
-class FundRigArgs(_Args):
-    rig_id: StrictInt
+class FundTowerArgs(_Args):
+    tower_id: StrictInt
     slot_id: StrictInt
     amount: StrictInt = Field(description="Additional prepaid coins for your slot; at least 1.")
 
 
-class RemoveChipArgs(_Args):
-    rig_id: StrictInt
+class RemoveCrystalArgs(_Args):
+    tower_id: StrictInt
     slot_id: StrictInt
 
 
@@ -132,14 +132,14 @@ class SayArgs(_Args):
 
 class OfferToBuyArgs(_Args):
     seller_id: str = Field(description="Resident id you buy from.")
-    kind: str = Field(description='Item kind, such as "token" or a chip model like "MK1".')
+    kind: str = Field(description='Item kind, such as "energy" or a crystal tier like "C1".')
     quantity: StrictInt = Field(description="How many items.")
     price: StrictInt = Field(description="Coins for the whole lot, set aside until answered.")
 
 
 class OfferToSellArgs(_Args):
     buyer_id: str = Field(description="Resident id you sell to.")
-    kind: str = Field(description='Item kind, such as "token" or a chip model like "MK1".')
+    kind: str = Field(description='Item kind, such as "energy" or a crystal tier like "C1".')
     quantity: StrictInt = Field(description="How many items, set aside until answered.")
     price: StrictInt = Field(description="Coins for the whole lot.")
 
@@ -179,7 +179,7 @@ class ProposeContractArgs(_Args):
         description="supplier: you deliver the items and get paid, your deposits set aside "
         "now; buyer: you pay for each delivery, and all your payments are set aside now."
     )
-    kind: str = Field(description='Item kind delivered, such as "token" or "MK1".')
+    kind: str = Field(description='Item kind delivered, such as "energy" or "C1".')
     quantity: StrictInt = Field(description="Items in each delivery.")
     price: StrictInt = Field(description="Coins the buyer pays for each delivery.")
     deliveries: StrictInt = Field(
@@ -244,13 +244,13 @@ class ToolResult:
 @dataclass(frozen=True)
 class ResourceBalance:
     coins: int
-    tokens: int
+    energy: int
 
 
 def resource_balance(game: Game, resident_id: str) -> ResourceBalance:
     """Owned resources, including escrow; reserving coins is not a loss."""
     return ResourceBalance(
-        total_coins(game.world, resident_id), token_total(game.world, resident_id)
+        total_coins(game.world, resident_id), energy_total(game.world, resident_id)
     )
 
 
@@ -263,7 +263,7 @@ class ToolCall:
     result: ToolResult
     time: float = 0.0
     coins_change: int = 0
-    tokens_change: int = 0
+    energy_change: int = 0
     timestamp: str | None = None
 
 
@@ -287,46 +287,52 @@ class ToolSpec:
 
 TOOLS = (
     ToolSpec(
-        "build_rig", "Build a rig at your pool for coins; it needs installed chips.", BuildRigArgs
+        "build_tower",
+        "Build a tower at your spring for coins; it needs installed crystals.",
+        BuildTowerArgs,
     ),
     ToolSpec(
-        "install_chip",
-        "Install your chip at a rig you stand at; prepay rent and power, then move freely.",
-        InstallChipArgs,
+        "install_crystal",
+        "Install your crystal at a tower you stand at; prepay rent and upkeep, then move freely.",
+        InstallCrystalArgs,
     ),
     ToolSpec(
-        "fund_rig",
+        "fund_tower",
         "Remotely top up your slot. An unfunded slot pauses without debt or catch-up.",
-        FundRigArgs,
+        FundTowerArgs,
     ),
     ToolSpec(
-        "remove_chip", "Remotely remove your chip and refund unused prepayment.", RemoveChipArgs
+        "remove_crystal",
+        "Remotely remove your crystal and refund unused prepayment.",
+        RemoveCrystalArgs,
     ),
     ToolSpec(
         "move_to",
         "Walk in a straight line to a point. Costs "
-        f"{TOKENS_PER_UNIT:g} token per map unit, rounded up per walk, paid on setting off; "
+        f"{ENERGY_PER_UNIT:g} energy per map unit, rounded up per walk, paid on setting off; "
         "you are busy until you arrive.",
         MoveToArgs,
     ),
     ToolSpec(
-        "mine",
-        "Mine the pool you stand at with the best chip you carry; the tokens arrive when the "
-        "job ends and you are busy until then.",
-        MineArgs,
+        "harvest",
+        "Harvest the spring you stand at with the best crystal you carry; the energy arrives "
+        "when the job ends and you are busy until then.",
+        HarvestArgs,
     ),
     ToolSpec(
-        "sell_tokens",
-        "Sell carried tokens to the market for coins at the market price, which falls the more "
+        "sell_energy",
+        "Sell carried energy to the market for coins at the market price, which falls the more "
         f"is sold. Others' sales in the {PRICE_HOLD_SECONDS:g} seconds after your round began do "
-        "not lower it. Keep at least one token: selling your last is refused.",
-        SellTokensArgs,
+        "not lower it. Keep at least 1 energy: selling your last is refused.",
+        SellEnergyArgs,
     ),
-    ToolSpec("buy_chip", "Buy one chip at the market for its fixed price in coins.", BuyChipArgs),
+    ToolSpec(
+        "buy_crystal", "Buy one crystal at the market for its fixed price in coins.", BuyCrystalArgs
+    ),
     ToolSpec(
         "say",
         "Say something aloud to residents nearby, or whisper to one resident anywhere. Costs "
-        "tokens.",
+        "energy.",
         SayArgs,
     ),
     ToolSpec(
@@ -429,7 +435,7 @@ class ResidentTools:
                 )
                 return result
             arguments = loaded
-        # Settle timed work before measuring this action, so a completed mine is not
+        # Settle timed work before measuring this action, so a completed harvest is not
         # credited to an unrelated tool call.
         before = resource_balance(self.game, self.resident_id)
         time = self.game.world.time
@@ -442,7 +448,7 @@ class ResidentTools:
                 result,
                 time,
                 after.coins - before.coins,
-                after.tokens - before.tokens,
+                after.energy - before.energy,
                 timestamp,
             )
         )
@@ -451,14 +457,14 @@ class ResidentTools:
     def move_to(self, x: float, y: float) -> ToolResult:
         return self.call("move_to", {"x": x, "y": y})
 
-    def mine(self, pool_id: str) -> ToolResult:
-        return self.call("mine", {"pool_id": pool_id})
+    def harvest(self, spring_id: str) -> ToolResult:
+        return self.call("harvest", {"spring_id": spring_id})
 
-    def sell_tokens(self, quantity: int) -> ToolResult:
-        return self.call("sell_tokens", {"quantity": quantity})
+    def sell_energy(self, quantity: int) -> ToolResult:
+        return self.call("sell_energy", {"quantity": quantity})
 
-    def buy_chip(self, model: str) -> ToolResult:
-        return self.call("buy_chip", {"model": model})
+    def buy_crystal(self, tier: str) -> ToolResult:
+        return self.call("buy_crystal", {"tier": tier})
 
     def say(self, text: str, to: str | None = None) -> ToolResult:
         return self.call("say", {"text": text} if to is None else {"text": text, "to": to})
@@ -507,12 +513,12 @@ class ResidentTools:
             message = self._run(args)
         except ActionRejected as rejection:
             return ToolResult(False, rejection.code, rejection.message, self.status())
-        except _LastToken:
+        except _LastEnergy:
             return ToolResult(
                 False,
-                "last_token",
-                "that would leave you no tokens in hand (those set aside in offers do not "
-                "count) and could take you out of the game; keep at least one",
+                "last_energy",
+                "that would leave you no energy in hand (energy set aside in offers does not "
+                "count) and could take you out of the game; keep at least 1 energy",
                 self.status(),
             )
         except (GameError, NoteError) as error:
@@ -524,33 +530,33 @@ class ResidentTools:
         me = self.resident_id
         act = self._act
         match args:
-            case BuildRigArgs():
-                self._require_known_pool(args.pool_id)
-                act(BuildRig(me, args.pool_id))
-                # Rigs are numbered as they are built; the model needs the number to install.
-                rig_id = self.game.world.next_rig_id - 1
-                return f"built rig {rig_id}; install chips into it with rig_id {rig_id}"
-            case InstallChipArgs():
-                self._require_known_rig(args.rig_id)
-                act(InstallChip(me, args.rig_id, args.chip, args.deposit))
-            case FundRigArgs():
-                self._require_known_rig(args.rig_id)
-                act(FundRig(me, args.rig_id, args.slot_id, args.amount))
-            case RemoveChipArgs():
-                self._require_known_rig(args.rig_id)
-                act(RemoveChip(me, args.rig_id, args.slot_id))
+            case BuildTowerArgs():
+                self._require_known_spring(args.spring_id)
+                act(BuildTower(me, args.spring_id))
+                # Towers are numbered as they are built; the model needs the number to install.
+                tower_id = self.game.world.next_tower_id - 1
+                return f"built tower {tower_id}; install crystals into it with tower_id {tower_id}"
+            case InstallCrystalArgs():
+                self._require_known_tower(args.tower_id)
+                act(InstallCrystal(me, args.tower_id, args.crystal, args.deposit))
+            case FundTowerArgs():
+                self._require_known_tower(args.tower_id)
+                act(FundTower(me, args.tower_id, args.slot_id, args.amount))
+            case RemoveCrystalArgs():
+                self._require_known_tower(args.tower_id)
+                act(RemoveCrystal(me, args.tower_id, args.slot_id))
             case MoveToArgs():
                 act(MoveTo(me, Position(args.x, args.y)))
-            case MineArgs():
-                self._require_known_pool(args.pool_id)
-                act(Mine(me, args.pool_id))
-            case SellTokensArgs():
+            case HarvestArgs():
+                self._require_known_spring(args.spring_id)
+                act(Harvest(me, args.spring_id))
+            case SellEnergyArgs():
                 held = (
                     self.seen_pressure
                     if self.game.world.time - self.seen_at <= PRICE_HOLD_SECONDS
                     else None
                 )
-                act(SellTokens(me, args.quantity, held))
+                act(SellEnergy(me, args.quantity, held))
                 market = self.game.world.market
                 if held is not None and market is not None:
                     # The resident's own sale weighs on their next one, as it does on others'.
@@ -558,8 +564,8 @@ class ResidentTools:
                         pressure_at(market, self.game.world.time),
                         held + args.quantity,
                     )
-            case BuyChipArgs():
-                act(BuyChip(me, args.model))
+            case BuyCrystalArgs():
+                act(BuyCrystal(me, args.tier))
             case SayArgs():
                 act(Say(me, args.text, args.to))
             case OfferToBuyArgs():
@@ -599,33 +605,34 @@ class ResidentTools:
                 raise AssertionError(f"tool arguments without a handler: {type(args).__name__}")
         return ""
 
-    def _require_known_pool(self, pool_id: str) -> None:
-        """Refuse a pool the resident has never seen as if it did not exist, so that asking
-        for ids does not turn up pools they have not found."""
+    def _require_known_spring(self, spring_id: str) -> None:
+        """Refuse a spring the resident has never seen as if it did not exist, so that asking
+        for ids does not turn up springs they have not found."""
         world = self.game.world
         me = next(resident for resident in world.residents if resident.id == self.resident_id)
-        known = {sighting.pool_id for sighting in me.memory.known_pools}
-        if pool_id not in known | pools_in_sight(world, self.resident_id):
-            raise ActionRejected("unknown_pool", "unknown pool")
+        known = {sighting.spring_id for sighting in me.memory.known_springs}
+        if spring_id not in known | springs_in_sight(world, self.resident_id):
+            raise ActionRejected("unknown_spring", "unknown spring")
 
-    def _require_known_rig(self, rig_id: int) -> None:
-        """Refuse a rig the resident cannot know of, see `observation.known_slots`, as if it
-        did not exist, so that asking for ids does not turn up rigs or the pools they stand on."""
+    def _require_known_tower(self, tower_id: int) -> None:
+        """Refuse a tower the resident cannot know of, see `observation.known_slots`, as if it
+        did not exist, so that asking for ids does not turn up towers or the springs they stand
+        on."""
         world = self.game.world
-        in_sight = pools_in_sight(world, self.resident_id)
-        rig = next((rig for rig in world.rigs if rig.id == rig_id), None)
-        if rig is None or known_slots(rig, self.resident_id, in_sight) is None:
-            raise ActionRejected("unknown_rig", "unknown rig")
+        in_sight = springs_in_sight(world, self.resident_id)
+        tower = next((tower for tower in world.towers if tower.id == tower_id), None)
+        if tower is None or known_slots(tower, self.resident_id, in_sight) is None:
+            raise ActionRejected("unknown_tower", "unknown tower")
 
     def _act(self, action: Action) -> None:
         """Carry out a primitive as `Game.act` does, unless it would spend the resident's last
-        token. Raises `ActionRejected` or `_LastToken`, leaving the world as it was."""
+        energy. Raises `ActionRejected` or `_LastEnergy`, leaving the world as it was."""
         self.game.tick()
         before = self.game.world
         after = perform(before, action)
         me = self.resident_id
-        if _tokens_in_hand(before, me) > 0 and _tokens_in_hand(after, me) == 0:
-            raise _LastToken
+        if _energy_in_hand(before, me) > 0 and _energy_in_hand(after, me) == 0:
+            raise _LastEnergy
         self.game.commit(after)
 
     def status(self) -> dict[str, Any]:
@@ -633,15 +640,15 @@ class ResidentTools:
         world = self.game.world
         me = next(resident for resident in world.residents if resident.id == self.resident_id)
         items = me.inventory.counts()
-        tokens = items.pop(TOKEN, 0)
-        shown: dict[str, Any] = {"coins": me.coins, "tokens": tokens, "items": items}
+        energy = items.pop(ENERGY, 0)
+        shown: dict[str, Any] = {"coins": me.coins, "energy": energy, "items": items}
         if me.walking is not None:
             target = me.walking.target
             shown["walking_to"] = {"x": round(target.x, 1), "y": round(target.y, 1)}
             shown["arrives_in"] = round(max(me.walking.arrives_at - world.time, 0.0), 1)
-        if me.mining is not None:
-            shown["mining_pool"] = me.mining.pool_id
-            shown["mining_done_in"] = round(max(me.mining.ends_at - world.time, 0.0), 1)
+        if me.harvesting is not None:
+            shown["harvesting_spring"] = me.harvesting.spring_id
+            shown["harvesting_done_in"] = round(max(me.harvesting.ends_at - world.time, 0.0), 1)
         if me.left:
             shown["left_game"] = True
         if world.ended:
@@ -649,9 +656,9 @@ class ResidentTools:
         return shown
 
 
-def _tokens_in_hand(world: World, resident_id: str) -> int:
-    """Tokens the resident carries or is digging out, so can still spend; those set aside in
-    a sale offer are not, since the buyer may take them."""
+def _energy_in_hand(world: World, resident_id: str) -> int:
+    """Energy the resident carries or is drawing, so can still spend; energy set aside in
+    a sale offer is not, since the buyer may take it."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
-    mined = resident.mining.amount if resident.mining is not None else 0
-    return item_count(world, resident_id, TOKEN) + mined
+    harvested = resident.harvesting.amount if resident.harvesting is not None else 0
+    return item_count(world, resident_id, ENERGY) + harvested
