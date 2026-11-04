@@ -413,6 +413,28 @@ def test_the_brain_uses_the_configured_early_warning_threshold() -> None:
     asyncio.run(scenario())
 
 
+def test_the_endgame_reminder_says_held_items_count_towards_the_score() -> None:
+    async def scenario() -> None:
+        clock = FakeClock()
+        game = Game(WORLD, duration=600, clock=clock, early_notice_seconds=300)
+        clock.now = 300
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http([httpx.Response(200, json=_reply({"content": "Waiting."}))], requests),
+        )
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        prompt = json.loads(requests[0].content)["messages"][0]["content"]
+        assert "count towards your score" in prompt
+        assert "Only coins count" not in prompt
+
+    asyncio.run(scenario())
+
+
 def test_an_empty_reply_is_asked_again() -> None:
     async def scenario() -> None:
         game, _ = make_game()

@@ -53,9 +53,9 @@ ENDGAME_MAX_TOKENS = 8192
 """Per-request output ceiling after the configured early-warning threshold."""
 
 ENDGAME_INSTRUCTION = (
-    "Keep reasoning brief and call the next useful tool "
-    "promptly. Only coins count at the end: allow time to reach the market and sell carried "
-    "energy before the clock runs out."
+    "Keep reasoning brief and call the next useful tool promptly. Energy and crystals you hold "
+    "count towards your score at the end, so there is no need to sell everything off; a big "
+    "last-minute sale only lowers the energy price everyone is scored at."
 )
 
 TIMEOUT = 180.0

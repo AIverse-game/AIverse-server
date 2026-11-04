@@ -9,6 +9,7 @@ from aiverse_server.core.world import (
     Contract,
     ContractBook,
     ContractEnd,
+    Inventory,
     Position,
     Resident,
     World,
@@ -81,6 +82,15 @@ def test_each_resident_has_income_and_spending_by_channel() -> None:
     assert (b.income_concentration, c.income_concentration) == (None, None)
 
 
+def test_each_resident_has_a_score_counting_leftover_crystals() -> None:
+    holder = Resident("a", "A", "#123456", Position(1, 1), Inventory((("C1", 1),)), coins=3000)
+    world = World(WorldMap(10), (holder,))
+
+    (a,) = economy_report(world).residents
+
+    assert (a.total_coins, a.item_value, a.score) == (3000, 300, 3300)
+
+
 def test_the_mean_concentration_is_over_residents_with_income() -> None:
     report = economy_report(WORLD)
 
@@ -146,3 +156,9 @@ def test_the_console_summary_names_the_share_and_a_partial_ledger() -> None:
 
     assert "resident share 41.7%" in text
     assert "4 older transfers were dropped" in text
+
+
+def test_the_console_summary_lists_each_score_with_coins_and_items() -> None:
+    text = format_report(economy_report(WORLD))
+
+    assert "A 3000 (3000 + 0)" in text

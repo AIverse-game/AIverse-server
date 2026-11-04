@@ -39,7 +39,7 @@ from ..economy.towers import (
 )
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
 from ..economy.workshop import RECIPES, refine_seconds
-from ..game.lifecycle import ranks, total_coins
+from ..game.lifecycle import item_value, ranks, score, total_coins
 from ..residents.information_offer import InformationOffer
 from ..residents.perception import Perception
 from ..residents.walking import walk_seconds
@@ -235,6 +235,10 @@ class Standing:
     name: str
     coins: int
     """Total coins, including those set aside in offers."""
+    item_value: int
+    """What their energy and crystals count for at the market price right now."""
+    score: int
+    """What the ranking counts: `coins` plus `item_value`."""
     rank: int
     left: bool
     crystals_refined: int
@@ -549,6 +553,8 @@ def observe(
                 id=resident.id,
                 name=resident.name,
                 coins=total_coins(world, resident.id),
+                item_value=item_value(world, resident.id),
+                score=score(world, resident.id),
                 rank=standings[resident.id],
                 left=resident.left,
                 crystals_refined=resident.crystals_refined,

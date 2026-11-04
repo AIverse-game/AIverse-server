@@ -68,10 +68,10 @@ from ..game.actions import (
     Say,
     SellEnergy,
 )
-from ..game.lifecycle import GameErrorCode, ranks, total_coins
+from ..game.lifecycle import GameErrorCode, item_value, ranks, score, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 19
+PROTOCOL_VERSION = 20
 
 ERROR_MAX_LENGTH = 200
 
@@ -314,9 +314,15 @@ class ResidentView(_Message):
     tower_balance: int
     """Total coins, including those set aside by pending offers, contracts, towers and buy
     orders; public to everyone."""
+    item_value: int
+    """What the resident's energy and crystals count for in the ranking at the market price
+    when this was sent, see `lifecycle.item_value`."""
+    score: int
+    """What the ranking counts: `coins` plus `item_value`."""
     left: bool
     rank: int
-    """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""
+    """Place by score, 1 for the highest; equal scores share a place. Final once the game
+    ends."""
     energy: int
     """Energy owned, the resident's stamina, including those set aside by pending offers and
     sell orders."""
@@ -828,6 +834,8 @@ def world_view(
                 color=resident.color,
                 position=_position_view(position_at(resident, world.time)),
                 coins=total_coins(world, resident.id),
+                item_value=item_value(world, resident.id),
+                score=score(world, resident.id),
                 spendable_coins=resident.coins,
                 tower_balance=tower_coins(world, resident.id),
                 carried_crystals={
