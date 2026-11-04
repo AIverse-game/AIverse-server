@@ -8,6 +8,7 @@ from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.crystals import CRYSTAL_TIERS
 from ..economy.energy import ENERGY_PER_UNIT
+from ..economy.exchange import EXCHANGE_ITEMS, LIFETIME_RANGE, MAX_ORDERS
 from ..economy.harvesting import HARVEST_SECONDS
 from ..economy.market import (
     MARKET_BASE_PRICE,
@@ -32,6 +33,7 @@ from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.perception import PERCEPTION_RADIUS
 from ..residents.speech import HEARING_RADIUS, SPEECH_COSTS
 from ..residents.walking import WALK_SPEED
+from .observation import BOOK_LEVELS_SHOWN, VOLUME_WINDOW
 from .tools import PRICE_HOLD_SECONDS
 
 
@@ -52,6 +54,8 @@ def system_prompt(
         + f", {recipe.seconds:g} seconds"
         for recipe in RECIPES
     )
+    items = ", ".join(f'"{item}"' for item in EXCHANGE_ITEMS)
+    low, high = LIFETIME_RANGE
     best_job = max(crystal.energy_per_job for crystal in CRYSTAL_TIERS)
     tower_draw = best_job * TOWER_YIELD * TOWER_CAPACITY / TOWER_SECONDS
     per_1000 = 1000 / tower_draw
@@ -66,7 +70,8 @@ the north-west corner. Distances are straight lines.
 per walk, paid when you set off, at {WALK_SPEED:g} units per second; you are busy until you \
 arrive. If you own no energy at all you are out of the game for good (you keep your \
 coins), so your tools refuse anything that would leave you no energy in hand; energy set \
-aside in your offers does not count as in hand.
+aside in your offers or sell orders does not count as in hand, though you still own it, and \
+if others buy all you own you are out.
 - The market sits in the middle of the map (radius {MARKET_RADIUS:g}). Standing there you can \
 sell energy for coins and buy crystals. A unit of energy fetches about {MARKET_BASE_PRICE:g} \
 coins when sales are steady; every unit sold lowers the price for everyone ({MARKET_DEPTH:g} \
@@ -129,6 +134,18 @@ busy.
 - You can trade with other residents: offer to buy or sell items ("energy", "shard" or a \
 crystal tier) for coins, for the whole lot. What you offer is set aside until they accept or \
 reject, or you withdraw. Offers to you appear in offers_to_me.
+- The market is also an anonymous exchange for {items}. Standing at the market, place_order \
+buys or sells a quantity at a unit price you name: it trades at once with the best-priced \
+orders on the other side, earliest first at the same price, each at that order's price (a \
+buyer gets back the difference), and the rest waits on the book for expires_in seconds \
+({low:g} to {high:g}). A buy order sets aside quantity x price coins, which still count in your \
+ranking; a sell order sets aside the items. At most {MAX_ORDERS} of your orders rest at once, \
+and an order that would trade with your own is refused. Fills reach you anywhere, and \
+cancel_order works anywhere, even while busy. `exchange` shows each book's best \
+{BOOK_LEVELS_SHOWN} prices a side with the units at each, the last price and the units traded \
+in the last {VOLUME_WINDOW:g} seconds, never who; your resting orders and latest fills too. You \
+are woken when someone fills one of your resting orders. The system never places orders, and \
+the market's own price for energy is separate.
 - You can also sell information: offer_information gives another resident a summary to judge \
 and, once they accept and pay, a copy of the content as a long-term note. Nothing is set aside \
 and you keep what you know, so you may sell it to several residents. The server does not check \

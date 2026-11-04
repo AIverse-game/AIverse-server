@@ -26,6 +26,7 @@ from aiverse_server.game.actions import (
     LeaveGame,
     MoveTo,
     OfferToSell,
+    PlaceOrder,
     ProposeContract,
     RespondToEvent,
     Say,
@@ -127,6 +128,45 @@ def test_the_loop_wakes_when_a_dig_ends() -> None:
         await _until(lambda: len(brain.seen) == 2)
 
         assert brain.seen[1].me.shards == DIG_YIELD
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_when_someone_fills_a_resting_order() -> None:
+    buyer = replace(WORLD.residents[1], position=Position(50, 50))
+    world = replace(WORLD, residents=(WORLD.residents[0], buyer))
+
+    async def scenario() -> None:
+        game, _ = make_game(world)
+        brain = Recorder(
+            lambda seen, tools: None if seen.time else tools.place_order("sell", ENERGY, 10, 20)
+        )
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        game.act(PlaceOrder("b", "buy", ENERGY, 10, 20))
+        await _until(lambda: len(brain.seen) == 2)
+
+        assert brain.seen[1].exchange.my_fills[0].quantity == 10
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_does_not_wake_a_resident_for_a_fill_they_took() -> None:
+    seller = replace(WORLD.residents[1], position=Position(50, 50))
+    world = replace(WORLD, residents=(WORLD.residents[0], seller))
+
+    async def scenario() -> None:
+        game, _ = make_game(world)
+        game.act(PlaceOrder("b", "sell", ENERGY, 10, 20))
+        brain = Recorder(lambda seen, tools: tools.place_order("buy", ENERGY, 10, 20))
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+        await asyncio.sleep(0.05)
+
+        assert len(brain.seen) == 1
         task.cancel()
 
     asyncio.run(scenario())

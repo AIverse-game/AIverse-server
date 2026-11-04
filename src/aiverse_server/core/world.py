@@ -13,6 +13,7 @@ from typing import Literal
 
 from .events import EventQueue
 from .ledger import Ledger
+from .orders import OrderBook
 from .towers import Tower
 
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
@@ -702,6 +703,8 @@ class World:
     """Shard quarries, fixed for the whole game, see `shards.py`."""
     workshop: Workshop | None = None
     """Where crystals are refined, see `workshop.py`; None on a map without one."""
+    orders: OrderBook = OrderBook()
+    """The exchange's resting orders and recent fills, see `exchange.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -783,6 +786,12 @@ class World:
             for slot in tower.slots:
                 if self.ended or slot.resident_id not in ids or slot.resident_id in left:
                     raise ValueError("tower slot outlives its game or resident")
+        for order in self.orders.orders:
+            if order.resident_id not in ids or order.resident_id in left or self.ended:
+                raise ValueError(f"order {order.id} outlives its game or resident")
+        for fill in self.orders.fills:
+            if {fill.buyer_id, fill.seller_id, fill.taker_id} - set(ids):
+                raise ValueError(f"fill {fill.seq} involves unknown resident")
         for event in self.events.pending:
             if self.ended or {event.sender_id, event.recipient_id} & left:
                 raise ValueError(f"event {event.id} is pending after its game or resident ended")

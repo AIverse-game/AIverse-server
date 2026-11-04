@@ -16,11 +16,13 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
 from ..core.events import Event, pending_for, pending_from
+from ..core.orders import order_coins
 from ..core.towers import Tower, TowerSlot
 from ..core.world import Contract, ContractEnd, Position, SpringSighting, World
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.crystals import CRYSTAL_TIERS
 from ..economy.energy import ENERGY, walk_cost
+from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
 from ..economy.shards import SHARD
 from ..economy.towers import (
     RENT_PER_100,
@@ -45,6 +47,15 @@ from ..residents.walking import walk_seconds
 ENDED_CONTRACTS_SHOWN = 5
 """Ended contracts an observation lists, the latest."""
 
+BOOK_LEVELS_SHOWN = 3
+"""Prices an observation shows on each side of each book, the best."""
+
+VOLUME_WINDOW = 120.0
+"""Game seconds over which an observation sums each item's traded units."""
+
+FILLS_SHOWN = 10
+"""Fills of the resident's own orders an observation lists, the latest."""
+
 
 @dataclass(frozen=True)
 class Me:
@@ -58,6 +69,8 @@ class Me:
     energy: int
     """Energy carried, which walking and speaking spend."""
     energy_in_offers: int
+    coins_in_orders: int
+    """Coins set aside in buy orders resting on the exchange."""
     coins_in_contracts: int
     """Coins set aside as a buyer's payments or a supplier's deposits, in contracts in force
     and in proposals not yet answered."""
@@ -103,6 +116,50 @@ class MarketView:
     """Energy a walk from here to the market's centre costs."""
     walk_seconds: float
     crystals: tuple[CrystalOnSale, ...]
+
+
+@dataclass(frozen=True)
+class BookView:
+    """One item's order book; anonymous, so no one is named."""
+
+    item: str
+    bids: tuple[tuple[int, int], ...]
+    """The best buy prices with the units wanted at each, highest first."""
+    asks: tuple[tuple[int, int], ...]
+    """The best sell prices with the units offered at each, lowest first."""
+    last_price: int | None
+    volume: int
+    """Units traded in the last `VOLUME_WINDOW` seconds."""
+
+
+@dataclass(frozen=True)
+class MyOrderView:
+    order_id: int
+    side: str
+    item: str
+    quantity: int
+    """Units still to fill."""
+    price: int
+    expires_in: float
+
+
+@dataclass(frozen=True)
+class MyFillView:
+    ago: float
+    """Seconds since it filled."""
+    side: str
+    """"bought" or "sold"."""
+    item: str
+    quantity: int
+    price: int
+
+
+@dataclass(frozen=True)
+class ExchangeView:
+    books: tuple[BookView, ...]
+    my_orders: tuple[MyOrderView, ...]
+    my_fills: tuple[MyFillView, ...]
+    """The latest fills of the resident's orders, oldest first."""
 
 
 @dataclass(frozen=True)
@@ -302,6 +359,7 @@ class Observation:
     remaining_seconds: float
     me: Me
     market: MarketView | None
+    exchange: ExchangeView
     quarries: tuple[QuarryView, ...]
     """Every quarry, nearest first."""
     workshop: WorkshopView | None
@@ -396,6 +454,7 @@ def observe(
             coins_in_offers=reserved_coins(world, resident_id),
             energy=me.inventory.count(ENERGY),
             energy_in_offers=reserved_items(world, resident_id, ENERGY),
+            coins_in_orders=order_coins(world.orders, resident_id),
             coins_in_contracts=contract_coins(world, resident_id),
             crystals={
                 kind: count
@@ -434,6 +493,7 @@ def observe(
                 for crystal in perception.market.crystals
             ),
         ),
+        exchange=_exchange_view(world, resident_id),
         quarries=tuple(
             sorted(
                 (
@@ -535,6 +595,46 @@ def observe(
                 None if note.expires_at is None else max(note.expires_at - world.time, 0.0),
             )
             for note in perception.short_term
+        ),
+    )
+
+
+def _exchange_view(world: World, resident_id: str) -> ExchangeView:
+    mine = [fill for fill in world.orders.fills if resident_id in (fill.buyer_id, fill.seller_id)][
+        -FILLS_SHOWN:
+    ]
+    return ExchangeView(
+        books=tuple(
+            BookView(
+                item,
+                depth(world, item, "buy", BOOK_LEVELS_SHOWN),
+                depth(world, item, "sell", BOOK_LEVELS_SHOWN),
+                last_price(world, item),
+                volume_since(world, item, world.time - VOLUME_WINDOW),
+            )
+            for item in EXCHANGE_ITEMS
+        ),
+        my_orders=tuple(
+            MyOrderView(
+                order.id,
+                order.side,
+                order.item,
+                order.quantity,
+                order.price,
+                max(order.expires_at - world.time, 0.0),
+            )
+            for order in world.orders.orders
+            if order.resident_id == resident_id
+        ),
+        my_fills=tuple(
+            MyFillView(
+                world.time - fill.time,
+                "bought" if fill.buyer_id == resident_id else "sold",
+                fill.item,
+                fill.quantity,
+                fill.price,
+            )
+            for fill in mine
         ),
     )
 

@@ -19,9 +19,11 @@ from typing import Literal
 
 from ..core.events import Event, withdraw_event
 from ..core.inventory import clear_items
+from ..core.orders import order_coins
 from ..core.world import Notice, NoticeLog, World
 from ..economy.contracts import contract_coins, end_contracts
 from ..economy.energy import energy_total
+from ..economy.exchange import cancel_orders
 from ..economy.harvesting import cancel_harvesting
 from ..economy.shards import cancel_digging
 from ..economy.towers import release_towers, tower_coins
@@ -63,15 +65,16 @@ def check_can_act(world: World, resident_id: str) -> None:
 def leave_game(world: World, resident_id: str) -> World:
     """Take the resident out of the game: a harvesting or digging job stops and what it took
     goes back to the spring or quarry, a refining job is dropped, a walk stops where they are,
-    their pending events are declined and their contracts end, which hands back whatever
-    offers and contracts set aside, a supplier's deposit going to the buyer, then their items
-    are cleared. Their coins stay."""
+    their orders are withdrawn, their pending events are declined and their contracts end,
+    which hands back whatever orders, offers and contracts set aside, a supplier's deposit
+    going to the buyer, then their items are cleared. Their coins stay."""
     check_can_act(world, resident_id)
     world = cancel_harvesting(world, resident_id)
     world = cancel_digging(world, resident_id)
     world = cancel_refining(world, resident_id)
     world = release_towers(world, resident_id)
     world = stop_walking(world, resident_id)
+    world = cancel_orders(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
     world = end_contracts(
         world,
@@ -89,9 +92,10 @@ def leave_game(world: World, resident_id: str) -> World:
 
 def knock_out_exhausted(before: World, after: World) -> World:
     """Take out of the game, as `leave_game` does, every resident still in it who owned
-    energy in `before` and owns none in `after`. Energy set aside in sale offers count, and
-    so do those a running harvesting job has already drawn, since both come back to them.
-    Comparing the two worlds catches whatever spent the last energy: a walk or a sale.
+    energy in `before` and owns none in `after`. Energy set aside in sale offers and sell
+    orders counts, and so does what a running harvesting job has already drawn, since all of
+    it comes back to them. Comparing the two worlds catches whatever spent the last energy: a
+    walk, a sale, or someone buying a sell order out.
     Residents still walking are left alone: they reach where they paid to go, and
     `knock_out_arrivals` takes them out there."""
     already_out = {
@@ -133,7 +137,8 @@ def announce(world: World, text: str) -> World:
 
 def end_game(world: World) -> World:
     """Stop every job and walk, putting back what harvesting and digging took, decline every
-    pending event, end every contract and freeze the world; ending twice changes nothing."""
+    pending event, withdraw every order, end every contract and freeze the world; ending twice
+    changes nothing."""
     if world.ended:
         return world
     for resident in world.residents:
@@ -142,19 +147,20 @@ def end_game(world: World) -> World:
         world = cancel_refining(world, resident.id)
         world = stop_walking(world, resident.id)
     world = end_contracts(_settle(world, lambda event: True), lambda contract: True, "game_ended")
-    world = release_towers(world)
+    world = release_towers(cancel_orders(world))
     return replace(world, ended=True)
 
 
 def total_coins(world: World, resident_id: str) -> int:
-    """Spendable coins plus those set aside by pending offers and contracts: what the ranking
-    counts."""
+    """Spendable coins plus those set aside by pending offers, contracts, towers and buy
+    orders: what the ranking counts."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
     return (
         resident.coins
         + reserved_coins(world, resident_id)
         + contract_coins(world, resident_id)
         + tower_coins(world, resident_id)
+        + order_coins(world.orders, resident_id)
     )
 
 

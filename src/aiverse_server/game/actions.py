@@ -24,6 +24,7 @@ from ..core.events import (
     withdraw_event,
 )
 from ..core.inventory import InventoryError, InventoryErrorCode
+from ..core.orders import Side
 from ..core.world import Position, World
 from ..economy.contracts import (
     ContractError,
@@ -34,6 +35,13 @@ from ..economy.contracts import (
 )
 from ..economy.crystals import CrystalError, CrystalErrorCode, buy_crystal
 from ..economy.energy import EnergyError, EnergyErrorCode, pay_for_walk
+from ..economy.exchange import (
+    DEFAULT_LIFETIME,
+    ExchangeError,
+    ExchangeErrorCode,
+    cancel_order,
+    place_order,
+)
 from ..economy.harvesting import HarvestError, HarvestErrorCode, check_not_busy, start_harvesting
 from ..economy.market import MarketError, MarketErrorCode, sell_energy
 from ..economy.shards import ShardError, ShardErrorCode, start_digging
@@ -69,6 +77,7 @@ RejectionCode = (
     | ContractErrorCode
     | TowerErrorCode
     | ShardErrorCode
+    | ExchangeErrorCode
     | WorkshopErrorCode
     | InformationErrorCode
     | NoteErrorCode
@@ -241,6 +250,30 @@ class RefineCrystal:
 
 
 @dataclass(frozen=True)
+class PlaceOrder:
+    """Place an order on the exchange at the market the resident stands at, see
+    `exchange.py`: it trades at once with the best orders on the other side and rests for
+    `lifetime` seconds with whatever is left, holding the coins or items it needs."""
+
+    resident_id: str
+    side: Side
+    item: str
+    quantity: int
+    price: int
+    """Coins per unit."""
+    lifetime: float = DEFAULT_LIFETIME
+
+
+@dataclass(frozen=True)
+class CancelOrder:
+    """Withdraw one of the resident's resting orders, from anywhere and even while busy, and
+    get back what it still holds."""
+
+    resident_id: str
+    order_id: int
+
+
+@dataclass(frozen=True)
 class SellEnergy:
     """Sell `quantity` carried energy to the market the resident stands at, for coins at the
     market price, see `market.py`. Selling the last energy owned takes them out of the game."""
@@ -315,6 +348,8 @@ Action = (
     | Harvest
     | DigShards
     | RefineCrystal
+    | PlaceOrder
+    | CancelOrder
     | SellEnergy
     | BuyCrystal
     | Say
@@ -328,7 +363,7 @@ Action = (
 def perform(world: World, action: Action) -> World:
     try:
         check_can_act(world, action.resident_id)
-        if not isinstance(action, LeaveGame | Say):
+        if not isinstance(action, LeaveGame | Say | CancelOrder):
             check_not_busy(world, action.resident_id)
     except (GameError, HarvestError) as error:
         raise ActionRejected(error.code, error.message) from error
@@ -412,6 +447,24 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return start_refining(world, action.resident_id, action.tier)
             except WorkshopError as error:
+                raise ActionRejected(error.code, error.message) from error
+        case PlaceOrder():
+            try:
+                return place_order(
+                    world,
+                    action.resident_id,
+                    action.side,
+                    action.item,
+                    action.quantity,
+                    action.price,
+                    action.lifetime,
+                )
+            except (ExchangeError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case CancelOrder():
+            try:
+                return cancel_order(world, action.resident_id, action.order_id)
+            except ExchangeError as error:
                 raise ActionRejected(error.code, error.message) from error
         case SellEnergy():
             try:

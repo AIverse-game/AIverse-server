@@ -5,8 +5,9 @@ hands it, with tools bound to the resident, to the brain. Then it sleeps until o
 happens, see decision 0003 in the client repository:
 
 - the resident stops being busy: a walk or a harvesting, digging or refining job has ended;
-- while free, an offer arrives for them, or a contract of theirs ends other than by their
-  own doing, such as the supplier's last delivery or the contract lapsing;
+- while free, an offer arrives for them, a contract of theirs ends other than by their
+  own doing, such as the supplier's last delivery or the contract lapsing, or someone else's
+  order fills one of theirs resting on the exchange;
 - someone says something they hear, even while busy, since they can still answer;
 - while free, `Pace.idle` passes with nothing of the above, so a brain that chose to wait
   is asked again.
@@ -187,6 +188,8 @@ class _Attention:
     """Sequence number of the resident's latest activity ending a walk or a harvesting job."""
     announced: int = 0
     """Sequence number of the latest notice the server announced to everyone."""
+    filled: int = 0
+    """Sequence number of the latest fill of one of the resident's resting orders."""
 
 
 class AgentRunner:
@@ -339,6 +342,7 @@ class AgentRunner:
                     or current.done > seen.done
                     or current.offers - seen.offers
                     or current.ended - seen.ended
+                    or current.filled > seen.filled
                     or now >= idle_until
                 ):
                     return
@@ -371,6 +375,14 @@ class AgentRunner:
                 default=0,
             ),
             announced=world.notices.next_seq - 1,
+            filled=max(
+                (
+                    fill.seq
+                    for fill in world.orders.fills
+                    if me.id in (fill.buyer_id, fill.seller_id) and fill.taker_id != me.id
+                ),
+                default=0,
+            ),
             done=max(
                 (
                     entry.seq

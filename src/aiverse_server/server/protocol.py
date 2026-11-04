@@ -23,6 +23,7 @@ from pydantic.alias_generators import to_camel
 from ..agents.llm_brain import LLMSetting, LLMSettings
 from ..agents.runner import TurnRecord
 from ..core.events import Event
+from ..core.orders import order_items
 from ..core.world import COLOR_PATTERN, Position, World
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.crystals import CRYSTAL_TIERS
@@ -272,16 +273,17 @@ class ResidentView(_Message):
     coins: int
     spendable_coins: int
     tower_balance: int
-    """Total coins, including those set aside by pending offers and contracts; public to
-    everyone."""
+    """Total coins, including those set aside by pending offers, contracts, towers and buy
+    orders; public to everyone."""
     left: bool
     rank: int
     """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""
     energy: int
-    """Energy owned, the resident's stamina, including those set aside by pending offers."""
+    """Energy owned, the resident's stamina, including those set aside by pending offers and
+    sell orders."""
     crystals: dict[str, int]
     carried_crystals: dict[str, int]
-    """Crystals owned, tier to count, including those set aside by pending offers;
+    """Crystals owned, tier to count, including those set aside by pending offers and sell orders;
     tiers with none are left out."""
     harvesting: HarvestView | None = None
     """Present while the resident is busy harvesting."""
@@ -811,6 +813,7 @@ def _crystals_owned(world: World, resident_id: str) -> dict[str, int]:
     owned = {
         tier.tier: resident.inventory.count(tier.tier)
         + reserved_items(world, resident_id, tier.tier)
+        + order_items(world.orders, resident_id, tier.tier)
         for tier in CRYSTAL_TIERS
     }
     return {tier: count for tier, count in owned.items() if count > 0}

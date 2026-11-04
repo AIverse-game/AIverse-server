@@ -30,6 +30,7 @@ from ..core.inventory import item_count
 from ..core.world import NOTE_LENGTH_LIMIT, Position, World
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.energy import ENERGY, ENERGY_PER_UNIT, energy_total
+from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
 from ..economy.market import pressure_at
 from ..game.actions import (
     Action,
@@ -37,6 +38,7 @@ from ..game.actions import (
     BuildTower,
     BuyCrystal,
     CancelContract,
+    CancelOrder,
     Deliver,
     DigShards,
     FundTower,
@@ -46,6 +48,7 @@ from ..game.actions import (
     OfferInformation,
     OfferToBuy,
     OfferToSell,
+    PlaceOrder,
     ProposeContract,
     RefineCrystal,
     RemoveCrystal,
@@ -166,6 +169,24 @@ class OfferInformationArgs(_Args):
         "characters. Anything you know: a place, a price, a plan, a rumour."
     )
     price: StrictInt = Field(description="Coins for the information.")
+
+
+class PlaceOrderArgs(_Args):
+    side: Literal["buy", "sell"]
+    item: str = Field(description='Item: "energy", "shard" or a crystal tier like "C1".')
+    quantity: StrictInt = Field(description=f"Units, 1 to {MAX_QUANTITY}.")
+    price: StrictInt = Field(description=f"Coins per unit, 1 to {MAX_PRICE}.")
+    expires_in: float = Field(
+        default=DEFAULT_LIFETIME,
+        ge=LIFETIME_RANGE[0],
+        le=LIFETIME_RANGE[1],
+        allow_inf_nan=False,
+        description="Seconds the unfilled part rests on the book.",
+    )
+
+
+class CancelOrderArgs(_Args):
+    order_id: StrictInt = Field(description="order_id of one of your orders in exchange.my_orders.")
 
 
 class RespondToOfferArgs(_Args):
@@ -386,6 +407,20 @@ TOOLS = (
         RespondToOfferArgs,
     ),
     ToolSpec(
+        "place_order",
+        "Place an order on the exchange; you must stand at the market. It trades at once with "
+        "the best-priced orders on the other side (each at that order's price; a buyer gets "
+        "back the difference) and the rest waits on the book. A buy order sets aside quantity "
+        "x price coins, a sell order the items, until filled, cancelled or expired.",
+        PlaceOrderArgs,
+    ),
+    ToolSpec(
+        "cancel_order",
+        "Cancel one of your resting orders from anywhere, even while busy; what it still holds "
+        "comes back.",
+        CancelOrderArgs,
+    ),
+    ToolSpec(
         "withdraw_offer",
         "Take back an offer or contract proposal you sent that is not answered.",
         WithdrawOfferArgs,
@@ -494,6 +529,15 @@ class ResidentTools:
     def refine_crystal(self, tier: str) -> ToolResult:
         return self.call("refine_crystal", {"tier": tier})
 
+    def place_order(
+        self, side: str, item: str, quantity: int, price: int, expires_in: float = DEFAULT_LIFETIME
+    ) -> ToolResult:
+        arguments = {"side": side, "item": item, "quantity": quantity, "price": price}
+        return self.call("place_order", {**arguments, "expires_in": expires_in})
+
+    def cancel_order(self, order_id: int) -> ToolResult:
+        return self.call("cancel_order", {"order_id": order_id})
+
     def buy_crystal(self, tier: str) -> ToolResult:
         return self.call("buy_crystal", {"tier": tier})
 
@@ -548,8 +592,9 @@ class ResidentTools:
             return ToolResult(
                 False,
                 "last_energy",
-                "that would leave you no energy in hand (energy set aside in offers does not "
-                "count) and could take you out of the game; keep at least 1 energy",
+                "that would leave you no energy in hand (energy set aside in offers or sell "
+                "orders does not count) and could take you out of the game; keep at least 1 "
+                "energy",
                 self.status(),
             )
         except (GameError, NoteError) as error:
@@ -609,6 +654,15 @@ class ResidentTools:
                 act(OfferToSell(me, args.buyer_id, args.kind, args.quantity, args.price))
             case OfferInformationArgs():
                 act(OfferInformation(me, args.buyer_id, args.summary, args.content, args.price))
+            case PlaceOrderArgs():
+                book = self.game.world.orders
+                order_id, first_fill = book.next_id, book.next_seq
+                act(
+                    PlaceOrder(me, args.side, args.item, args.quantity, args.price, args.expires_in)
+                )
+                return _order_outcome(self.game.world, order_id, first_fill)
+            case CancelOrderArgs():
+                act(CancelOrder(me, args.order_id))
             case RespondToOfferArgs():
                 act(RespondToEvent(me, args.event_id, args.accept))
             case WithdrawOfferArgs():
@@ -695,6 +749,20 @@ class ResidentTools:
         if world.ended:
             shown["game_over"] = True
         return shown
+
+
+def _order_outcome(world: World, order_id: int, first_fill: int) -> str:
+    """What became of a newly placed order: its fills and what rests on the book."""
+    fills = [fill for fill in world.orders.fills if fill.seq >= first_fill]
+    filled = sum(fill.quantity for fill in fills)
+    resting = next((order for order in world.orders.orders if order.id == order_id), None)
+    parts = []
+    if fills:
+        coins = sum(fill.quantity * fill.price for fill in fills)
+        parts.append(f"filled {filled} for {coins} coins")
+    if resting is not None:
+        parts.append(f"order {order_id}: {resting.quantity} resting at {resting.price} each")
+    return "; ".join(parts)
 
 
 def _energy_in_hand(world: World, resident_id: str) -> int:

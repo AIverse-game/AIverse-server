@@ -14,6 +14,7 @@ import math
 from typing import Literal
 
 from ..core.inventory import InventoryError, item_count, take_item
+from ..core.orders import order_items
 from ..core.world import Position, World
 from .trade import reserved_items
 
@@ -34,8 +35,13 @@ class EnergyError(Exception):
 
 
 def energy_total(world: World, resident_id: str) -> int:
-    """Energy the resident carries plus those set aside in sale offers: what they own."""
-    return item_count(world, resident_id, ENERGY) + reserved_items(world, resident_id, ENERGY)
+    """Energy the resident carries plus what sale offers and sell orders set aside: what they
+    own."""
+    return (
+        item_count(world, resident_id, ENERGY)
+        + reserved_items(world, resident_id, ENERGY)
+        + order_items(world.orders, resident_id, ENERGY)
+    )
 
 
 def walk_cost(start: Position, end: Position) -> int:
