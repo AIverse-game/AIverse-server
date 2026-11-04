@@ -141,7 +141,7 @@ busy.
 - You can trade with other residents: offer to buy or sell items ("energy", "shard" or a \
 crystal tier) for coins, for the whole lot. What you offer is set aside until they accept or \
 reject, or you withdraw. Offers to you appear in offers_to_me.
-- The market is also an anonymous exchange for {items}. Standing at the market, place_order \
+- There is also an anonymous exchange for {items}. From anywhere, place_order \
 buys or sells a quantity at a unit price you name: it trades at once with the best-priced \
 orders on the other side, earliest first at the same price, each at that order's price (a \
 buyer gets back the difference), and the rest waits on the book for expires_in seconds \

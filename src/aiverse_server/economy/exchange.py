@@ -1,6 +1,6 @@
-"""The exchange: an anonymous limit order book at the market for every tradable item.
+"""The exchange: an anonymous limit order book for every tradable item.
 
-A resident standing at the market places an order to buy or sell an item at a unit price,
+A resident anywhere on the map places an order to buy or sell an item at a unit price,
 see `place_order`. A buy order sets aside its coins and a sell order its items, as offers
 do, see `trade.py`. The new order first matches the best-priced orders resting on the other
 side, oldest first at the same price, each fill at the resting order's price; a buyer who
@@ -43,7 +43,6 @@ DEFAULT_LIFETIME = 300.0
 ExchangeErrorCode = Literal[
     "unknown_resident",
     "unknown_item",
-    "not_at_market",
     "invalid_order",
     "too_many_orders",
     "self_cross",
@@ -69,11 +68,9 @@ def place_order(
 ) -> World:
     """Set aside what the order needs, match it against the other side and rest what is
     left; `InventoryError` when the resident carries too few coins or items."""
-    resident = _find(world, resident_id)
+    _find(world, resident_id)
     if item not in EXCHANGE_ITEMS:
         raise ExchangeError("unknown_item", f"no order book for {item!r}")
-    if world.market is None or not world.market.reaches(resident.position):
-        raise ExchangeError("not_at_market", f"resident {resident_id!r} is not at the market")
     _check_terms(quantity, price, lifetime)
     mine = [order for order in world.orders.orders if order.resident_id == resident_id]
     if any(

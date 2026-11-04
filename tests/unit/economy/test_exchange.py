@@ -104,6 +104,22 @@ def test_what_is_left_of_a_partly_filled_order_rests() -> None:
     assert coins(world, "b") == 1_000 - 200
 
 
+def test_an_order_placed_far_from_the_market_trades() -> None:
+    world = run(WORLD, PlaceOrder("a", "sell", SHARD, 4, 20), PlaceOrder("d", "buy", SHARD, 4, 20))
+
+    assert item_count(world, "d", SHARD) == 54
+    assert coins(world, "a") == 1_000 + 80
+
+
+def test_an_order_cannot_be_placed_while_walking() -> None:
+    world = perform(WORLD, MoveTo("d", Position(30, 50)))
+
+    with pytest.raises(ActionRejected) as rejected:
+        perform(world, PlaceOrder("d", "buy", SHARD, 1, 1))
+
+    assert rejected.value.code == "busy"
+
+
 def test_a_fill_is_logged_without_names_for_others_and_paid_through_the_ledger() -> None:
     world = run(WORLD, PlaceOrder("a", "sell", SHARD, 4, 20), PlaceOrder("b", "buy", SHARD, 4, 25))
 
@@ -115,14 +131,13 @@ def test_a_fill_is_logged_without_names_for_others_and_paid_through_the_ledger()
     ("action", "code"),
     [
         (PlaceOrder("a", "buy", "gold", 1, 1), "unknown_item"),
-        (PlaceOrder("d", "buy", SHARD, 1, 1), "not_at_market"),
         (PlaceOrder("a", "buy", SHARD, 0, 1), "invalid_order"),
         (PlaceOrder("a", "buy", SHARD, 1, 0), "invalid_order"),
         (PlaceOrder("a", "buy", SHARD, 1, 1, 10), "invalid_order"),
         (PlaceOrder("a", "buy", SHARD, 100, 11), "not_enough_coins"),
         (PlaceOrder("a", "sell", SHARD, 51, 1), "not_enough_items"),
     ],
-    ids=["item", "too_far", "quantity", "price", "lifetime", "coins", "items"],
+    ids=["item", "quantity", "price", "lifetime", "coins", "items"],
 )
 def test_an_order_that_cannot_be_placed_is_refused(action: PlaceOrder, code: str) -> None:
     with pytest.raises(ActionRejected) as rejected:

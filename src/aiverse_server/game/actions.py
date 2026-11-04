@@ -251,9 +251,9 @@ class RefineCrystal:
 
 @dataclass(frozen=True)
 class PlaceOrder:
-    """Place an order on the exchange at the market the resident stands at, see
-    `exchange.py`: it trades at once with the best orders on the other side and rests for
-    `lifetime` seconds with whatever is left, holding the coins or items it needs."""
+    """Place an order on the exchange from anywhere, see `exchange.py`: it trades at once with
+    the best orders on the other side and rests for `lifetime` seconds with whatever is left,
+    holding the coins or items it needs."""
 
     resident_id: str
     side: Side

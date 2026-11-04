@@ -428,7 +428,7 @@ class OrderView(_Message):
 
 
 class ExchangeView(_Message):
-    """The anonymous exchange at the market, see `exchange.py`."""
+    """The anonymous exchange, see `exchange.py`."""
 
     books: list[BookView]
     """One per item traded, in a fixed order."""

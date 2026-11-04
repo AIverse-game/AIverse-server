@@ -408,7 +408,7 @@ TOOLS = (
     ),
     ToolSpec(
         "place_order",
-        "Place an order on the exchange; you must stand at the market. It trades at once with "
+        "Place an order on the exchange from anywhere. It trades at once with "
         "the best-priced orders on the other side (each at that order's price; a buyer gets "
         "back the difference) and the rest waits on the book. A buy order sets aside quantity "
         "x price coins, a sell order the items, until filled, cancelled or expired.",
