@@ -9,3 +9,17 @@ override:
   # api_key: sk-...
   # model: nvidia/nemotron-3.5-lightning
   # max_tokens: 8192  # 每次模型回复的 token 上限，必须是正整数
+
+# 分组（可选）：给列出的居民换一套接口，填了的项代替上面 override 的同名项，
+# 没填的仍用 override；一名居民最多在一个组里，max_tokens 不能按组设。
+# 组里换了 base_url 却没写 api_key 时，会把 override 的 key 发到组的地址，不同服务商要各写各的 key。
+# 例如测试时让一半居民用一个接口、另一半用另一个：
+# groups:
+#   - residents: [r1, r2, r3, r4]
+#     base_url: https://openrouter.ai/api/v1
+#     api_key: sk-...
+#     model: nvidia/nemotron-3.5-lightning
+#   - residents: [r5, r6, r7, r8]
+#     base_url: https://other.example/v1
+#     api_key: sk-...
+#     model: other-model

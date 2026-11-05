@@ -230,11 +230,13 @@ class Game:
         early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
         final_notice_seconds: float = ENDING_NOTICE_SECONDS,
         on_end: Callable[[World], None] | None = None,
+        resident_llm_overrides: Mapping[str, LLMSettings] | None = None,
     ) -> None:
         self.world = world
         self.llm_override = llm_override
         """Model settings from the config file, laid over whatever a page or the command line
-        chose."""
+        chose, for every resident without their own in `resident_llm_overrides`."""
+        self._resident_llm_overrides = dict(resident_llm_overrides or {})
         self._clock = clock
         self._start = clock()
         self._duration = duration
@@ -388,13 +390,26 @@ class Game:
         task.add_done_callback(lambda _: self._agent_ended(resident_id, agent))
         self.broadcast_world()
 
+    def llm_override_for(self, resident_id: str) -> LLMSettings:
+        """The config file's model settings for the resident: their group's if a group lists
+        them, the shared ones otherwise."""
+        return self._resident_llm_overrides.get(resident_id, self.llm_override)
+
+    def fixed_llm_settings(self) -> list[LLMSettingName]:
+        """The settings the config file fixes for every resident, for the welcome: a page
+        need not fill these in, whoever it hands to a model."""
+        named = [setting_names(self.llm_override_for(r.id)) for r in self.world.residents]
+        if not named:
+            return setting_names(self.llm_override)
+        return [name for name in named[0] if all(name in theirs for theirs in named[1:])]
+
     def start_llm_agent(self, resident_id: str, chosen: LLMSettings, strategy: str = "") -> None:
-        """Drive the resident with a language model: the config file's settings where it gives
-        them, `chosen` for the rest. Raises `AgentRejected` for a resident who cannot act, or
-        settings missing or malformed after that."""
+        """Drive the resident with a language model: the config file's settings for them
+        where it gives them, `chosen` for the rest. Raises `AgentRejected` for a resident who
+        cannot act, or settings missing or malformed after that."""
         self._check_can_act(resident_id)
         try:
-            base_url, api_key, model = complete(self.llm_override.over(chosen))
+            base_url, api_key, model = complete(self.llm_override_for(resident_id).over(chosen))
         except SettingsError as error:
             raise AgentRejected(error.code, error.message) from None
         self.start_agent(
@@ -525,7 +540,7 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                 game.remaining(),
                 outbox.viewer,
                 game.agents(),
-                setting_names(game.llm_override),
+                game.fixed_llm_settings(),
                 game.agent_turns,
             )
             outbox.viewer = outcome.viewer
@@ -559,11 +574,13 @@ def create_app(
     early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
     final_notice_seconds: float = ENDING_NOTICE_SECONDS,
     on_end: Callable[[World], None] | None = None,
+    resident_llm_overrides: Mapping[str, LLMSettings] | None = None,
 ) -> FastAPI:
     """The game starts now, when its world is created, and ends `duration` seconds later.
     `agents` maps resident ids to the brains that drive them from the start, see
     `agents/runner.py`; pages may start and stop more later, with brains from `llm_brain`
-    and settings `llm_override` lays over theirs. `record` receives every round agents
+    and settings `llm_override` lays over theirs, or `resident_llm_overrides` for the
+    residents it lists. `record` receives every round agents
     take, and `on_end` the final world once. Other residents are left to the pages."""
     game = Game(
         world if world is not None else create_default_world(),
@@ -576,10 +593,15 @@ def create_app(
         early_notice_seconds,
         final_notice_seconds,
         on_end,
+        resident_llm_overrides,
     )
-    unknown = set(agents or {}) - {resident.id for resident in game.world.residents}
+    resident_ids = {resident.id for resident in game.world.residents}
+    unknown = set(agents or {}) - resident_ids
     if unknown:
         raise ValueError(f"agents for unknown residents: {', '.join(sorted(unknown))}")
+    unknown = set(resident_llm_overrides or {}) - resident_ids
+    if unknown:
+        raise ValueError(f"model settings for unknown residents: {', '.join(sorted(unknown))}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

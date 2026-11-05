@@ -142,6 +142,52 @@ def test_a_partial_override_fills_in_only_what_it_gives() -> None:
     assert brains.made[0].settings == ("http://localhost:9000/v1", "server-secret", "m")
 
 
+def test_each_group_of_residents_asks_its_own_model() -> None:
+    brains = Brains()
+    shared = LLMSettings("https://one.example/v1", "key-one", "model-one")
+    groups = {"b": LLMSettings("https://two.example/v1", "key-two", "model-two")}
+    app = create_app(WORLD, llm_override=shared, resident_llm_overrides=groups, llm_brain=brains)
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+        greet(ws)
+
+        ws.send_text(start("a"))
+        ws.receive_json()
+        ws.receive_json()
+        ws.send_text(start("b"))
+        ws.receive_json()
+
+    assert [brain.settings for brain in brains.made] == [
+        ("https://one.example/v1", "key-one", "model-one"),
+        ("https://two.example/v1", "key-two", "model-two"),
+    ]
+
+
+def test_the_welcome_lists_only_settings_fixed_for_every_resident() -> None:
+    # As the config file lays them together: b's group gives a key over the shared model.
+    groups = {"b": LLMSettings(api_key="key-two", model="m")}
+    app = create_app(WORLD, llm_override=LLMSettings(model="m"), resident_llm_overrides=groups)
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+        welcome, _ = greet(ws)
+
+    # The key is fixed for b alone, so a page still has to give it for a and c.
+    assert welcome["llmOverrides"] == ["model"]
+
+
+def test_groups_that_cover_everyone_fix_what_they_give_without_a_shared_override() -> None:
+    one = LLMSettings("https://one.example/v1", "key-one", "model-one")
+    two = LLMSettings("https://two.example/v1", "key-two", "model-two")
+    app = create_app(WORLD, resident_llm_overrides={"a": one, "b": two, "c": two})
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+        welcome, _ = greet(ws)
+
+    assert welcome["llmOverrides"] == ["baseUrl", "apiKey", "model"]
+
+
+def test_settings_for_an_unknown_resident_are_refused() -> None:
+    with pytest.raises(ValueError, match="nobody"):
+        create_app(WORLD, resident_llm_overrides={"nobody": LLMSettings(model="m")})
+
+
 @pytest.mark.parametrize(
     ("resident_id", "llm", "code"),
     [

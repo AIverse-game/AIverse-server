@@ -35,6 +35,27 @@ def test_the_example_overrides_nothing() -> None:
     assert load_config(EXAMPLE) == Config()
 
 
+def test_a_group_goes_over_the_override_for_the_residents_it_lists(tmp_path: Path) -> None:
+    path = write(
+        tmp_path,
+        "override:\n  base_url: https://one.example/v1\n  model: one\n"
+        "groups:\n  - residents: [r5, r6]\n    api_key: sk-two\n    model: two\n",
+    )
+
+    config = load_config(path)
+
+    two = LLMSettings("https://one.example/v1", "sk-two", "two")
+    assert config.resident_overrides() == {"r5": two, "r6": two}
+    assert config.llm_override() == LLMSettings("https://one.example/v1", None, "one")
+    assert "sk-two" not in repr(config)
+
+
+def test_without_groups_no_resident_has_settings_of_their_own(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, "override:\n  model: one\ngroups:\n"))
+
+    assert config.resident_overrides() == {}
+
+
 def test_a_positive_output_limit_is_read_from_the_override(tmp_path: Path) -> None:
     config = load_config(write(tmp_path, "override:\n  max_tokens: 16384\n"))
 
@@ -56,6 +77,15 @@ def test_a_positive_output_limit_is_read_from_the_override(tmp_path: Path) -> No
         ("override:\n  max_tokens: -1\n", "override.max_tokens"),
         ("override:\n  max_tokens: '16384'\n", "override.max_tokens"),
         ("override:\n  max_tokens: null\n", "override.max_tokens"),
+        ("groups:\n  - residents: [r1]\n    apikey: sk-secret\n", "groups.0.apikey"),
+        ("groups:\n  - residents: []\n    api_key: sk-secret\n", "groups.0.residents"),
+        ("groups:\n  - api_key: sk-secret\n", "groups.0.residents"),
+        ("groups:\n  - residents: [r1]\n    max_tokens: 9\n", "groups.0.max_tokens"),
+        (
+            "groups:\n  - residents: [r1]\n    api_key: sk-secret\n  - residents: [r2, r1]\n",
+            "(root): Value error, resident 'r1' is listed more than once",
+        ),
+        ("groups:\n  - residents: [r1, r1]\n", "resident 'r1' is listed more than once"),
     ],
 )
 def test_bad_files_name_the_problem_without_their_values(

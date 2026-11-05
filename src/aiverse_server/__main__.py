@@ -4,7 +4,8 @@
 
 `--agent r1=scripted` drives resident r1 with the fixed-plan bot, `--agent r2=llm` or
 `--agent r2=llm:MODEL` with a language model, whose base URL and API key, and model when
-not given, come from the overrides in the config file, see `server/config.py`. Residents
+not given, come from the overrides in the config file, or the resident's group there, see
+`server/config.py`. Residents
 without an agent are left to the pages, which may hand them to a model too."""
 
 import argparse
@@ -118,9 +119,16 @@ def main() -> None:
     except GameSettingsError as error:
         parser.error(str(error))
     override = config.llm_override()
+    resident_overrides = config.resident_overrides()
     llm_brain = partial(ChatCompletionsBrain, max_tokens=config.override.max_tokens)
     world = create_default_world(args.seed)
     resident_ids = {resident.id for resident in world.residents}
+    unknown = sorted(set(resident_overrides) - resident_ids)
+    if unknown:
+        parser.error(
+            f"the config file's groups name no resident {', '.join(map(repr, unknown))}; "
+            f"choose from {', '.join(sorted(resident_ids))}"
+        )
     agents: dict[str, Brain] = {}
     for spec in args.agent:
         try:
@@ -137,11 +145,12 @@ def main() -> None:
             agents[resident_id] = ScriptedBrain(seed=args.seed)
         else:
             try:
-                settings = complete(override.over(LLMSettings(model=model)))
+                theirs = resident_overrides.get(resident_id, override)
+                settings = complete(theirs.over(LLMSettings(model=model)))
             except SettingsError as error:
                 parser.error(
-                    f"{spec}: {error.message}; set them under override in the config file, "
-                    "or the model as RESIDENT=llm:MODEL"
+                    f"{spec}: {error.message}; set them under override or the resident's group "
+                    "in the config file, or the model as RESIDENT=llm:MODEL"
                 )
             agents[resident_id] = llm_brain(*settings)
     # Pages can start agents later, so every resident gets a file, even without --agent.
@@ -174,6 +183,7 @@ def main() -> None:
             agents=agents,
             record=recorder,
             llm_override=override,
+            resident_llm_overrides=resident_overrides,
             llm_brain=llm_brain,
             on_end=report_economy,
         )
