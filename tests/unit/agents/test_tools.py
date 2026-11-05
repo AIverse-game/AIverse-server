@@ -468,3 +468,12 @@ def test_tool_specs_are_function_schemas() -> None:
     move = next(spec for spec in specs if spec["function"]["name"] == "move_to")
     assert move["type"] == "function"
     assert set(move["function"]["parameters"]["required"]) == {"x", "y"}
+
+
+def test_tool_specs_leave_out_titles_that_only_repeat_names() -> None:
+    specs = tool_specs()
+
+    assert '"title"' not in json.dumps(specs)
+    move = next(spec for spec in specs if spec["function"]["name"] == "move_to")
+    assert set(move["function"]["parameters"]["properties"]) == {"x", "y"}
+    assert move["function"]["parameters"]["properties"]["x"]["type"] == "number"

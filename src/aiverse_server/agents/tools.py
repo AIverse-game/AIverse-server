@@ -313,9 +313,23 @@ class ToolSpec:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.args.model_json_schema(),
+                "parameters": _without_titles(self.args.model_json_schema()),
             },
         }
+
+
+def _without_titles(schema: Any) -> Any:
+    """The schema without the `title` pydantic derives from each class and field name, which
+    repeats the name and only costs the model request tokens, every request."""
+    if isinstance(schema, dict):
+        return {
+            key: _without_titles(value)
+            for key, value in schema.items()
+            if not (key == "title" and isinstance(value, str))
+        }
+    if isinstance(schema, list):
+        return [_without_titles(value) for value in schema]
+    return schema
 
 
 TOOLS = (
