@@ -156,7 +156,7 @@ def test_default_app_serves_the_fixed_layout() -> None:
         ws.receive_json()
         world = ws.receive_json()["world"]
     assert world["map"]["size"] == 150
-    assert [r["id"] for r in world["residents"]] == ["r1", "r2", "r3", "r4"]
+    assert [r["id"] for r in world["residents"]] == [f"r{n}" for n in range(1, 9)]
     assert {r["coins"] for r in world["residents"]} == {10_000}
 
 

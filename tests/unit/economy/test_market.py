@@ -266,7 +266,7 @@ def test_every_resident_starts_at_the_market() -> None:
     world = create_default_world(3)
 
     assert world.market is not None
-    assert len(world.residents) == 4
+    assert len(world.residents) == 8
     assert all(resident.position == world.market.position for resident in world.residents)
 
 

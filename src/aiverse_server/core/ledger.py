@@ -26,7 +26,7 @@ SYSTEM = "system"
 
 LEDGER_LIMIT = 20_000
 """Most transfers the ledger keeps; older ones are dropped first. A 40-minute game with
-four residents makes a few thousand."""
+eight residents makes several thousand."""
 
 Channel = Literal[
     "market",

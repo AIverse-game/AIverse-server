@@ -26,7 +26,7 @@ def resident(id: str, x: float, y: float) -> Resident:
 def test_default_world_is_a_square_map_with_residents_inside() -> None:
     world = create_default_world()
     assert world.map.size == MAP_SIZE
-    assert len(world.residents) == 4
+    assert len(world.residents) == 8
     assert all(world.map.contains(r.position) for r in world.residents)
 
 

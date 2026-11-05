@@ -5,6 +5,12 @@ Every match uses the same map, residents and market, which stands in the middle 
 The springs, then the quarries, then the workshop are placed when the world is created, from a
 seed, and stay where they are for the whole game; the quarries and workshop come after, so a
 seed puts the springs where it always did.
+
+Spring and quarry reserves grow with the number of residents, so each resident has the same
+share to draw on however many play. With four residents a seed gives the world it did before
+reserves grew with the count; the default eight residents widen the reserve ranges, which
+changes how the seed's random numbers fall, so a seed lays out a different world than it did
+with four.
 """
 
 import math
@@ -33,8 +39,8 @@ STARTING_ENERGY = 200
 
 SPRING_COUNT = 6
 SPRING_RADIUS = 4.0
-SPRING_RESERVE = (1_500, 4_000)
-"""Smallest and largest number of energy a spring starts with."""
+SPRING_RESERVE_PER_RESIDENT = (375, 1_000)
+"""Smallest and largest number of energy a spring starts with, per resident in the game."""
 SPRING_MARGIN = 15.0
 """Least distance from a spring's centre to the map edge."""
 SPRING_SPACING = 30.0
@@ -45,8 +51,8 @@ harvesting."""
 
 QUARRY_COUNT = 3
 QUARRY_RADIUS = 4.0
-QUARRY_RESERVE = (300, 600)
-"""Smallest and largest number of shards a quarry starts with."""
+QUARRY_RESERVE_PER_RESIDENT = (75, 150)
+"""Smallest and largest number of shards a quarry starts with, per resident in the game."""
 WORKSHOP_RADIUS = 5.0
 PLACE_SPACING = 20.0
 """Least distance from a quarry's or the workshop's centre to any spring, quarry or workshop
@@ -77,17 +83,35 @@ DEFAULT_RESIDENTS = (
     _resident("r2", "小麦", "#f3a712", market_position()),
     _resident("r3", "松木", "#5fb49c", market_position()),
     _resident("r4", "白露", "#8e9aed", market_position()),
+    _resident("r5", "石榴", "#ff99c8", market_position()),
+    _resident("r6", "云杉", "#a0c4ff", market_position()),
+    _resident("r7", "秋水", "#c9a27e", market_position()),
+    _resident("r8", "柚子", "#e5e5e5", market_position()),
 )
 
 
-def scatter_springs(seed: int | None = None, size: float = MAP_SIZE) -> tuple[Spring, ...]:
+def spring_reserve(residents: int) -> tuple[int, int]:
+    """Smallest and largest reserve a spring starts with in a game of `residents`."""
+    low, high = SPRING_RESERVE_PER_RESIDENT
+    return low * residents, high * residents
+
+
+def quarry_reserve(residents: int) -> tuple[int, int]:
+    """Smallest and largest reserve a quarry starts with in a game of `residents`."""
+    low, high = QUARRY_RESERVE_PER_RESIDENT
+    return low * residents, high * residents
+
+
+def scatter_springs(
+    seed: int | None = None, size: float = MAP_SIZE, residents: int = len(DEFAULT_RESIDENTS)
+) -> tuple[Spring, ...]:
     """`SPRING_COUNT` springs at random spots at least `SPRING_SPACING` apart and `MARKET_CLEARANCE`
-    from the market, each with a random reserve. The same seed gives the same springs; without
-    one, every call differs."""
-    return _scatter_springs(random.Random(seed), size)
+    from the market, each with a random reserve for a game of `residents`. The same seed gives
+    the same springs; without one, every call differs."""
+    return _scatter_springs(random.Random(seed), size, residents)
 
 
-def _scatter_springs(rng: random.Random, size: float) -> tuple[Spring, ...]:
+def _scatter_springs(rng: random.Random, size: float, residents: int) -> tuple[Spring, ...]:
     market = market_position(size)
     springs: list[Spring] = []
     # The spacing leaves plenty of room on the default map; the bound only guards a
@@ -103,7 +127,7 @@ def _scatter_springs(rng: random.Random, size: float) -> tuple[Spring, ...]:
             math.dist((p.position.x, p.position.y), (position.x, position.y)) >= SPRING_SPACING
             for p in springs
         ):
-            reserve = rng.randint(*SPRING_RESERVE)
+            reserve = rng.randint(*spring_reserve(residents))
             springs.append(Spring(f"s{len(springs) + 1}", position, SPRING_RADIUS, reserve))
     if len(springs) < SPRING_COUNT:
         raise ValueError(f"cannot fit {SPRING_COUNT} springs on a map of size {size:g}")
@@ -129,13 +153,15 @@ def _place(rng: random.Random, size: float, taken: list[Position]) -> Position:
 
 def create_default_world(seed: int | None = None) -> World:
     rng = random.Random(seed)
-    springs = _scatter_springs(rng, MAP_SIZE)
+    residents = len(DEFAULT_RESIDENTS)
+    springs = _scatter_springs(rng, MAP_SIZE, residents)
     taken = [spring.position for spring in springs]
     quarries: list[Quarry] = []
     for number in range(1, QUARRY_COUNT + 1):
         position = _place(rng, MAP_SIZE, taken)
         taken.append(position)
-        quarries.append(Quarry(f"q{number}", position, QUARRY_RADIUS, rng.randint(*QUARRY_RESERVE)))
+        reserve = rng.randint(*quarry_reserve(residents))
+        quarries.append(Quarry(f"q{number}", position, QUARRY_RADIUS, reserve))
     return World(
         map=WorldMap(size=MAP_SIZE),
         residents=DEFAULT_RESIDENTS,

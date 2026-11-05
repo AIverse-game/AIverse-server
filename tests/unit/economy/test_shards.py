@@ -22,9 +22,9 @@ from aiverse_server.game.layout import (
     MARKET_CLEARANCE,
     PLACE_SPACING,
     QUARRY_COUNT,
-    QUARRY_RESERVE,
     create_default_world,
     market_position,
+    quarry_reserve,
     scatter_springs,
 )
 from aiverse_server.game.lifecycle import end_game
@@ -139,11 +139,16 @@ def test_the_default_world_places_quarries_apart_from_the_market_and_springs(see
     springs = [spring.position for spring in world.springs]
     quarries = [quarry.position for quarry in world.quarries]
     assert len(world.quarries) == QUARRY_COUNT
-    assert all(QUARRY_RESERVE[0] <= q.reserve <= QUARRY_RESERVE[1] for q in world.quarries)
+    low, high = quarry_reserve(len(world.residents))
+    assert all(low <= q.reserve <= high for q in world.quarries)
     for i, place in enumerate(quarries):
         assert math.dist((place.x, place.y), (market.x, market.y)) >= MARKET_CLEARANCE
         for other in springs + quarries[:i]:
             assert math.dist((place.x, place.y), (other.x, other.y)) >= PLACE_SPACING
+
+
+def test_quarry_reserves_grow_with_the_number_of_residents() -> None:
+    assert [quarry_reserve(n) for n in (4, 8)] == [(300, 600), (600, 1_200)]
 
 
 @pytest.mark.parametrize("seed", [1, 2, 7, 42])

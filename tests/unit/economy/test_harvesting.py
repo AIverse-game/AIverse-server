@@ -31,10 +31,10 @@ from aiverse_server.game.actions import (
 from aiverse_server.game.layout import (
     SPRING_COUNT,
     SPRING_MARGIN,
-    SPRING_RESERVE,
     SPRING_SPACING,
     create_default_world,
     scatter_springs,
+    spring_reserve,
 )
 from aiverse_server.game.lifecycle import end_game
 
@@ -269,6 +269,31 @@ def test_springs_stay_where_they_are() -> None:
     ]
 
 
+@pytest.mark.parametrize("residents", [1, 4, 8])
+def test_spring_reserves_grow_with_the_number_of_residents(residents: int) -> None:
+    springs = scatter_springs(42, residents=residents)
+
+    assert all(375 * residents <= s.reserve <= 1_000 * residents for s in springs)
+
+
+def test_four_residents_keep_the_spring_reserves_of_the_old_fixed_range() -> None:
+    assert spring_reserve(4) == (1_500, 4_000)
+
+
+def test_a_seed_with_four_residents_scatters_the_springs_it_did_before() -> None:
+    springs = scatter_springs(42, residents=4)
+
+    # What seed 42 gave when every game had four residents and a fixed reserve range.
+    assert [(s.id, s.position.x, s.position.y, s.reserve) for s in springs] == [
+        ("s1", 91.7, 18.0, 2626),
+        ("s2", 44.4, 31.7, 1919),
+        ("s3", 96.2, 122.1, 1856),
+        ("s4", 48.4, 119.3, 2153),
+        ("s5", 98.8, 55.8, 2136),
+        ("s6", 27.3, 60.6, 2970),
+    ]
+
+
 def test_the_same_seed_scatters_the_same_springs() -> None:
     assert scatter_springs(42) == scatter_springs(42)
     assert create_default_world(42).springs == scatter_springs(42)
@@ -282,7 +307,8 @@ def test_springs_are_inside_the_map_apart_and_stocked(seed: int) -> None:
     for spring in world.springs:
         for coordinate in (spring.position.x, spring.position.y):
             assert SPRING_MARGIN <= coordinate <= world.map.size - SPRING_MARGIN
-        assert SPRING_RESERVE[0] <= spring.reserve <= SPRING_RESERVE[1]
+        low, high = spring_reserve(len(world.residents))
+        assert low <= spring.reserve <= high
     for i, first in enumerate(world.springs):
         for second in world.springs[i + 1 :]:
             distance = math.dist(
