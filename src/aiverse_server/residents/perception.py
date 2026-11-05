@@ -45,12 +45,14 @@ from dataclasses import dataclass, replace
 
 from ..core.world import (
     ACTIVITY_LIMIT,
+    SPRING_HISTORY_LIMIT,
     Activity,
     ActivityLog,
     Note,
     Notice,
     Position,
     Speech,
+    SpringReserveSample,
     SpringSighting,
     World,
 )
@@ -62,6 +64,8 @@ from .walking import position_at
 
 PERCEPTION_RADIUS = 20.0
 """How far, in map units, a resident notices things around them."""
+SPRING_SAMPLE_INTERVAL = 60.0
+"""Keep a small, resident-specific reserve trend from actual sightings."""
 
 
 @dataclass(frozen=True)
@@ -120,6 +124,8 @@ class Perception:
     settled when it was said, see `speech.py`."""
     notices: tuple[Notice, ...] = ()
     """What the server announced to everyone since the resident last looked, oldest first."""
+    spring_reserve_history: tuple[SpringReserveSample, ...] = ()
+    """Recent reserve sightings, including old ones only for springs this resident knows."""
 
 
 def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
@@ -179,9 +185,15 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         )
     )
     known.update((sighting.spring_id, sighting) for sighting in (*passed, *springs))
+    reserve_history = _spring_reserve_history(
+        me.memory.spring_reserve_history,
+        tuple(known.values()),
+        frozenset(s.spring_id for s in springs),
+    )
     memory = replace(
         forget_expired(me.memory, world.time),
         known_springs=tuple(known.values()),
+        spring_reserve_history=reserve_history,
         found_on_walks=(),
         activity_seen=world.activity.next_seq - 1,
         speech_seen=world.speech.next_seq - 1,
@@ -211,8 +223,36 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
         ),
         speech=speech,
         notices=notices,
+        spring_reserve_history=memory.spring_reserve_history,
     )
     return replace(world, residents=residents_after), perception
+
+
+def _spring_reserve_history(
+    previous: tuple[SpringReserveSample, ...],
+    known: tuple[SpringSighting, ...],
+    in_sight: frozenset[str],
+) -> tuple[SpringReserveSample, ...]:
+    """Sample only what was seen, never a spring's current reserve from outside sight."""
+    by_spring: dict[str, list[SpringReserveSample]] = {}
+    for sample in previous:
+        by_spring.setdefault(sample.spring_id, []).append(sample)
+    kept: list[SpringReserveSample] = []
+    for sighting in known:
+        samples = by_spring.get(sighting.spring_id, [])
+        latest = samples[-1] if samples else None
+        if latest is None or (
+            sighting.spring_id in in_sight
+            and (
+                sighting.seen_at - latest.time >= SPRING_SAMPLE_INTERVAL
+                or (sighting.reserve == 0 and latest.reserve != 0)
+            )
+        ):
+            samples.append(
+                SpringReserveSample(sighting.spring_id, sighting.seen_at, sighting.reserve)
+            )
+        kept.extend(samples[-SPRING_HISTORY_LIMIT:])
+    return tuple(kept)
 
 
 def springs_in_sight(world: World, resident_id: str) -> frozenset[str]:

@@ -118,6 +118,24 @@ class SpringSighting:
     """Game time of the sighting, see `World.time`."""
 
 
+@dataclass(frozen=True)
+class SpringReserveSample:
+    """A reserve the resident actually saw, kept to compare later sightings."""
+
+    spring_id: str
+    time: float
+    reserve: int
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.time) or self.time < 0:
+            raise ValueError("spring reserve sample needs a nonnegative finite time")
+        if type(self.reserve) is not int or self.reserve < 0:
+            raise ValueError("spring reserve sample needs a nonnegative integer reserve")
+
+
+SPRING_HISTORY_LIMIT = 6
+
+
 NoteTerm = Literal["long_term", "short_term"]
 """How long a note lasts: the whole game, or `memory.SHORT_TERM_SECONDS`."""
 
@@ -164,6 +182,8 @@ class Memory:
     """Sequence number of the last line of speech already looked at; 0 before the first look."""
     notices_seen: int = 0
     """Sequence number of the last server notice already looked at; 0 before the first look."""
+    spring_reserve_history: tuple[SpringReserveSample, ...] = ()
+    """Up to six actual sightings per known spring; never updated from unseen world state."""
 
     def __post_init__(self) -> None:
         ids = [sighting.spring_id for sighting in self.known_springs]
@@ -176,6 +196,17 @@ class Memory:
         object.__setattr__(
             self, "known_springs", tuple(sorted(self.known_springs, key=lambda s: s.spring_id))
         )
+        sample_times: dict[str, float] = {}
+        sample_counts: dict[str, int] = {}
+        for sample in self.spring_reserve_history:
+            if sample.spring_id not in ids:
+                raise ValueError("reserve history names an unknown spring")
+            if sample.time <= sample_times.get(sample.spring_id, -1.0):
+                raise ValueError("reserve history must move forward in time")
+            sample_times[sample.spring_id] = sample.time
+            sample_counts[sample.spring_id] = sample_counts.get(sample.spring_id, 0) + 1
+            if sample_counts[sample.spring_id] > SPRING_HISTORY_LIMIT:
+                raise ValueError("reserve history exceeds the per-spring limit")
         if type(self.activity_seen) is not int or self.activity_seen < 0:
             raise ValueError(f"activity seen must be an integer >= 0, got {self.activity_seen!r}")
         if type(self.speech_seen) is not int or self.speech_seen < 0:

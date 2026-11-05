@@ -2,7 +2,18 @@ import json
 from dataclasses import replace
 
 from aiverse_server.agents.observation import Observation, observe, to_json
-from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
+from aiverse_server.core.ledger import SYSTEM, Ledger, Transfer
+from aiverse_server.core.orders import Fill, OrderBook
+from aiverse_server.core.world import (
+    Inventory,
+    Market,
+    Position,
+    PricePoint,
+    Resident,
+    Spring,
+    World,
+    WorldMap,
+)
 from aiverse_server.economy.energy import ENERGY
 from aiverse_server.game.actions import (
     BuildTower,
@@ -10,8 +21,10 @@ from aiverse_server.game.actions import (
     InstallCrystal,
     MoveTo,
     OfferToSell,
+    SellEnergy,
     perform,
 )
+from aiverse_server.residents.perception import begin_turn
 from aiverse_server.server.app import Game
 
 WORLD = World(
@@ -76,6 +89,63 @@ def test_observation_reports_how_long_earlier_rounds_took() -> None:
     assert json.loads(to_json(later))["avg_thinking_seconds"] == 60.0
 
 
+def test_market_trend_shows_price_and_anonymous_sales_over_time() -> None:
+    assert WORLD.market is not None
+    market = replace(WORLD.market, history=(PricePoint(0.0, 20.0),))
+    game, clock = make_game(replace(WORLD, market=market))
+    game.act(SellEnergy("a", 20))
+    clock.now = 40.0
+
+    seen = look(game, "b")
+    clock.now = 360.0
+    later = look(game, "b")
+
+    assert seen.market is not None
+    assert seen.market.trend[0].sold == 20
+    assert seen.market.trend[-1].time == 40.0
+    earlier_price = seen.market.trend[0].price
+    later_price = seen.market.trend[-1].price
+    assert earlier_price is not None and later_price is not None
+    assert earlier_price < later_price
+    assert later.market is not None
+    assert len(later.market.trend) <= 11
+    assert all(point.time >= 60.0 for point in later.market.trend)
+
+
+def test_market_trend_keeps_sales_when_old_price_samples_are_evicted() -> None:
+    assert WORLD.market is not None
+    world = replace(
+        WORLD,
+        time=350.0,
+        market=replace(WORLD.market, history=(PricePoint(350.0, 20.0),)),
+        ledger=Ledger((Transfer(90.0, SYSTEM, "a", 100, "market", ENERGY, 5),)),
+    )
+    world, perception = begin_turn(world, "b")
+
+    seen = observe(world, "b", perception, 250.0)
+
+    assert seen.market is not None
+    assert seen.market.trend[0].sold == 5
+    assert seen.market.trend[0].price is None
+    assert seen.market.trend[0].time == 120.0
+    assert seen.market.trend[-1].price is not None
+    assert json.loads(to_json(seen))["market"]["trend"][0]["price"] is None
+
+
+def test_exchange_history_is_bounded_and_does_not_reveal_parties() -> None:
+    fills = tuple(Fill(i, float(i * 40), "C1", 1, 500 + i, "a", "b", "a") for i in range(1, 12))
+    game, clock = make_game(replace(WORLD, orders=OrderBook(fills=fills, next_seq=12)))
+    clock.now = 440.0
+
+    seen = look(game, "a")
+    public_trades = json.loads(to_json(seen))["exchange"]["recent_trades"]
+
+    assert len(public_trades) == 8
+    assert public_trades[0]["price"] == 504
+    assert public_trades[-1]["ago"] == 0
+    assert all("buyer_id" not in trade and "seller_id" not in trade for trade in public_trades)
+
+
 def tower_world() -> World:
     """A tower with one C1 slot on p1, which is in sight of "b" but not of "a"."""
     harvester = Resident(
@@ -107,6 +177,21 @@ def test_spring_out_of_sight_keeps_its_old_reserve_and_hides_the_draw() -> None:
     assert not seen.in_sight and seen.seen_ago == 45
     assert seen.reserve == 300
     assert seen.tower_draw_per_second is None and seen.seconds_to_empty is None
+
+
+def test_spring_reserve_trend_uses_only_reserves_the_resident_saw() -> None:
+    game, clock = make_game(tower_world())
+    look(game, "b")
+    clock.now = 65.0
+    second = look(game, "b")
+    game.act(MoveTo("b", Position(50, 50)))
+    clock.now = 110.0
+
+    away = look(game, "b")
+
+    assert [sample.reserve for sample in second.known_springs[0].reserve_history] == [300, 120]
+    assert game.world.springs[0].reserve == 0
+    assert [sample.reserve for sample in away.known_springs[0].reserve_history] == [300, 120]
 
 
 def test_towers_on_a_spring_never_seen_are_not_listed() -> None:

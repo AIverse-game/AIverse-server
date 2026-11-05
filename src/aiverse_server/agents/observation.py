@@ -10,6 +10,8 @@ walking costs are worked out from where the resident stands, so a model need not
 arithmetic. `to_json` turns an observation into compact JSON for a model.
 """
 
+from __future__ import annotations
+
 import json
 import math
 from collections.abc import Sequence
@@ -18,11 +20,12 @@ from dataclasses import asdict, dataclass
 from ..core.events import Event, pending_for, pending_from
 from ..core.orders import order_coins
 from ..core.towers import Tower, TowerSlot
-from ..core.world import Contract, ContractEnd, Position, SpringSighting, World
+from ..core.world import Contract, ContractEnd, Position, PricePoint, SpringSighting, World
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.crystals import CRYSTAL_TIERS
 from ..economy.energy import ENERGY, walk_cost
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
+from ..economy.market import unit_price
 from ..economy.shards import SHARD
 from ..economy.towers import (
     RENT_PER_100,
@@ -55,6 +58,10 @@ VOLUME_WINDOW = 120.0
 
 FILLS_SHOWN = 10
 """Fills of the resident's own orders an observation lists, the latest."""
+TREND_SECONDS = 300.0
+MARKET_TREND_INTERVAL = 30.0
+EXCHANGE_TRADES_SHOWN = 8
+"""A bounded public history for forecasting without replaying full world snapshots."""
 
 
 @dataclass(frozen=True)
@@ -106,6 +113,15 @@ class CrystalOnSale:
 
 
 @dataclass(frozen=True)
+class MarketTrendPoint:
+    time: float
+    price: float | None
+    """Observed market price, or None if its history sample was evicted."""
+    sold: int
+    """Anonymous energy sold to the market in this 30-second bucket."""
+
+
+@dataclass(frozen=True)
 class MarketView:
     position: Position
     radius: float
@@ -116,6 +132,8 @@ class MarketView:
     """Energy a walk from here to the market's centre costs."""
     walk_seconds: float
     crystals: tuple[CrystalOnSale, ...]
+    trend: tuple[MarketTrendPoint, ...]
+    """At most one price point per 30-second bucket over the last five minutes."""
 
 
 @dataclass(frozen=True)
@@ -155,11 +173,22 @@ class MyFillView:
 
 
 @dataclass(frozen=True)
+class ExchangeTradeView:
+    ago: float
+    item: str
+    quantity: int
+    price: int
+    """An anonymous recent fill, without its buyer or seller."""
+
+
+@dataclass(frozen=True)
 class ExchangeView:
     books: tuple[BookView, ...]
     my_orders: tuple[MyOrderView, ...]
     my_fills: tuple[MyFillView, ...]
     """The latest fills of the resident's orders, oldest first."""
+    recent_trades: tuple[ExchangeTradeView, ...]
+    """The latest public fills in the past five minutes, oldest first."""
 
 
 @dataclass(frozen=True)
@@ -216,6 +245,14 @@ class SpringView:
     distance: float
     walk_cost: int
     walk_seconds: float
+    reserve_history: tuple[SpringReserveView, ...]
+    """Only reserves this resident actually observed, never unseen updates."""
+
+
+@dataclass(frozen=True)
+class SpringReserveView:
+    seen_ago: float
+    reserve: int
 
 
 @dataclass(frozen=True)
@@ -426,7 +463,17 @@ def observe(
     known_ids = {sighting.spring_id for sighting in perception.known_springs}
     springs = sorted(
         (
-            _spring_view(world, sighting, here, sighting.spring_id in in_sight)
+            _spring_view(
+                world,
+                sighting,
+                here,
+                sighting.spring_id in in_sight,
+                tuple(
+                    SpringReserveView(max(world.time - sample.time, 0.0), sample.reserve)
+                    for sample in perception.spring_reserve_history
+                    if sample.spring_id == sighting.spring_id
+                ),
+            )
             for sighting in perception.known_springs
         ),
         key=lambda spring: spring.distance,
@@ -492,6 +539,7 @@ def observe(
                 CrystalOnSale(crystal.tier, crystal.price, crystal.energy_per_job)
                 for crystal in perception.market.crystals
             ),
+            trend=_market_trend(world),
         ),
         exchange=_exchange_view(world, resident_id),
         quarries=tuple(
@@ -636,7 +684,44 @@ def _exchange_view(world: World, resident_id: str) -> ExchangeView:
             )
             for fill in mine
         ),
+        recent_trades=tuple(
+            ExchangeTradeView(world.time - fill.time, fill.item, fill.quantity, fill.price)
+            for fill in world.orders.fills
+            if world.time - TREND_SECONDS <= fill.time <= world.time
+        )[-EXCHANGE_TRADES_SHOWN:],
     )
+
+
+def _market_trend(world: World) -> tuple[MarketTrendPoint, ...]:
+    market = world.market
+    if market is None:
+        return ()
+    cutoff = max(world.time - TREND_SECONDS, 0.0)
+    points = {
+        int(point.time // MARKET_TREND_INTERVAL): point
+        for point in market.history
+        if cutoff <= point.time <= world.time
+    }
+    bucket_now = int(world.time // MARKET_TREND_INTERVAL)
+    points[bucket_now] = PricePoint(world.time, unit_price(market, world.time))
+    sold: dict[int, int] = {}
+    for transfer in world.ledger.transfers:
+        if transfer.channel == "market" and cutoff <= transfer.time <= world.time:
+            bucket = int(transfer.time // MARKET_TREND_INTERVAL)
+            sold[bucket] = sold.get(bucket, 0) + transfer.quantity
+    trend = []
+    for bucket in sorted(points.keys() | sold.keys()):
+        point = points.get(bucket)
+        trend.append(
+            MarketTrendPoint(
+                point.time
+                if point is not None
+                else min((bucket + 1) * MARKET_TREND_INTERVAL, world.time),
+                point.price if point is not None else None,
+                sold.get(bucket, 0),
+            )
+        )
+    return tuple(trend)
 
 
 def to_json(observation: Observation) -> str:
@@ -786,7 +871,11 @@ def _tower_views(
 
 
 def _spring_view(
-    world: World, sighting: SpringSighting, here: Position, in_sight: bool
+    world: World,
+    sighting: SpringSighting,
+    here: Position,
+    in_sight: bool,
+    reserve_history: tuple[SpringReserveView, ...],
 ) -> SpringView:
     """A known spring; how fast towers drain it is told only while the resident can see it."""
     draw = spring_draw_rate(world, sighting.spring_id) if in_sight else None
@@ -802,6 +891,7 @@ def _spring_view(
         distance=_distance(here, sighting.position),
         walk_cost=walk_cost(here, sighting.position),
         walk_seconds=walk_seconds(here, sighting.position),
+        reserve_history=reserve_history,
     )
 
 

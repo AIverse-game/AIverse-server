@@ -12,6 +12,7 @@ from aiverse_server.core.world import (
     Position,
     Resident,
     Spring,
+    SpringReserveSample,
     SpringSighting,
     World,
     WorldMap,
@@ -105,6 +106,16 @@ def test_a_spring_out_of_sight_is_remembered_as_it_was_last_seen() -> None:
 
     assert away.springs == ()
     assert away.known_springs == (SpringSighting("near", Position(20, 10), 4, 100, 3.0),)
+
+
+def test_reserve_history_refuses_a_spring_the_resident_never_saw() -> None:
+    sample = SpringReserveSample("far", 3.0, 50)
+
+    with pytest.raises(ValueError, match="unknown spring"):
+        Memory(
+            known_springs=(SpringSighting("near", Position(20, 10), 4, 100, 3.0),),
+            spring_reserve_history=(sample,),
+        )
 
 
 def test_coming_back_to_a_spring_updates_the_sighting() -> None:

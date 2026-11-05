@@ -66,6 +66,8 @@ a {MARKET_HALF_LIFE:g}s half-life. One large sale earns less per unit;
 bring energy to the market several times during the game and sell while the price is good. For
 {PRICE_HOLD_SECONDS:g}s after your round begins, others' sales cannot push your sale below
 the observed energy_price, though your own sales can; later the live price applies.
+market.trend gives price and anonymous sales in 30-second buckets over five minutes. Use it
+to distinguish price recovery from selling pressure. An evicted old price is null.
 Crystal prices and yields: {crystals}. Harvesting requires a carried crystal; the best
 carried one is used.
 - Springs (radius {SPRING_RADIUS:g}) have finite reserves and never refill. At one,
@@ -74,6 +76,7 @@ reserve. Springs are visible within {PERCEPTION_RADIUS:g} units and along a walk
 that distance of your route. known_springs keeps the last seen reserve and seen_ago;
 only in_sight reserves are current. tower_draw_per_second and seconds_to_empty count
 running towers, not manual harvesting. Other residents draw from the same reserve.
+known_springs.reserve_history contains only reserves you saw; old sightings may be stale.
 - {QUARRY_COUNT} public quarries (radius {QUARRY_RADIUS:g}) hold finite shards. At one,
 dig_shards takes {DIG_SECONDS:g}s for up to {DIG_YIELD} shards; no crystal is needed.
 The market does not buy shards. At the workshop (radius {WORKSHOP_RADIUS:g}), refine_crystal
@@ -103,7 +106,8 @@ at the same price, at the resting order's price; the remainder rests for {low:g}
 Buy orders reserve quantity × price coins; sell orders reserve items. At most {MAX_ORDERS}
 resting orders per resident, and self-trades are refused. cancel_order works while busy.
 exchange shows {BOOK_LEVELS_SHOWN} price levels per side, latest price, volume over
-{VOLUME_WINDOW:g}s, your orders and fills. The exchange and market prices are separate.
+{VOLUME_WINDOW:g}s, your orders and fills, and eight recent anonymous trades. Exchange and
+market prices are separate.
 - A contract promises 1–{MAX_DELIVERIES} deliveries of an item, each for a fixed payment,
 within at most {MAX_CONTRACT_SECONDS}s. It starts on acceptance. The buyer's payments are
 reserved; deliver transfers carried items and pays the supplier immediately. The supplier
@@ -125,7 +129,8 @@ when the game lasts long enough.
 - Only your notes and a summary of the last round carry over. Long-term notes last the
 game; short-term notes last {SHORT_TERM_SECONDS:g}s. Limits: {NOTE_LIMITS["long_term"]}
 long-term and {NOTE_LIMITS["short_term"]} short-term notes. Each note may hold
-at most {NOTE_LENGTH_LIMIT} characters; a longer one is refused."""
+at most {NOTE_LENGTH_LIMIT} characters; a longer one is refused. Before major market moves,
+note a short-term price forecast with horizon and reason, then check it later."""
     if strategy:
         prompt += f"\n\nYour player's strategy for you:\n{strategy}"
     return prompt
