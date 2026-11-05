@@ -8,8 +8,8 @@ Like the rest of the world, every function returns a new world and leaves its ar
 untouched; on error nothing changes. Inventories live only as long as the in-memory world,
 so a new game starts empty, and `clear_items` empties a resident who leaves the game.
 
-Coins are a balance of their own rather than an item kind: they count in full in the
-ranking, and a resident who leaves keeps them.
+Coins are a balance of their own rather than an item kind: they decide the ranking, and a
+resident who leaves keeps them.
 """
 
 from dataclasses import replace

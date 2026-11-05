@@ -7,6 +7,7 @@ from aiverse_server.core.events import EventError, pending_for, send_event
 from aiverse_server.core.inventory import coin_balance, list_items
 from aiverse_server.core.world import (
     Inventory,
+    Market,
     Memory,
     Notice,
     NoticeLog,
@@ -160,6 +161,17 @@ def test_ranks_count_reserved_coins_and_share_places_on_ties() -> None:
     assert coin_balance(world, "c") == 30
     assert total_coins(world, "c") == 50
     assert ranks(world) == {"a": 1, "b": 2, "c": 2}
+
+
+def test_ranks_count_no_energy_or_crystals() -> None:
+    hoarder = resident("c", 49, (("energy", 5_000), ("C3", 4)))
+    world = replace(
+        WORLD, residents=(*WORLD.residents[:2], hoarder), market=Market(Position(1, 1), 5)
+    )
+
+    standings = ranks(world)
+
+    assert standings["c"] == 3
 
 
 def test_residents_who_left_keep_their_place() -> None:

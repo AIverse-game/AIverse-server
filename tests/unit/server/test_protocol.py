@@ -76,14 +76,6 @@ def test_a_crystal_set_aside_in_an_offer_still_shows_as_owned() -> None:
     }
 
 
-def test_a_resident_shows_what_their_items_count_for_and_their_score() -> None:
-    shown = world_view(WORLD, 1).model_dump(by_alias=True)
-
-    # Without a market energy counts nothing; a C1 counts half its 600 coins.
-    a = resident_view(shown, "a")
-    assert (a["coins"], a["itemValue"], a["score"]) == (0, 300, 300)
-
-
 def test_states_show_only_the_viewers_offers_and_contracts() -> None:
     rich = tuple(replace(resident, coins=1000) for resident in WORLD.residents)
     world = replace(WORLD, residents=rich)

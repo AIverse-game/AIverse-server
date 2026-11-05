@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ..core.ledger import SYSTEM, Transfer
 from ..core.world import World
-from .lifecycle import item_value, score, total_coins
+from .lifecycle import total_coins
 
 
 @dataclass(frozen=True)
@@ -57,11 +57,7 @@ class ResidentEconomy:
     id: str
     name: str
     total_coins: int
-    """Coins including those set aside, see `lifecycle.total_coins`."""
-    item_value: int
-    """What energy and crystals left over count for, see `lifecycle.item_value`."""
-    score: int
-    """What the ranking counts: `total_coins` plus `item_value`."""
+    """What the ranking counts, see `lifecycle.total_coins`."""
     income: dict[str, int]
     """Coins received, by channel."""
     spending: dict[str, int]
@@ -148,12 +144,6 @@ def format_report(report: EconomyReport) -> str:
         f"  coin gini {report.coin_gini:.3f}, income concentration "
         + ("-" if concentration is None else f"{concentration:.3f}")
     )
-    lines.append(
-        "  scores: "
-        + ", ".join(
-            f"{r.name} {r.score} ({r.total_coins} + {r.item_value})" for r in report.residents
-        )
-    )
     if report.transfers_dropped:
         lines.append(f"  partial: {report.transfers_dropped} older transfers were dropped")
     return "\n".join(lines)
@@ -226,8 +216,6 @@ def _resident(world: World, resident_id: str, name: str) -> ResidentEconomy:
         id=resident_id,
         name=name,
         total_coins=total_coins(world, resident_id),
-        item_value=item_value(world, resident_id),
-        score=score(world, resident_id),
         income=dict(sorted(income.items())),
         spending=dict(sorted(spending.items())),
         income_concentration=(

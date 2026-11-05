@@ -351,6 +351,24 @@ def test_a_request_reduces_its_output_limit_in_the_last_three_minutes(
     asyncio.run(scenario())
 
 
+def test_the_endgame_reminder_says_only_coins_count_and_to_sell_in_time() -> None:
+    async def scenario() -> None:
+        game, clock = make_game()
+        clock.now = 600 - 60
+        requests: list[httpx.Request] = []
+        replies = [httpx.Response(200, json=_reply({"content": "Waiting."}))]
+        brain = ChatCompletionsBrain("http://llm", "k", "m", client=_http(replies, requests))
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        contents = [m["content"] for m in json.loads(requests[0].content)["messages"]]
+        assert any(
+            "Only coins count at the end" in c and "sell carried energy" in c for c in contents
+        )
+
+    asyncio.run(scenario())
+
+
 def test_a_round_reduces_the_limit_when_it_enters_the_last_three_minutes() -> None:
     async def scenario() -> None:
         game, clock = make_game()
@@ -409,28 +427,6 @@ def test_the_brain_uses_the_configured_early_warning_threshold() -> None:
         assert request["max_tokens"] == 8192
         assert "within 5 minutes" in prompt
         assert "120 seconds before" in prompt
-
-    asyncio.run(scenario())
-
-
-def test_the_endgame_reminder_says_held_items_count_towards_the_score() -> None:
-    async def scenario() -> None:
-        clock = FakeClock()
-        game = Game(WORLD, duration=600, clock=clock, early_notice_seconds=300)
-        clock.now = 300
-        requests: list[httpx.Request] = []
-        brain = ChatCompletionsBrain(
-            "http://llm",
-            "k",
-            "m",
-            client=_http([httpx.Response(200, json=_reply({"content": "Waiting."}))], requests),
-        )
-
-        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
-
-        prompt = json.loads(requests[0].content)["messages"][0]["content"]
-        assert "count towards your score" in prompt
-        assert "Only coins count" not in prompt
 
     asyncio.run(scenario())
 

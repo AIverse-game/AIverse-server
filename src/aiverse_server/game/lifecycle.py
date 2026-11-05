@@ -9,32 +9,25 @@ them. They stay in the world and in the ranking with the coins they had, but los
 items and can no longer act or trade. Running out of energy, the residents' stamina, takes
 them out the same way, see `knock_out_exhausted` and `knock_out_arrivals`.
 
-The ranking counts each resident's score: their coins, see `total_coins`, plus what their
-energy and crystals are worth, see `item_value`. It is live during the game and final once
-it ends, when the market price stops moving.
-
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
 """
 
-import math
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Literal
 
 from ..core.events import Event, withdraw_event
-from ..core.inventory import clear_items, item_count
-from ..core.orders import order_coins, order_items
+from ..core.inventory import clear_items
+from ..core.orders import order_coins
 from ..core.world import Notice, NoticeLog, World
 from ..economy.contracts import contract_coins, end_contracts
-from ..economy.crystals import CRYSTAL_TIERS
 from ..economy.energy import energy_total
 from ..economy.exchange import cancel_orders
 from ..economy.harvesting import cancel_harvesting
-from ..economy.market import unit_price
 from ..economy.shards import cancel_digging
 from ..economy.towers import release_towers, tower_coins
-from ..economy.trade import reserved_coins, reserved_items
+from ..economy.trade import reserved_coins
 from ..economy.workshop import cancel_refining
 from ..residents.walking import stop_walking
 
@@ -46,9 +39,6 @@ ENDING_NOTICE_SECONDS = 60.0
 
 EARLY_ENDING_NOTICE_SECONDS = 180.0
 """Earlier warning so a slow model can still act before the final minute."""
-
-CRYSTAL_SCORE_SHARE = 0.5
-"""Share of a crystal's import price it counts for in the ranking."""
 
 GameErrorCode = Literal["unknown_resident", "resident_left", "game_over"]
 
@@ -163,7 +153,7 @@ def end_game(world: World) -> World:
 
 def total_coins(world: World, resident_id: str) -> int:
     """Spendable coins plus those set aside by pending offers, contracts, towers and buy
-    orders; the ranking adds the worth of items, see `score`."""
+    orders: what the ranking counts."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
     return (
         resident.coins
@@ -174,43 +164,10 @@ def total_coins(world: World, resident_id: str) -> int:
     )
 
 
-def item_value(world: World, resident_id: str) -> int:
-    """Coins the resident's energy and crystals count for in the ranking, rounded down:
-    energy at the market's unit price right now, and crystals at `CRYSTAL_SCORE_SHARE` of
-    their import price. Both count what the resident carries and what offers and sell orders
-    set aside; crystals installed in towers count too, since they come back. Shards count
-    nothing, as nobody outside the town buys them, and neither does what running jobs will
-    pay, since the end of the game voids them."""
-    energy = energy_total(world, resident_id)
-    price = unit_price(world.market, world.time) if world.market is not None else 0.0
-    installed = [
-        slot.crystal
-        for tower in world.towers
-        for slot in tower.slots
-        if slot.resident_id == resident_id
-    ]
-    crystals = sum(
-        tier.price
-        * (
-            item_count(world, resident_id, tier.tier)
-            + reserved_items(world, resident_id, tier.tier)
-            + order_items(world.orders, resident_id, tier.tier)
-            + installed.count(tier.tier)
-        )
-        for tier in CRYSTAL_TIERS
-    )
-    return math.floor(energy * price + CRYSTAL_SCORE_SHARE * crystals)
-
-
-def score(world: World, resident_id: str) -> int:
-    """What the ranking counts: total coins plus the worth of energy and crystals."""
-    return total_coins(world, resident_id) + item_value(world, resident_id)
-
-
 def ranks(world: World) -> dict[str, int]:
-    """Resident id to place by score, 1 for the most. Equal scores share a place and the
-    next one is skipped (1, 1, 3), since the design breaks no ties."""
-    totals = {resident.id: score(world, resident.id) for resident in world.residents}
+    """Resident id to place by total coins, 1 for the most. Equal totals share a place and
+    the next one is skipped (1, 1, 3), since the design breaks no ties."""
+    totals = {resident.id: total_coins(world, resident.id) for resident in world.residents}
     return {
         resident_id: 1 + sum(other > total for other in totals.values())
         for resident_id, total in totals.items()

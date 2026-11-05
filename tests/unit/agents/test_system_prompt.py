@@ -21,6 +21,18 @@ def test_the_prompt_says_a_longer_note_is_refused() -> None:
     assert f"at most {NOTE_LENGTH_LIMIT} characters; a longer one is refused" in prompt
 
 
+def test_the_prompt_says_only_coins_count_at_the_end() -> None:
+    prompt = system_prompt("甲", "a")
+
+    assert "Only coins count; energy, shards and crystals left over are worth nothing" in prompt
+
+
+def test_the_prompt_encourages_selling_energy_during_the_game() -> None:
+    prompt = system_prompt("甲", "a")
+
+    assert "bring energy to the market several times during the game" in prompt
+
+
 def test_the_prompt_states_what_walking_costs() -> None:
     prompt = system_prompt("甲", "a")
 
