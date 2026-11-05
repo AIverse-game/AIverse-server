@@ -3,6 +3,12 @@ from aiverse_server.agents.tools import TOOLS
 from aiverse_server.core.world import NOTE_LENGTH_LIMIT
 
 
+def test_the_base_prompt_stays_compact() -> None:
+    prompt = system_prompt("甲", "a")
+
+    assert len(prompt) < 6000
+
+
 def test_the_prompt_tells_a_model_that_thinking_time_is_game_time() -> None:
     prompt = system_prompt("甲", "a")
 
