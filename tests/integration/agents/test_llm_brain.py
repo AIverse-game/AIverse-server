@@ -100,12 +100,294 @@ def test_llm_brain_runs_the_tools_the_model_calls() -> None:
         assert requests[0].url == "https://llm.example/v1/chat/completions"
         assert requests[0].headers["Authorization"] == "Bearer secret"
         assert first["model"] == "vendor/test"
-        assert {tool["function"]["name"] for tool in first["tools"]} >= {"move_to", "harvest"}
+        assert {tool["function"]["name"] for tool in first["tools"]} >= {
+            "move_to",
+            "buy_crystal",
+            "discover_tools",
+        }
         assert "甲" in first["messages"][0]["content"]
         second = json.loads(requests[1].content)["messages"]
         assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "c1"
         assert json.loads(second[-1]["content"])["ok"] is True
         assert all("secret" not in json.dumps(json.loads(r.content)) for r in requests)
+
+    asyncio.run(scenario())
+
+
+def test_the_brain_advertises_tools_for_the_residents_current_state() -> None:
+    harvester = replace(
+        WORLD.residents[0],
+        position=Position(80, 50),
+        inventory=Inventory(((ENERGY, 100), ("C1", 1))),
+    )
+    spring_world = replace(WORLD, residents=(harvester, WORLD.residents[1]))
+
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http(
+                [httpx.Response(200, json=_reply({"content": "Waiting."})) for _ in range(2)],
+                requests,
+            ),
+        )
+        market_game, _ = make_game()
+        spring_game, _ = make_game(spring_world)
+
+        await brain.take_turn(look(market_game, "a"), ResidentTools(market_game, "a"))
+        await brain.take_turn(look(spring_game, "a"), ResidentTools(spring_game, "a"))
+
+        market_names, spring_names = (
+            {tool["function"]["name"] for tool in json.loads(request.content)["tools"]}
+            for request in requests
+        )
+        assert {"buy_crystal", "sell_energy"} <= market_names
+        assert "harvest" not in market_names
+        assert {"harvest", "install_crystal"} <= spring_names
+        assert "buy_crystal" not in spring_names
+        assert "place_order" not in market_names | spring_names
+        assert len(json.dumps(json.loads(requests[0].content)["tools"])) < 8000
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("request_limit", [1, 2])
+def test_an_empty_spring_does_not_advertise_harvesting_or_tower_building(
+    request_limit: int,
+) -> None:
+    resident = replace(
+        WORLD.residents[0],
+        position=Position(80, 50),
+        coins=TOWER_PRICE,
+        inventory=Inventory(((ENERGY, 100), ("C1", 1))),
+    )
+    world = replace(
+        WORLD,
+        residents=(resident, WORLD.residents[1]),
+        springs=(replace(WORLD.springs[0], reserve=0),),
+    )
+
+    async def scenario() -> None:
+        game, _ = make_game(world)
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http([httpx.Response(200, json=_reply({"content": "Waiting."}))], requests),
+            request_limit=request_limit,
+        )
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        names = {tool["function"]["name"] for tool in json.loads(requests[0].content)["tools"]}
+        assert "harvest" not in names
+        assert "build_tower" not in names
+
+    asyncio.run(scenario())
+
+
+def test_discovery_reveals_optional_tools_without_a_game_action() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        call = {
+            "id": "c1",
+            "function": {"name": "discover_tools", "arguments": '{"group":"exchange"}'},
+        }
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http(
+                [
+                    httpx.Response(200, json=_reply({"tool_calls": [call]})),
+                    httpx.Response(200, json=_reply({"content": "I will watch the book."})),
+                ],
+                requests,
+            ),
+        )
+        resident_tools = ResidentTools(game, "a")
+
+        remark = await brain.take_turn(look(game, "a"), resident_tools)
+
+        first, second = (json.loads(request.content) for request in requests)
+        first_names = {tool["function"]["name"] for tool in first["tools"]}
+        second_names = {tool["function"]["name"] for tool in second["tools"]}
+        assert "place_order" not in first_names
+        assert {"place_order", "cancel_order"} <= second_names
+        assert json.loads(second["messages"][-1]["content"])["group"] == "exchange"
+        assert resident_tools.calls == []
+        assert remark == "I will watch the book."
+
+    asyncio.run(scenario())
+
+
+def test_the_last_request_advertises_optional_actions_instead_of_discovery() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        call = {
+            "id": "c1",
+            "function": {
+                "name": "place_order",
+                "arguments": '{"side":"buy","item":"energy","quantity":1,"price":1}',
+            },
+        }
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http([httpx.Response(200, json=_reply({"tool_calls": [call]}))], requests),
+            request_limit=1,
+        )
+        resident_tools = ResidentTools(game, "a")
+
+        await brain.take_turn(look(game, "a"), resident_tools)
+
+        names = {tool["function"]["name"] for tool in json.loads(requests[0].content)["tools"]}
+        assert "place_order" in names
+        assert "discover_tools" not in names
+        assert len(resident_tools.calls) == 1
+        assert resident_tools.calls[0].result.ok
+
+    asyncio.run(scenario())
+
+
+def test_the_last_request_does_not_advertise_actions_while_walking() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        game.act(MoveTo("a", Position(80, 50)))
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http([httpx.Response(200, json=_reply({"content": ""}))], requests),
+            request_limit=1,
+        )
+
+        await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
+
+        names = {tool["function"]["name"] for tool in json.loads(requests[0].content)["tools"]}
+        assert names == {"say", "remember"}
+
+    asyncio.run(scenario())
+
+
+def test_the_last_request_keeps_an_action_enabled_earlier_in_the_round() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        discover = {
+            "id": "c1",
+            "function": {"name": "discover_tools", "arguments": '{"group":"exchange"}'},
+        }
+        place = {
+            "id": "c2",
+            "function": {
+                "name": "place_order",
+                "arguments": '{"side":"buy","item":"energy","quantity":1,"price":1}',
+            },
+        }
+        cancel = {
+            "id": "c3",
+            "function": {"name": "cancel_order", "arguments": '{"order_id":1}'},
+        }
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http(
+                [
+                    httpx.Response(200, json=_reply({"tool_calls": [call]}))
+                    for call in (discover, place, cancel)
+                ],
+                requests,
+            ),
+            max_steps=3,
+        )
+        resident_tools = ResidentTools(game, "a")
+
+        await brain.take_turn(look(game, "a"), resident_tools)
+
+        names = {tool["function"]["name"] for tool in json.loads(requests[2].content)["tools"]}
+        assert "cancel_order" in names
+        assert "discover_tools" not in names
+        assert [call.name for call in resident_tools.calls] == ["place_order", "cancel_order"]
+        assert all(call.result.ok for call in resident_tools.calls)
+
+    asyncio.run(scenario())
+
+
+def test_the_last_request_uses_resources_restored_during_the_round() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        assert ResidentTools(game, "a").place_order("sell", "energy", 99, 1).ok
+        cancel = {
+            "id": "c1",
+            "function": {"name": "cancel_order", "arguments": '{"order_id":1}'},
+        }
+        sell = {
+            "id": "c2",
+            "function": {"name": "sell_energy", "arguments": '{"quantity":99}'},
+        }
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm",
+            "k",
+            "m",
+            client=_http(
+                [
+                    httpx.Response(200, json=_reply({"tool_calls": [call]}))
+                    for call in (cancel, sell)
+                ],
+                requests,
+            ),
+            max_steps=2,
+        )
+        resident_tools = ResidentTools(game, "a")
+
+        await brain.take_turn(look(game, "a"), resident_tools)
+
+        first, last = (json.loads(request.content) for request in requests)
+        first_names = {tool["function"]["name"] for tool in first["tools"]}
+        last_names = {tool["function"]["name"] for tool in last["tools"]}
+        assert "sell_energy" not in first_names
+        assert "sell_energy" in last_names
+        assert [call.name for call in resident_tools.calls] == ["cancel_order", "sell_energy"]
+        assert all(call.result.ok for call in resident_tools.calls)
+
+    asyncio.run(scenario())
+
+
+def test_discovery_without_a_following_action_still_reports_an_empty_round() -> None:
+    async def scenario() -> None:
+        game, _ = make_game()
+        call = {
+            "id": "c1",
+            "function": {"name": "discover_tools", "arguments": '{"group":"exchange"}'},
+        }
+        replies = [
+            httpx.Response(200, json=_reply({"tool_calls": [call]})),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": None}, "finish_reason": "length"}]},
+            ),
+        ]
+        requests: list[httpx.Request] = []
+        brain = ChatCompletionsBrain(
+            "http://llm", "k", "m", client=_http(replies, requests), max_steps=2
+        )
+        resident_tools = ResidentTools(game, "a")
+
+        with pytest.raises(LLMError, match="without acting"):
+            await brain.take_turn(look(game, "a"), resident_tools)
+
+        assert len(requests) == 2
+        assert resident_tools.calls == []
 
     asyncio.run(scenario())
 

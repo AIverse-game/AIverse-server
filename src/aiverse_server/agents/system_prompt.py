@@ -118,7 +118,9 @@ appear in contract_proposals_to_me and my_contracts.
 
 Your turn
 - Read the JSON observation for current resources, positions, prices, offers and notes.
-Act with tools; several calls are allowed. When done, reply with one short sentence about
+Act with the tools shown for this state. Use discover_tools to reveal a category when you
+need another action; this costs a model request, so prefer the tools already shown. Several
+calls are allowed. When done, reply with one short sentence about
 your plan and call no tool. Starting a walk or job ends this round: make notes or speech
 in the same reply, and do not start a job before arriving from a walk.
 - The game clock keeps running while you think. last_thinking_seconds and

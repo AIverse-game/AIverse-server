@@ -36,7 +36,13 @@ import httpx
 
 from .observation import Observation, to_json
 from .system_prompt import system_prompt
-from .tools import ResidentTools, ToolCall, tool_specs
+from .tool_selection import (
+    discover_tools,
+    last_request_tool_names,
+    selected_tool_names,
+    selected_tool_specs,
+)
+from .tools import ResidentTools, ToolCall
 
 MAX_STEPS = 8
 """Model requests in one round, each of which may call tools."""
@@ -180,8 +186,9 @@ class ChatCompletionsBrain:
         remark: str | None = None
         retried = False
         endgame_instruction_sent = False
+        advertised = selected_tool_names(observation)
         try:
-            for _ in range(self.max_steps):
+            for step in range(self.max_steps):
                 if self.requests >= self.request_limit:
                     break
                 remaining = tools.game.remaining()
@@ -196,7 +203,17 @@ class ChatCompletionsBrain:
                     if remaining <= tools.game.early_notice_seconds
                     else self.max_tokens
                 )
-                message, finish_reason = await self._complete(messages, max_tokens)
+                # Discovery needs another model request. When none remains, show all
+                # actions usable in this state directly so they stay reachable.
+                last_request = step == self.max_steps - 1 or self.requests == self.request_limit - 1
+                if last_request:
+                    schemas = selected_tool_specs(
+                        last_request_tool_names(tools),
+                        include_discovery=False,
+                    )
+                else:
+                    schemas = selected_tool_specs(advertised)
+                message, finish_reason = await self._complete(messages, max_tokens, schemas)
                 content = message.get("content")
                 if isinstance(content, str) and content:
                     self.outputs.append(content)
@@ -228,15 +245,21 @@ class ChatCompletionsBrain:
                         raise LLMError("the model sent a malformed tool call")
                     name = function.get("name")
                     arguments = function.get("arguments")
-                    result = tools.call(
-                        name if isinstance(name, str) else "",
-                        arguments if isinstance(arguments, str | dict) else "",
-                    )
+                    if name == "discover_tools":
+                        result_text = discover_tools(
+                            arguments if isinstance(arguments, str | dict) else "", advertised
+                        )
+                    else:
+                        result = tools.call(
+                            name if isinstance(name, str) else "",
+                            arguments if isinstance(arguments, str | dict) else "",
+                        )
+                        result_text = result.to_json()
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": str(call.get("id", "")),
-                            "content": result.to_json(),
+                            "content": result_text,
                         }
                     )
                 if _busy(tools.status()):
@@ -244,6 +267,8 @@ class ChatCompletionsBrain:
                         content.strip() if isinstance(content, str) and content.strip() else None
                     )
                     break
+            if not tools.calls and remark is None and not _busy(tools.status()):
+                raise LLMError("the model used all requests without acting")
         finally:
             self._last_round = _summary(tools.calls, remark)
         return remark
@@ -262,7 +287,7 @@ class ChatCompletionsBrain:
             await self._client.aclose()
 
     async def _complete(
-        self, messages: list[dict[str, Any]], max_tokens: int
+        self, messages: list[dict[str, Any]], max_tokens: int, schemas: list[dict[str, Any]]
     ) -> tuple[dict[str, Any], str | None]:
         """One chat completion; returns the model's message and why it stopped writing, such
         as "length" when it ran out of tokens."""
@@ -274,7 +299,7 @@ class ChatCompletionsBrain:
                 json={
                     "model": self.model,
                     "messages": messages,
-                    "tools": tool_specs(),
+                    "tools": schemas,
                     "tool_choice": "auto",
                     "max_tokens": max_tokens,
                 },
