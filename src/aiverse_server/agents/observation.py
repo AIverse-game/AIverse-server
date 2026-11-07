@@ -36,7 +36,8 @@ from ..economy.compute import (
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
 from ..economy.footfall import footfall, visitors
-from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot_at, plots
+from ..economy.joint_purchase import JointPurchase, reserved_purchase_coins
+from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot, plot_at, plots
 from ..economy.shares import ShareOffer, split_income
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins
 from ..game.lifecycle import ranks, total_coins
@@ -68,7 +69,7 @@ class Me:
     coins: int
     """Spendable coins."""
     coins_in_offers: int
-    """Coins set aside in purchase offers still waiting for an answer."""
+    """Coins set aside in purchase offers and joint purchases still waiting for an answer."""
     coins_in_orders: int
     """Coins set aside in buy orders resting on the exchange."""
     coins_in_contracts: int
@@ -333,6 +334,29 @@ class ShareOfferView:
 
 
 @dataclass(frozen=True)
+class JointPurchaseView:
+    event_id: int
+    from_id: str
+    to_id: str
+    parcel: str
+    centre: Position
+    footfall: float
+    """Visitors and residents passing the parcel's centre now."""
+    price: int
+    """What the parcel costs from the town."""
+    from_pays: int
+    """Coins the proposer pays, set aside already."""
+    to_pays: int
+    """Coins the recipient pays when they accept."""
+    to_shares: int
+    """Shares of the parcel's 100 the recipient gets; the proposer keeps the rest and alone
+    builds on it and puts content in it."""
+    parcel_taken: bool
+    """Someone has bought the parcel meanwhile: accepting would fail, so the proposer should
+    withdraw it, or the recipient reject it."""
+
+
+@dataclass(frozen=True)
 class ProposalView:
     event_id: int
     from_id: str
@@ -449,6 +473,8 @@ class Observation:
     """What the server announced to everyone since the resident last looked."""
     share_offers_to_me: tuple[ShareOfferView, ...] = ()
     my_share_offers: tuple[ShareOfferView, ...] = ()
+    joint_purchases_to_me: tuple[JointPurchaseView, ...] = ()
+    my_joint_purchases: tuple[JointPurchaseView, ...] = ()
     last_thinking_seconds: float | None = None
     """Game seconds the resident's previous round took, from its look to the end of the
     round, whether it went well or not; None in the first round."""
@@ -480,7 +506,8 @@ def observe(
             name=me.name,
             position=here,
             coins=me.coins,
-            coins_in_offers=reserved_coins(world, resident_id),
+            coins_in_offers=reserved_coins(world, resident_id)
+            + reserved_purchase_coins(world, resident_id),
             coins_in_orders=order_coins(world.orders, resident_id),
             coins_in_contracts=contract_coins(world, resident_id),
             items=me.inventory.counts(),
@@ -513,6 +540,8 @@ def observe(
         my_offers=_offers(pending_from(world, resident_id)),
         share_offers_to_me=_share_offers(world, pending_for(world, resident_id)),
         my_share_offers=_share_offers(world, pending_from(world, resident_id)),
+        joint_purchases_to_me=_joint_purchases(world, pending_for(world, resident_id)),
+        my_joint_purchases=_joint_purchases(world, pending_from(world, resident_id)),
         information_offers_to_me=_information_offers(pending_for(world, resident_id)),
         my_information_offers=_information_offers(pending_from(world, resident_id)),
         contract_proposals_to_me=_proposals(pending_for(world, resident_id)),
@@ -794,6 +823,32 @@ def _share_offers(world: World, events: tuple[Event, ...]) -> tuple[ShareOfferVi
                 shares=offer.shares,
                 price=offer.price,
                 cut_per_payday=_income(world, parcel) * offer.shares // PARCEL_SHARES,
+            )
+        )
+    return tuple(views)
+
+
+def _joint_purchases(world: World, events: tuple[Event, ...]) -> tuple[JointPurchaseView, ...]:
+    """The joint purchases among `events`."""
+    views = []
+    for event in events:
+        proposal = event.payload
+        if not isinstance(proposal, JointPurchase):
+            continue
+        square = plot(world, proposal.col, proposal.row)
+        views.append(
+            JointPurchaseView(
+                event_id=event.id,
+                from_id=event.sender_id,
+                to_id=event.recipient_id,
+                parcel=square.id,
+                centre=square.centre,
+                footfall=footfall(world, square.centre),
+                price=square.price,
+                from_pays=proposal.proposer_pays(world),
+                to_pays=proposal.partner_pays,
+                to_shares=proposal.partner_shares,
+                parcel_taken=square.owner_id is not None,
             )
         )
     return tuple(views)

@@ -16,7 +16,7 @@ from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
-    "land": ("buy_parcel",),
+    "land": ("buy_parcel", "joint_buy_parcel"),
     "compute": ("buy_node", "build_ad"),
     "content": ("make_content", "place_content"),
     "exchange": ("place_order", "cancel_order"),
@@ -88,12 +88,15 @@ def selected_tool_names(observation: Observation) -> set[str]:
     if me.walking_to is None:
         names.add("move_to")
         here = observation.land.here
-        if here is not None and here.owner is None and me.coins >= here.price:
-            names.add("buy_parcel")
+        if here is not None and here.owner is None:
+            names.add("joint_buy_parcel")
+            if me.coins >= here.price:
+                names.add("buy_parcel")
         if (
             observation.offers_to_me
             or observation.information_offers_to_me
             or observation.share_offers_to_me
+            or observation.joint_purchases_to_me
         ):
             names.add("respond_to_offer")
         if any(parcel.shares.get(me.id) for parcel in observation.land.mine) or (
@@ -106,6 +109,7 @@ def selected_tool_names(observation: Observation) -> set[str]:
             observation.my_offers
             or observation.my_information_offers
             or observation.my_share_offers
+            or observation.my_joint_purchases
         ):
             names.add("withdraw_offer")
         if observation.my_contract_proposals:
@@ -145,8 +149,10 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
 
     names.update(("move_to", "place_order"))
     square = plot_at(world, me.position)
-    if square.owner_id is None and me.coins >= square.price:
-        names.add("buy_parcel")
+    if square.owner_id is None:
+        names.add("joint_buy_parcel")
+        if me.coins >= square.price:
+            names.add("buy_parcel")
     if any(resident.id != me.id and not resident.left for resident in world.residents):
         names.update(("offer_to_buy", "offer_to_sell", "offer_information", "propose_contract"))
     if any(parcel.held_by(me.id) for parcel in world.parcels):

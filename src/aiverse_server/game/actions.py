@@ -49,7 +49,8 @@ from ..economy.exchange import (
     cancel_order,
     place_order,
 )
-from ..economy.land import LandError, LandErrorCode, buy_parcel
+from ..economy.joint_purchase import JointPurchase
+from ..economy.land import LandError, LandErrorCode, buy_parcel, plot_at
 from ..economy.shares import ShareOffer, SharesError, SharesErrorCode
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
@@ -237,6 +238,20 @@ class BuyParcel:
 
 
 @dataclass(frozen=True)
+class OfferJointPurchase:
+    """Propose to `partner_id` buying the parcel the resident stands in together, see
+    `joint_purchase.py`: the partner pays `partner_pays` coins of the price and gets
+    `partner_shares` of the parcel's shares, the resident pays the rest, which is set aside at
+    once, and keeps the other shares and the running of the parcel. The parcel is bought when
+    the partner accepts."""
+
+    resident_id: str
+    partner_id: str
+    partner_pays: int
+    partner_shares: int
+
+
+@dataclass(frozen=True)
 class BuyNode:
     """Subscribe to a node of `kind` for `seconds`, paying the system, from anywhere, see
     `compute.py`."""
@@ -325,6 +340,7 @@ Action = (
     | CancelContract
     | LeaveGame
     | BuyParcel
+    | OfferJointPurchase
     | BuyNode
     | BuildAd
     | MakeContent
@@ -395,6 +411,8 @@ def _carry_out(world: World, action: Action) -> World:
                 return buy_parcel(world, action.resident_id)
             except (LandError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
+        case OfferJointPurchase():
+            return _offer_joint_purchase(world, action)
         case BuyNode():
             try:
                 return buy_node(world, action.resident_id, action.kind, action.seconds)
@@ -455,9 +473,20 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
         TradeError,
         ContractError,
         SharesError,
+        LandError,
         InformationError,
         NoteError,
     ) as error:
+        raise ActionRejected(error.code, error.message) from error
+
+
+def _offer_joint_purchase(world: World, action: OfferJointPurchase) -> World:
+    here = next(r.position for r in world.residents if r.id == action.resident_id)
+    square = plot_at(world, here)
+    payload = JointPurchase(square.col, square.row, action.partner_pays, action.partner_shares)
+    try:
+        return send_event(world, action.resident_id, action.partner_id, payload)[0]
+    except (EventError, InventoryError, SharesError, LandError) as error:
         raise ActionRejected(error.code, error.message) from error
 
 

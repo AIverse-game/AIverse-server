@@ -55,6 +55,7 @@ from ..game.actions import (
     MakeContent,
     MoveTo,
     OfferInformation,
+    OfferJointPurchase,
     OfferShares,
     OfferToBuy,
     OfferToSell,
@@ -93,6 +94,18 @@ class MoveToArgs(_Args):
 
 class BuyParcelArgs(_Args):
     pass
+
+
+class JointBuyParcelArgs(_Args):
+    partner_id: str = Field(description="Resident id you buy the parcel with.")
+    partner_pays: StrictInt = Field(
+        description="Coins the partner pays towards the parcel's price, from 0 up to the price; "
+        "you pay the rest, which is set aside now."
+    )
+    partner_shares: StrictInt = Field(
+        description=f"Shares of the parcel's {PARCEL_SHARES} the partner gets, 1 to "
+        f"{PARCEL_SHARES - 1}; you keep the others."
+    )
 
 
 class BuyNodeArgs(_Args):
@@ -207,16 +220,17 @@ class CancelOrderArgs(_Args):
 
 class RespondToOfferArgs(_Args):
     event_id: StrictInt = Field(
-        description="event_id of an offer in offers_to_me, information_offers_to_me or "
-        "share_offers_to_me, or a proposal in contract_proposals_to_me."
+        description="event_id of an offer in offers_to_me, information_offers_to_me, "
+        "share_offers_to_me or joint_purchases_to_me, or a proposal in "
+        "contract_proposals_to_me."
     )
     accept: StrictBool = Field(description="true to accept, false to reject.")
 
 
 class WithdrawOfferArgs(_Args):
     event_id: StrictInt = Field(
-        description="event_id of an offer in my_offers, my_information_offers or "
-        "my_share_offers, or a proposal in my_contract_proposals."
+        description="event_id of an offer in my_offers, my_information_offers, "
+        "my_share_offers or my_joint_purchases, or a proposal in my_contract_proposals."
     )
 
 
@@ -356,6 +370,16 @@ TOOLS = (
         BuyParcelArgs,
     ),
     ToolSpec(
+        "joint_buy_parcel",
+        "Propose to another resident buying the parcel you stand in together, when you cannot "
+        "or would rather not pay it all. They pay partner_pays of its price and get "
+        "partner_shares of its shares, which split its income; you pay the rest, set aside "
+        "until they answer, and keep the other shares. The parcel is bought when they accept; "
+        "if someone buys it first, accepting fails and you should withdraw. You alone build on "
+        "it and put content in it, however the shares are split.",
+        JointBuyParcelArgs,
+    ),
+    ToolSpec(
         "buy_node",
         "Subscribe to a compute node for a stretch of time, from anywhere, even while walking. "
         "A generative node builds ad slots (build_ad), a render node makes content "
@@ -433,8 +457,8 @@ TOOLS = (
     ),
     ToolSpec(
         "respond_to_offer",
-        "Accept or reject an offer (items, information or parcel shares) or contract proposal "
-        "sent to you.",
+        "Accept or reject an offer (items, information, parcel shares or a joint purchase of "
+        "land) or contract proposal sent to you.",
         RespondToOfferArgs,
     ),
     ToolSpec(
@@ -633,6 +657,8 @@ class ResidentTools:
                 act(BuyParcel(me))
                 parcel = self.game.world.parcels[-1]
                 return f"bought parcel {parcel.id}"
+            case JointBuyParcelArgs():
+                act(OfferJointPurchase(me, args.partner_id, args.partner_pays, args.partner_shares))
             case BuyNodeArgs():
                 act(BuyNode(me, args.kind, args.seconds))
                 node = self.game.world.compute.nodes[-1]

@@ -23,6 +23,7 @@ from ..core.world import Notice, NoticeLog, World
 from ..economy.compute import cancel_compute
 from ..economy.contracts import contract_coins, end_contracts
 from ..economy.exchange import cancel_orders
+from ..economy.joint_purchase import reserved_purchase_coins
 from ..economy.trade import reserved_coins
 from ..residents.walking import stop_walking
 
@@ -109,12 +110,13 @@ def end_game(world: World) -> World:
 
 
 def total_coins(world: World, resident_id: str) -> int:
-    """Spendable coins plus those set aside by pending offers, contracts and buy orders: what
-    the ranking counts."""
+    """Spendable coins plus those set aside by pending offers, joint purchases, contracts and buy
+    orders: what the ranking counts."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
     return (
         resident.coins
         + reserved_coins(world, resident_id)
+        + reserved_purchase_coins(world, resident_id)
         + contract_coins(world, resident_id)
         + order_coins(world.orders, resident_id)
     )

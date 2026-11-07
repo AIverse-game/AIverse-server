@@ -100,6 +100,9 @@ a parcel gives you all of them. offer_shares hands some to another resident for 
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
 Only the buyer of a parcel builds on it and puts content in it, whoever holds its shares. Land
 stakes lists parcels of others you hold shares of.
+- To buy a parcel together, stand in it and joint_buy_parcel to a partner: they pay part of the
+price for a number of shares, you pay the rest at once and keep the other shares and the
+running of it. It is bought when they accept; if someone buys it first, withdraw.
 - Visitors come to the middle of the map: {VISITORS_AT_START:g} at the start, +{VISITORS_AT_START:g}
 per {VISITOR_GROWTH_SECONDS / 60:g} min, thinning to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g}
 units, plus {RESIDENT_FOOTFALL:g} for each resident standing within {RESIDENT_REACH:g}. The
