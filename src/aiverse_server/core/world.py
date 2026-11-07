@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .compute import ComputeBook
 from .events import EventQueue
 from .land import Parcel
 from .ledger import Ledger
@@ -480,7 +481,9 @@ class World:
     orders: OrderBook = OrderBook()
     """The exchange's resting orders and recent fills, see `exchange.py`."""
     parcels: tuple[Parcel, ...] = ()
-    """Land residents bought, see `land.py`."""
+    """Land residents bought and what they built on it, see `land.py` and `compute.py`."""
+    compute: ComputeBook = ComputeBook()
+    """Subscribed nodes and running jobs, see `compute.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -522,6 +525,23 @@ class World:
         for parcel in self.parcels:
             if parcel.owner_id not in ids:
                 raise ValueError(f"parcel {parcel.id} has an unknown owner")
+            if parcel.facility is not None and parcel.facility.built_at > self.time:
+                raise ValueError(f"parcel {parcel.id} has a facility built in the future")
+        owners = {parcel.id: parcel.owner_id for parcel in self.parcels}
+        for node in self.compute.nodes:
+            if node.owner_id not in ids or node.owner_id in left or self.ended:
+                raise ValueError(f"node {node.id} outlives its game or resident")
+            if node.bought_at > self.time:
+                raise ValueError(f"node {node.id} was bought after the current time")
+        for job in self.compute.jobs:
+            if job.owner_id not in ids or job.owner_id in left or self.ended:
+                raise ValueError(f"job {job.id} outlives its game or resident")
+            if owners.get(job.parcel_id) != job.owner_id:
+                raise ValueError(f"job {job.id} works on a parcel that is not its owner's")
+            if job.started_at > self.time:
+                raise ValueError(f"job {job.id} started after the current time")
+            if any(p.id == job.parcel_id and p.facility is not None for p in self.parcels):
+                raise ValueError(f"job {job.id} builds on a parcel that already has a facility")
         for order in self.orders.orders:
             if order.resident_id not in ids or order.resident_id in left or self.ended:
                 raise ValueError(f"order {order.id} outlives its game or resident")

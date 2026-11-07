@@ -2,11 +2,12 @@
 the resident knows of themselves and what is public.
 
 `observe` adds to the perception (`perception.py`) the resident's own coins, items and whether
-they are walking; the land and the exchange; the offers and contract proposals waiting for them
-and those they sent, the contracts they are party to and the last few of theirs that ended; and
-every resident's name, coins and place, which the page shows anyway and which an agent needs to
-whisper or trade. Other residents' positions stay limited to those in sight. Walking times are
-worked out from where the resident stands, so a model need not do the arithmetic. `to_json`
+they are walking; their compute, nodes and jobs; the land and the exchange; the offers and
+contract proposals waiting for them and those they sent, the contracts they are party to and
+the last few of theirs that ended; and every resident's name, coins and place, which the page
+shows anyway and which an agent needs to whisper or trade. Other residents' positions stay
+limited to those in sight. Walking times are worked out from where the resident stands, so a
+model need not do the arithmetic. `to_json`
 turns an observation into compact JSON for a model.
 """
 
@@ -17,9 +18,18 @@ import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
+from ..core.compute import Job
 from ..core.events import Event, pending_for, pending_from
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
+from ..economy.compute import (
+    AD_WORKLOAD,
+    MAX_NODES,
+    NODE_SECONDS,
+    SUBSCRIPTION_PRICE,
+    job_seconds,
+    on_demand_cost,
+)
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
 from ..economy.footfall import footfall, visitors
@@ -136,6 +146,10 @@ class ParcelView:
     map."""
     distance: float
     walk_seconds: float
+    facility: str | None = None
+    """The kind of facility built on it, such as `ad`; None when it is bare."""
+    building_ends_in: float | None = None
+    """Seconds until the resident's own job on it finishes; None without one."""
 
 
 @dataclass(frozen=True)
@@ -145,6 +159,63 @@ class MyParcelView:
     footfall: float
     distance: float
     walk_seconds: float
+    facility: str | None = None
+    """The kind of facility built on it, such as `ad`; None when it is bare."""
+    building_ends_in: float | None = None
+    """Seconds until the job building on it finishes; None without one."""
+
+
+@dataclass(frozen=True)
+class JobView:
+    """Work running on one of the resident's sources of compute."""
+
+    job_id: int
+    kind: str
+    parcel: str
+    source: str
+    """`self`, `on_demand` or `subscription`."""
+    node_id: int | None
+    ends_in: float
+
+
+@dataclass(frozen=True)
+class NodeView:
+    """A node the resident subscribed to."""
+
+    node_id: int
+    kind: str
+    expires_in: float
+    working_on: int | None
+    """The job it is working on; None when idle."""
+    free_for: float
+    """Seconds until it is free to take a new job: 0 when idle."""
+
+
+@dataclass(frozen=True)
+class AdOption:
+    """What an ad slot takes on one source of compute."""
+
+    source: str
+    seconds: float
+    coins: int
+    """Paid now; 0 for your own compute, and for a subscribed node already paid for."""
+
+
+@dataclass(frozen=True)
+class ComputeView:
+    """The resident's own compute, nodes and jobs, and what building costs."""
+
+    own_job: JobView | None
+    """The job on the resident's own compute; None when it is free."""
+    my_nodes: tuple[NodeView, ...]
+    my_jobs: tuple[JobView, ...]
+    """Every job of the resident's, on any source, soonest first."""
+    ad_slot: tuple[AdOption, ...]
+    """Time and coins for an ad slot on each source."""
+    node_coins_per_second: int
+    node_seconds: tuple[int, int]
+    """Least and most seconds one subscription lasts."""
+    max_nodes: int
 
 
 @dataclass(frozen=True)
@@ -299,6 +370,7 @@ class Observation:
     remaining_seconds: float
     me: Me
     exchange: ExchangeView
+    compute: ComputeView
     land: LandView
     nearby_residents: tuple[NearbyResident, ...]
     residents: tuple[Standing, ...]
@@ -358,6 +430,7 @@ def observe(
             arrives_in=max(walk.arrives_at - world.time, 0.0) if walk is not None else None,
         ),
         exchange=_exchange_view(world, resident_id),
+        compute=_compute_view(world, resident_id),
         land=_land_view(world, resident_id, here, standing=walk is None),
         nearby_residents=tuple(
             NearbyResident(
@@ -421,6 +494,13 @@ LAND_SHOWN = 5
 
 
 def _land_view(world: World, resident_id: str, here: Position, *, standing: bool) -> LandView:
+    built = {parcel.id: parcel.facility.kind for parcel in world.parcels if parcel.facility}
+    building = {
+        job.parcel_id: max(job.ends_at - world.time, 0.0)
+        for job in world.compute.jobs
+        if job.owner_id == resident_id
+    }
+
     def view(square: Plot) -> ParcelView:
         return ParcelView(
             square.id,
@@ -430,6 +510,8 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             footfall(world, square.centre),
             _distance(here, square.centre),
             walk_seconds(here, square.centre),
+            built.get(square.id),
+            building.get(square.id),
         )
 
     squares = plots(world)
@@ -454,11 +536,61 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
                 footfall(world, square.centre),
                 _distance(here, square.centre),
                 walk_seconds(here, square.centre),
+                built.get(square.id),
+                building.get(square.id),
             )
             for square in mine
         ),
         best_free=tuple(view(square) for square in best),
     )
+
+
+def _compute_view(world: World, resident_id: str) -> ComputeView:
+    book = world.compute
+    now = world.time
+
+    def job_view(job: Job) -> JobView:
+        return JobView(
+            job.id,
+            job.kind,
+            job.parcel_id,
+            job.source,
+            job.node_id,
+            max(job.ends_at - now, 0.0),
+        )
+
+    mine = sorted((job for job in book.jobs if job.owner_id == resident_id), key=_soonest)
+    on_node = {job.node_id: job for job in mine if job.node_id is not None}
+    nodes = tuple(
+        NodeView(
+            node.id,
+            node.kind,
+            max(node.expires_at - now, 0.0),
+            on_node[node.id].id if node.id in on_node else None,
+            max(on_node[node.id].ends_at - now, 0.0) if node.id in on_node else 0.0,
+        )
+        for node in book.nodes
+        if node.owner_id == resident_id
+    )
+    return ComputeView(
+        own_job=next((job_view(job) for job in mine if job.source == "self"), None),
+        my_nodes=nodes,
+        my_jobs=tuple(job_view(job) for job in mine),
+        ad_slot=(
+            AdOption("self", job_seconds(AD_WORKLOAD, "self"), 0),
+            AdOption(
+                "on_demand", job_seconds(AD_WORKLOAD, "on_demand"), on_demand_cost(AD_WORKLOAD)
+            ),
+            AdOption("subscription", job_seconds(AD_WORKLOAD, "subscription"), 0),
+        ),
+        node_coins_per_second=SUBSCRIPTION_PRICE,
+        node_seconds=NODE_SECONDS,
+        max_nodes=MAX_NODES,
+    )
+
+
+def _soonest(job: Job) -> tuple[float, int]:
+    return job.ends_at, job.id
 
 
 def _exchange_view(world: World, resident_id: str) -> ExchangeView:

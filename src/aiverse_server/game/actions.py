@@ -6,7 +6,8 @@ a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
-leaving, speaking and withdrawing orders, for a resident who is busy walking. What a primitive
+leaving, speaking, withdrawing orders and handling compute, for a resident who is busy
+walking. What a primitive
 changes on the map goes into the activity log for others nearby to notice, see
 `perception.py`.
 """
@@ -14,6 +15,7 @@ changes on the map goes into the activity log for others nearby to notice, see
 from dataclasses import dataclass
 from typing import Literal
 
+from ..core.compute import JobSource, NodeKind
 from ..core.events import (
     EventError,
     EventErrorCode,
@@ -25,6 +27,7 @@ from ..core.events import (
 from ..core.inventory import InventoryError, InventoryErrorCode
 from ..core.orders import Side
 from ..core.world import Position, World
+from ..economy.compute import ComputeError, ComputeErrorCode, buy_node, start_build_ad
 from ..economy.contracts import (
     ContractError,
     ContractErrorCode,
@@ -59,6 +62,7 @@ RejectionCode = (
     | ContractErrorCode
     | ExchangeErrorCode
     | LandErrorCode
+    | ComputeErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -207,6 +211,28 @@ class BuyParcel:
 
 
 @dataclass(frozen=True)
+class BuyNode:
+    """Subscribe to a node of `kind` for `seconds`, paying the system, from anywhere, see
+    `compute.py`."""
+
+    resident_id: str
+    kind: NodeKind
+    seconds: int
+
+
+@dataclass(frozen=True)
+class BuildAd:
+    """Start building an ad slot on the resident's own bare parcel `parcel_id` from anywhere,
+    on their own compute, a node hired for the job, or the subscribed node `node_id`, see
+    `compute.py`. The resident need not stay: the ad slot appears when the job ends."""
+
+    resident_id: str
+    parcel_id: str
+    source: JobSource
+    node_id: int | None = None
+
+
+@dataclass(frozen=True)
 class PlaceOrder:
     """Place an order on the exchange from anywhere, see `exchange.py`: it trades at once with
     the best orders on the other side and rests for `lifetime` seconds with whatever is left,
@@ -252,6 +278,8 @@ Action = (
     | CancelContract
     | LeaveGame
     | BuyParcel
+    | BuyNode
+    | BuildAd
     | PlaceOrder
     | CancelOrder
     | Say
@@ -261,7 +289,7 @@ Action = (
 def perform(world: World, action: Action) -> World:
     try:
         check_can_act(world, action.resident_id)
-        if not isinstance(action, LeaveGame | Say | CancelOrder):
+        if not isinstance(action, LeaveGame | Say | CancelOrder | BuyNode | BuildAd):
             check_not_busy(world, action.resident_id)
     except GameError as error:
         raise ActionRejected(error.code, error.message) from error
@@ -308,6 +336,18 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return buy_parcel(world, action.resident_id)
             except (LandError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuyNode():
+            try:
+                return buy_node(world, action.resident_id, action.kind, action.seconds)
+            except (ComputeError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuildAd():
+            try:
+                return start_build_ad(
+                    world, action.resident_id, action.parcel_id, action.source, action.node_id
+                )
+            except (ComputeError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case PlaceOrder():
             try:

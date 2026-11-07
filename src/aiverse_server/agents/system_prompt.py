@@ -5,6 +5,17 @@ the observation carries the current state and prices.
 """
 
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
+from ..economy.compute import (
+    AD_WORKLOAD,
+    MAX_NODES,
+    NODE_RATE,
+    NODE_SECONDS,
+    ON_DEMAND_PRICE,
+    SELF_RATE,
+    SUBSCRIPTION_PRICE,
+    job_seconds,
+    on_demand_cost,
+)
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
 from ..economy.footfall import (
@@ -32,22 +43,35 @@ def system_prompt(
     final_notice_seconds: float = ENDING_NOTICE_SECONDS,
 ) -> str:
     low, high = LIFETIME_RANGE
+    lo, hi = NODE_SECONDS
+    own_s = job_seconds(AD_WORKLOAD, "self")
+    hired_s = job_seconds(AD_WORKLOAD, "on_demand")
+    hired_coins = on_demand_cost(AD_WORKLOAD)
     grid = int(MAP_SIZE // PARCEL_SIZE)
     prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
 at game end. Only coins count; land and items are worth nothing at the end.
 
 The state of the world
-- Right now nothing in the world pays coins. There are no facilities yet, no items to make
-or trade, and visitors pay nobody. Coins only change hands between residents, or leave you
-when you buy land. Spend them only on something that can plausibly bring more back; spending
-nothing is allowed.
+- Right now nothing in the world pays coins. Ad slots exist but earn nothing yet, there are no
+items to make or trade, and visitors pay nobody. Coins only change hands between residents, or
+leave you when you buy land or compute. Spend them only on something that can plausibly bring
+more back; spending nothing is allowed.
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Walking is a
 straight line at {WALK_SPEED:g} units/s and costs time only. You are busy until you arrive and
-cannot act except to speak, cancel orders or leave.
+cannot act except to speak, cancel orders, handle compute or leave.
 - The map is a {grid} x {grid} grid of {PARCEL_SIZE:g}-unit parcels, id L<col>-<row>, col =
 floor(x / {PARCEL_SIZE:g}). Standing in a free parcel, buy_parcel buys it from the town for
 {LAND_PRICE_EDGE}-{LAND_PRICE_CENTRE} coins, dearer nearer the middle of the map. It stays
 yours but earns nothing yet.
+- Compute is a speed: a job of W workload takes W / rate seconds. Your own compute is free,
+{SELF_RATE:g} workload/s, one job at a time. A node does {NODE_RATE:g}/s, one job at a time.
+Hire one for a single job at {ON_DEMAND_PRICE} coins per workload, or subscribe with buy_node for
+{lo}-{hi}s at {SUBSCRIPTION_PRICE} coins/s, busy or idle, never refunded. You may hold
+{MAX_NODES} nodes, and a job only starts if it ends before its node does.
+- build_ad starts an ad slot on a parcel of yours from anywhere. It is {AD_WORKLOAD:g} workload:
+{own_s:g}s on your own compute, {hired_s:g}s and {hired_coins} coins on a hired node. You need not
+stay: walk, talk and trade meanwhile, and it appears when the job ends. The compute
+observation lists your jobs and nodes.
 - Visitors come to the middle of the map: {VISITORS_AT_START:g} at the start, +{VISITORS_AT_START:g}
 per {VISITOR_GROWTH_SECONDS / 60:g} min, thinning to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g}
 units, plus {RESIDENT_FOOTFALL:g} for each resident standing within {RESIDENT_REACH:g}. The

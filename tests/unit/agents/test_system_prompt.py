@@ -1,6 +1,7 @@
 from aiverse_server.agents.system_prompt import system_prompt
 from aiverse_server.agents.tools import TOOLS
 from aiverse_server.core.world import NOTE_LENGTH_LIMIT
+from aiverse_server.economy.compute import AD_WORKLOAD, ON_DEMAND_PRICE, SUBSCRIPTION_PRICE
 
 
 def test_the_base_prompt_stays_compact() -> None:
@@ -40,11 +41,20 @@ def test_the_prompt_says_nothing_pays_coins_yet() -> None:
     assert "buy_parcel" in prompt
 
 
+def test_the_prompt_explains_compute_with_the_game_constants() -> None:
+    prompt = system_prompt("甲", "a")
+
+    assert f"{ON_DEMAND_PRICE} coins per workload" in prompt
+    assert f"{SUBSCRIPTION_PRICE} coins/s" in prompt
+    assert f"{AD_WORKLOAD:g} workload" in prompt
+    assert "Ad slots exist but earn nothing yet" in prompt
+    assert "build_ad" in prompt and "buy_node" in prompt
+
+
 def test_the_prompt_names_none_of_the_removed_mechanics() -> None:
     prompt = system_prompt("甲", "a").lower()
 
     removed = (
-        "compute",
         "spring",
         "harvest",
         "collector",
@@ -56,7 +66,6 @@ def test_the_prompt_names_none_of_the_removed_mechanics() -> None:
         "gather",
         "hosting",
         "meeting room",
-        "ad slot",
     )
     assert not [word for word in removed if word in prompt]
 

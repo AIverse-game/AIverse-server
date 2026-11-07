@@ -9,9 +9,11 @@ from aiverse_server.agents import observation as observation_module
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord, record_to_json
 from aiverse_server.agents.tools import ResidentTools
+from aiverse_server.core.land import Parcel
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy import exchange
 from aiverse_server.game.actions import (
+    BuildAd,
     CancelContract,
     LeaveGame,
     MoveTo,
@@ -228,6 +230,64 @@ def test_the_loop_wakes_for_an_offer_when_free() -> None:
         await _until(lambda: len(brain.seen) == 2)
 
         assert len(brain.seen[1].offers_to_me) == 1
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_when_a_compute_job_finishes_even_while_walking() -> None:
+    async def scenario() -> None:
+        # The ad slot is ready at 12 s, while the 56 unit walk, 22 s long, is still going.
+        game, clock = make_game(replace(WORLD, parcels=(Parcel(5, 5, "a"),)))
+        game.act(BuildAd("a", "L5-5", "on_demand"))
+        game.act(MoveTo("a", Position(90, 90)))
+        brain = Recorder()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        clock.now = 12.0
+        game.tick()
+        await _until(lambda: len(brain.seen) == 2)
+
+        assert game.world.residents[0].walking is not None
+        assert brain.seen[1].land.mine[0].facility == "ad"
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_an_idle_resident_when_a_compute_job_finishes() -> None:
+    async def scenario() -> None:
+        game, clock = make_game(replace(WORLD, parcels=(Parcel(5, 5, "a"),)))
+        game.act(BuildAd("a", "L5-5", "on_demand"))
+        brain = Recorder()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        clock.now = 12.0
+        game.tick()
+        await _until(lambda: len(brain.seen) == 2)
+
+        assert brain.seen[0].compute.my_jobs[0].ends_in == 12.0
+        assert brain.seen[1].compute.my_jobs == ()
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_does_not_wake_for_a_job_that_is_still_running() -> None:
+    async def scenario() -> None:
+        game, clock = make_game(replace(WORLD, parcels=(Parcel(5, 5, "a"),)))
+        game.act(BuildAd("a", "L5-5", "self"))
+        brain = Recorder()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        clock.now = 12.0
+        game.tick()
+        await asyncio.sleep(0.05)
+
+        assert len(brain.seen) == 1
         task.cancel()
 
     asyncio.run(scenario())

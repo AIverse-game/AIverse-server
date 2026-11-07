@@ -9,6 +9,8 @@ happens, see decision 0003 in the client repository:
   own doing, such as the supplier's last delivery or the contract lapsing, or someone else's
   order fills one of theirs resting on the exchange;
 - someone says something they hear, even while busy, since they can still answer;
+- one of their compute jobs finishes and leaves a facility on their land, even while busy, since
+  compute works from anywhere and a paid-for node should not sit idle;
 - while free, `Pace.idle` passes with nothing of the above, so a brain that chose to wait
   is asked again.
 
@@ -189,6 +191,8 @@ class _Attention:
     """Sequence number of the latest notice the server announced to everyone."""
     filled: int = 0
     """Sequence number of the latest fill of one of the resident's resting orders."""
+    built: int = 0
+    """Facilities standing on the resident's parcels: one more means a job of theirs finished."""
 
 
 class AgentRunner:
@@ -326,7 +330,12 @@ class AgentRunner:
             now = loop.time()
             current = self._attention()
             if now >= earliest:
-                if current.heard > seen.heard or current.announced > seen.announced:
+                # Compute works while walking, so a finished job is worth acting on at once.
+                if (
+                    current.heard > seen.heard
+                    or current.announced > seen.announced
+                    or current.built > seen.built
+                ):
                     return
                 if current.free and (
                     # Only the brain failing: a round whose record failed got its answer.
@@ -368,6 +377,9 @@ class AgentRunner:
                 default=0,
             ),
             announced=world.notices.next_seq - 1,
+            built=sum(
+                parcel.owner_id == me.id and parcel.facility is not None for parcel in world.parcels
+            ),
             filled=max(
                 (
                     fill.seq

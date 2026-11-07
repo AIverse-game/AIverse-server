@@ -20,6 +20,7 @@ from ..core.events import Event, withdraw_event
 from ..core.inventory import clear_items
 from ..core.orders import order_coins
 from ..core.world import Notice, NoticeLog, World
+from ..economy.compute import cancel_compute
 from ..economy.contracts import contract_coins, end_contracts
 from ..economy.exchange import cancel_orders
 from ..economy.trade import reserved_coins
@@ -64,12 +65,13 @@ def check_not_busy(world: World, resident_id: str) -> None:
 
 
 def leave_game(world: World, resident_id: str) -> World:
-    """Take the resident out of the game: a walk stops where they are, their orders are
-    withdrawn, their pending events are declined and their contracts end, which hands back
-    whatever orders, offers and contracts set aside, a supplier's deposit going to the buyer,
-    then their items are cleared. Their coins stay."""
+    """Take the resident out of the game: a walk stops where they are, their jobs and nodes are
+    dropped, their orders are withdrawn, their pending events are declined and their contracts
+    end, which hands back whatever orders, offers and contracts set aside, a supplier's deposit
+    going to the buyer, then their items are cleared. Their coins stay."""
     check_can_act(world, resident_id)
     world = stop_walking(world, resident_id)
+    world = cancel_compute(world, resident_id)
     world = cancel_orders(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
     world = end_contracts(
@@ -95,14 +97,14 @@ def announce(world: World, text: str) -> World:
 
 
 def end_game(world: World) -> World:
-    """Stop every walk, decline every pending event, withdraw every order, end every contract
-    and freeze the world; ending twice changes nothing."""
+    """Stop every walk and job, decline every pending event, withdraw every order, end every
+    contract and freeze the world; ending twice changes nothing."""
     if world.ended:
         return world
     for resident in world.residents:
         world = stop_walking(world, resident.id)
     world = end_contracts(_settle(world, lambda event: True), lambda contract: True, "game_ended")
-    world = cancel_orders(world)
+    world = cancel_compute(cancel_orders(world))
     return replace(world, ended=True)
 
 

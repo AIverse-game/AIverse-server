@@ -27,7 +27,7 @@ def me(game: Game, resident_id: str) -> Resident:
     return next(r for r in game.world.residents if r.id == resident_id)
 
 
-def test_the_scripted_bots_tour_the_map_and_each_buys_at_most_one_parcel() -> None:
+def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_build_an_ad_slot_on_it() -> None:
     """Plays a fast-forwarded game: each round every bot acts, then the clock jumps to the
     next walk that ends."""
 
@@ -46,6 +46,9 @@ def test_the_scripted_bots_tour_the_map_and_each_buys_at_most_one_parcel() -> No
         assert all(not resident.left for resident in game.world.residents)
         assert owners
         assert len(set(owners)) == len(owners)
+        # Every parcel got its ad slot from its owner's own compute, which costs nothing.
+        assert all(parcel.facility is not None for parcel in game.world.parcels)
+        assert game.world.compute.jobs == ()
         # Nothing pays coins yet, so the only change is what was paid for land.
         spent = sum(STARTING_COINS - resident.coins for resident in game.world.residents)
         assert spent > 0

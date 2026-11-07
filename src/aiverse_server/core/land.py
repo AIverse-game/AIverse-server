@@ -1,6 +1,26 @@
-"""Immutable land stored in the world: parcels residents own; rules live in economy/land.py."""
+"""Immutable land stored in the world: parcels residents own and the facilities on them; rules
+live in economy/land.py and economy/compute.py."""
 
+import math
 from dataclasses import dataclass
+from typing import Literal
+
+FacilityKind = Literal["ad"]
+"""What a facility is. Only the ad slot exists so far; other kinds come with the designs that
+need them, see the client repository's docs/design/facilities.md."""
+
+
+@dataclass(frozen=True)
+class Facility:
+    kind: FacilityKind
+    built_at: float
+    """Game time it was finished, see `World.time`."""
+
+    def __post_init__(self) -> None:
+        if self.kind != "ad":
+            raise ValueError(f"unknown facility kind {self.kind!r}")
+        if not math.isfinite(self.built_at) or self.built_at < 0:
+            raise ValueError(f"facility built at {self.built_at!r}")
 
 
 @dataclass(frozen=True)
@@ -11,6 +31,7 @@ class Parcel:
     col: int
     row: int
     owner_id: str
+    facility: Facility | None = None
 
     @property
     def id(self) -> str:

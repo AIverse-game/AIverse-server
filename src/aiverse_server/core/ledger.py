@@ -29,6 +29,7 @@ LEDGER_LIMIT = 20_000
 eight residents makes several thousand."""
 
 Channel = Literal[
+    "compute",
     "offer",
     "contract_payment",
     "contract_forfeit",
@@ -37,9 +38,10 @@ Channel = Literal[
     "land",
     "visitors",
 ]
-"""What the coins paid for: an accepted trade offer, a delivery under a contract, a supplier's
-deposit forfeited to the buyer, information sold, a fill on the exchange, a parcel of land
-bought from the town, or visitors paying a facility's owner."""
+"""What the coins paid for: compute bought from the system, an accepted trade offer, a
+delivery under a contract, a supplier's deposit forfeited to the buyer, information sold, a
+fill on the exchange, a parcel of land bought from the town, or visitors paying a facility's
+owner."""
 
 
 @dataclass(frozen=True)

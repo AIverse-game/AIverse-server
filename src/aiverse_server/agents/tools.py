@@ -25,12 +25,26 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
+from ..core.compute import JobSource
 from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
+from ..economy.compute import (
+    AD_WORKLOAD,
+    MAX_NODES,
+    NODE_RATE,
+    NODE_SECONDS,
+    ON_DEMAND_PRICE,
+    SELF_RATE,
+    SUBSCRIPTION_PRICE,
+    job_seconds,
+    on_demand_cost,
+)
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
 from ..game.actions import (
     Action,
     ActionRejected,
+    BuildAd,
+    BuyNode,
     BuyParcel,
     CancelContract,
     CancelOrder,
@@ -73,6 +87,26 @@ class MoveToArgs(_Args):
 
 class BuyParcelArgs(_Args):
     pass
+
+
+class BuyNodeArgs(_Args):
+    seconds: StrictInt = Field(
+        description=f"How long the subscription lasts, {NODE_SECONDS[0]} to {NODE_SECONDS[1]} "
+        f"seconds, paid now at {SUBSCRIPTION_PRICE} coins per second."
+    )
+
+
+class BuildAdArgs(_Args):
+    parcel_id: str = Field(description="id of one of your parcels with no facility and no job.")
+    source: Literal["self", "on_demand", "subscription"] = Field(
+        description="self: your own compute, free; on_demand: a node hired for this job, "
+        "paid now; subscription: one of your nodes, named in node_id."
+    )
+    node_id: StrictInt | None = Field(
+        default=None,
+        description="id of one of your idle nodes in compute.my_nodes; only with source "
+        "subscription.",
+    )
 
 
 class SayArgs(_Args):
@@ -281,6 +315,26 @@ TOOLS = (
         BuyParcelArgs,
     ),
     ToolSpec(
+        "buy_node",
+        "Subscribe to a generative compute node for a stretch of time, from anywhere, even "
+        f"while walking. It is yours until it runs out and does one job at a time at "
+        f"{NODE_RATE:g} workload per second, {NODE_RATE / SELF_RATE:g} times your own compute; "
+        f"you pay {SUBSCRIPTION_PRICE} coins per second whether it works or not, and nothing is "
+        f"paid back. You may hold {MAX_NODES} nodes at once, and each works on its own job.",
+        BuyNodeArgs,
+    ),
+    ToolSpec(
+        "build_ad",
+        "Start building an ad slot on one of your parcels, from anywhere, even while walking; "
+        "you need not stay, it appears when the job ends. It takes "
+        f"{AD_WORKLOAD:g} workload: {job_seconds(AD_WORKLOAD, 'self'):g} s on your own compute "
+        f"(free, one job at a time), {job_seconds(AD_WORKLOAD, 'on_demand'):g} s on a node hired "
+        f"for it ({ON_DEMAND_PRICE} coins per workload, {on_demand_cost(AD_WORKLOAD)} coins), "
+        "or on one of your subscribed nodes if the job ends before the node does. "
+        "Ad slots earn no coins yet.",
+        BuildAdArgs,
+    ),
+    ToolSpec(
         "say",
         "Say something aloud to residents nearby, or whisper to one resident anywhere. Free, "
         "and allowed while walking.",
@@ -418,6 +472,15 @@ class ResidentTools:
     def buy_parcel(self) -> ToolResult:
         return self.call("buy_parcel", {})
 
+    def buy_node(self, seconds: int) -> ToolResult:
+        return self.call("buy_node", {"seconds": seconds})
+
+    def build_ad(self, parcel_id: str, source: JobSource, node_id: int | None = None) -> ToolResult:
+        arguments: dict[str, Any] = {"parcel_id": parcel_id, "source": source}
+        if node_id is not None:
+            arguments["node_id"] = node_id
+        return self.call("build_ad", arguments)
+
     def place_order(
         self, side: str, item: str, quantity: int, price: int, expires_in: float = DEFAULT_LIFETIME
     ) -> ToolResult:
@@ -489,6 +552,15 @@ class ResidentTools:
                 act(BuyParcel(me))
                 parcel = self.game.world.parcels[-1]
                 return f"bought parcel {parcel.id}"
+            case BuyNodeArgs():
+                act(BuyNode(me, "generative", args.seconds))
+                node = self.game.world.compute.nodes[-1]
+                return f"subscribed to node {node.id} for {args.seconds} s"
+            case BuildAdArgs():
+                act(BuildAd(me, args.parcel_id, args.source, args.node_id))
+                job = self.game.world.compute.jobs[-1]
+                seconds = job.ends_at - job.started_at
+                return f"job {job.id}: ad slot on {job.parcel_id} ready in {seconds:g} s"
             case SayArgs():
                 act(Say(me, args.text, args.to))
             case OfferToBuyArgs():

@@ -1,8 +1,8 @@
 """A brain with a fixed plan, as a baseline and a stand-in opponent that costs nothing.
 
 It walks to the next spot in a fixed tour, says hello there and, the first time it stands in a
-free parcel it can afford, buys it. Then it walks on, and once the tour is done it waits. It
-never trades.
+free parcel it can afford, buys it and starts an ad slot there on its own compute. Then it walks
+on, and once the tour is done it waits. It never trades.
 """
 
 from ..core.world import Position
@@ -31,7 +31,8 @@ class ScriptedBrain:
         if not self._bought and here is not None and here.owner is None and here.price <= me.coins:
             self._bought = tools.buy_parcel().ok
             if self._bought:
-                return f"bought {here.id}"
+                tools.build_ad(here.id, "self")
+                return f"bought {here.id} and started an ad slot"
         if self._tour:
             x, y = self._tour.pop(0)
             if Position(x, y) != me.position:
