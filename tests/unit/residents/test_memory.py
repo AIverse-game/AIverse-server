@@ -7,18 +7,15 @@ import pytest
 from aiverse_server.core.world import (
     NOTE_LENGTH_LIMIT,
     NOTE_LIMITS,
-    Inventory,
     Memory,
     Note,
     NoteTerm,
     Position,
     Resident,
-    Spring,
     World,
     WorldMap,
 )
-from aiverse_server.economy.compute import COMPUTE
-from aiverse_server.game.actions import Harvest, LeaveGame, MoveTo, perform
+from aiverse_server.game.actions import LeaveGame, MoveTo, perform
 from aiverse_server.game.lifecycle import GameError, end_game
 from aiverse_server.residents.memory import SHORT_TERM_SECONDS, NoteError, forget, remember
 from aiverse_server.residents.perception import begin_turn
@@ -31,14 +28,12 @@ def resident(resident_id: str, x: float, y: float) -> Resident:
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((COMPUTE, 1000), ("v1", 1))),
     )
 
 
 WORLD = World(
     map=WorldMap(size=100),
     residents=(resident("a", 10, 10), resident("b", 80, 80)),
-    springs=(Spring("near", Position(12, 10), radius=4, reserve=100),),
     time=5.0,
 )
 
@@ -48,12 +43,12 @@ def at(world: World, time: float) -> World:
 
 
 def test_the_resident_chooses_how_long_each_note_lasts() -> None:
-    world, plan = remember(WORLD, "a", "  sell compute to b above 3 coins  ", "long_term")
+    world, plan = remember(WORLD, "a", "  sell posters to b above 3 coins  ", "long_term")
     world, sight = remember(world, "a", "b is heading north", "short_term")
 
     _, seen = begin_turn(world, "a")
 
-    assert plan == Note(1, "sell compute to b above 3 coins", 5.0, None)
+    assert plan == Note(1, "sell posters to b above 3 coins", 5.0, None)
     assert sight == Note(2, "b is heading north", 5.0, 5.0 + SHORT_TERM_SECONDS)
     assert seen.long_term == (plan,)
     assert seen.short_term == (sight,)
@@ -86,14 +81,13 @@ def test_notes_come_back_oldest_first_with_ids_shared_across_terms() -> None:
     assert [(note.id, note.text) for note in seen.long_term] == [(2, "2")]
 
 
-def test_looking_around_keeps_the_notes_and_remembering_keeps_the_springs() -> None:
+def test_looking_around_keeps_the_notes() -> None:
     world, note = remember(WORLD, "a", "plan", "long_term")
     world, _ = begin_turn(world, "a")
     world, _ = begin_turn(world, "a")
     world, _ = remember(world, "a", "more", "short_term")
     memory = world.residents[0].memory
     assert memory.long_term == (note,)
-    assert [sighting.spring_id for sighting in memory.known_springs] == ["near"]
     assert memory.activity_seen == world.activity.next_seq - 1
 
 
@@ -223,16 +217,10 @@ def test_only_an_integer_id_forgets_a_note(note_id: Any) -> None:
     assert error.value.code == "unknown_note"
 
 
-@pytest.mark.parametrize(
-    ("busy", "resident_id"),
-    [
-        (perform(WORLD, MoveTo("b", Position(80, 20))), "b"),
-        (perform(WORLD, Harvest("a", "near")), "a"),
-    ],
-    ids=["walking", "harvesting"],
-)
-def test_busy_residents_can_still_keep_notes(busy: World, resident_id: str) -> None:
-    _, note = remember(busy, resident_id, "busy", "long_term")
+def test_a_walker_can_still_keep_notes() -> None:
+    busy = perform(WORLD, MoveTo("b", Position(80, 20)))
+
+    _, note = remember(busy, "b", "busy", "long_term")
 
     assert note.text == "busy"
 

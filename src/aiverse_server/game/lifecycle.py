@@ -6,8 +6,7 @@ it runs out, `end_game` settles every pending event and ends every contract, ret
 offers and contracts set aside, and from then on nothing changes. Residents may leave
 earlier, of their own accord or because the server makes them; the game goes on without
 them. They stay in the world and in the ranking with the coins they had, but lose their
-items and can no longer act or trade. Running out of compute, the residents' stamina, takes
-them out the same way, see `knock_out_exhausted` and `knock_out_arrivals`.
+items and can no longer act or trade.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -21,13 +20,8 @@ from ..core.events import Event, withdraw_event
 from ..core.inventory import clear_items
 from ..core.orders import order_coins
 from ..core.world import Notice, NoticeLog, World
-from ..economy.collectors import collector_coins, release_collectors
-from ..economy.compute import compute_total
 from ..economy.contracts import contract_coins, end_contracts
 from ..economy.exchange import cancel_orders
-from ..economy.gathering import cancel_gathering
-from ..economy.harvesting import cancel_harvesting
-from ..economy.studio import cancel_writing
 from ..economy.trade import reserved_coins
 from ..residents.walking import stop_walking
 
@@ -40,7 +34,7 @@ ENDING_NOTICE_SECONDS = 60.0
 EARLY_ENDING_NOTICE_SECONDS = 180.0
 """Earlier warning so a slow model can still act before the final minute."""
 
-GameErrorCode = Literal["unknown_resident", "resident_left", "game_over"]
+GameErrorCode = Literal["unknown_resident", "resident_left", "game_over", "busy"]
 
 
 class GameError(Exception):
@@ -62,17 +56,19 @@ def check_can_act(world: World, resident_id: str) -> None:
     raise GameError("unknown_resident", f"no resident with id {resident_id!r}")
 
 
+def check_not_busy(world: World, resident_id: str) -> None:
+    """Refuse a resident who is in the middle of a walk."""
+    resident = next(r for r in world.residents if r.id == resident_id)
+    if resident.walking is not None:
+        raise GameError("busy", f"resident {resident_id!r} is walking and cannot do that now")
+
+
 def leave_game(world: World, resident_id: str) -> World:
-    """Take the resident out of the game: a harvesting or gathering job stops and what it took
-    goes back to the spring or mine, a writing job is dropped, a walk stops where they are,
-    their orders are withdrawn, their pending events are declined and their contracts end,
-    which hands back whatever orders, offers and contracts set aside, a supplier's deposit
-    going to the buyer, then their items are cleared. Their coins stay."""
+    """Take the resident out of the game: a walk stops where they are, their orders are
+    withdrawn, their pending events are declined and their contracts end, which hands back
+    whatever orders, offers and contracts set aside, a supplier's deposit going to the buyer,
+    then their items are cleared. Their coins stay."""
     check_can_act(world, resident_id)
-    world = cancel_harvesting(world, resident_id)
-    world = cancel_gathering(world, resident_id)
-    world = cancel_writing(world, resident_id)
-    world = release_collectors(world, resident_id)
     world = stop_walking(world, resident_id)
     world = cancel_orders(world, resident_id)
     world = _settle(world, lambda event: resident_id in (event.sender_id, event.recipient_id))
@@ -90,43 +86,6 @@ def leave_game(world: World, resident_id: str) -> World:
     return replace(world, residents=residents)
 
 
-def knock_out_exhausted(before: World, after: World) -> World:
-    """Take out of the game, as `leave_game` does, every resident still in it who owned
-    compute in `before` and owns none in `after`. Compute set aside in sale offers and sell
-    orders counts, and so does what a running harvesting job has already drawn, since all of
-    it comes back to them. Comparing the two worlds catches whatever spent the last compute: a
-    walk, a sale, or someone buying a sell order out.
-    Residents still walking are left alone: they reach where they paid to go, and
-    `knock_out_arrivals` takes them out there."""
-    already_out = {
-        resident.id for resident in after.residents if resident.left or resident.walking is not None
-    }
-    for resident in before.residents:
-        if resident.id in already_out or _owned_compute(before, resident.id) == 0:
-            continue
-        if _owned_compute(after, resident.id) == 0:
-            after = leave_game(after, resident.id)
-    return after
-
-
-def knock_out_arrivals(before: World, after: World) -> World:
-    """Take out of the game, as `leave_game` does, every resident who was walking in `before`,
-    has arrived in `after` and owns no compute: the walk or a sale on the way spent the last."""
-    for resident in before.residents:
-        if resident.walking is None:
-            continue
-        now = next(other for other in after.residents if other.id == resident.id)
-        if not now.left and now.walking is None and _owned_compute(after, resident.id) == 0:
-            after = leave_game(after, resident.id)
-    return after
-
-
-def _owned_compute(world: World, resident_id: str) -> int:
-    resident = next(resident for resident in world.residents if resident.id == resident_id)
-    harvested = resident.harvesting.amount if resident.harvesting is not None else 0
-    return compute_total(world, resident_id) + harvested
-
-
 def announce(world: World, text: str) -> World:
     """Tell every resident `text`; each reads it in their next look, see
     `perception.begin_turn`."""
@@ -136,30 +95,25 @@ def announce(world: World, text: str) -> World:
 
 
 def end_game(world: World) -> World:
-    """Stop every job and walk, putting back what harvesting and gathering took, decline every
-    pending event, withdraw every order, end every contract and freeze the world; ending twice
-    changes nothing."""
+    """Stop every walk, decline every pending event, withdraw every order, end every contract
+    and freeze the world; ending twice changes nothing."""
     if world.ended:
         return world
     for resident in world.residents:
-        world = cancel_harvesting(world, resident.id)
-        world = cancel_gathering(world, resident.id)
-        world = cancel_writing(world, resident.id)
         world = stop_walking(world, resident.id)
     world = end_contracts(_settle(world, lambda event: True), lambda contract: True, "game_ended")
-    world = release_collectors(cancel_orders(world))
+    world = cancel_orders(world)
     return replace(world, ended=True)
 
 
 def total_coins(world: World, resident_id: str) -> int:
-    """Spendable coins plus those set aside by pending offers, contracts, collectors and buy
-    orders: what the ranking counts."""
+    """Spendable coins plus those set aside by pending offers, contracts and buy orders: what
+    the ranking counts."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
     return (
         resident.coins
         + reserved_coins(world, resident_id)
         + contract_coins(world, resident_id)
-        + collector_coins(world, resident_id)
         + order_coins(world.orders, resident_id)
     )
 

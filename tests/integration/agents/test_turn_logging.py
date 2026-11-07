@@ -18,8 +18,8 @@ from aiverse_server.game.layout import create_default_world
 from aiverse_server.server.app import Game
 
 
-def game_at_market() -> Game:
-    world = create_default_world(7)
+def game_in_town() -> Game:
+    world = create_default_world()
     world = replace(
         world,
         residents=(replace(world.residents[0], position=Position(75, 75)), *world.residents[1:]),
@@ -40,11 +40,11 @@ def test_the_runner_logs_actions_memory_and_timestamps(tmp_path: Path) -> None:
         async def take_turn(self, observation: Observation, tools: ResidentTools) -> str:
             tools.call("remember", {"text": "保留返程算力", "term": "long_term"})
             tools.call("remember", {"text": "观察市场", "term": "short_term"})
-            tools.buy_program("v1")
+            tools.buy_parcel()
             return "准备采集"
 
     async def scenario() -> dict[str, Any]:
-        game = game_at_market()
+        game = game_in_town()
         with TurnLogger(tmp_path, game.world.residents) as record:
             task = asyncio.create_task(
                 AgentRunner(game, "r1", PlanningBrain(), Pace(0, 0, 60), record).run()
@@ -58,12 +58,12 @@ def test_the_runner_logs_actions_memory_and_timestamps(tmp_path: Path) -> None:
     row = asyncio.run(scenario())
 
     assert row["round"] == 1 and row["resident_name"] == "阿青"
-    assert row["before"]["coins"] == 10000 and row["after"]["coins"] == 9400
+    assert row["before"]["coins"] == 10000 and row["after"]["coins"] == 7000
     assert row["observation"]["long_term_notes"] == []
     assert row["memory_after"]["long_term"][0]["text"] == "保留返程算力"
     assert row["memory_after"]["short_term"][0]["text"] == "观察市场"
     assert row["outputs"] == ["准备采集"]
-    assert row["calls"][-1]["coins_change"] == -600
+    assert row["calls"][-1]["coins_change"] == -3000
     assert datetime.fromisoformat(row["started_at"]) <= datetime.fromisoformat(row["finished_at"])
     assert datetime.fromisoformat(row["calls"][0]["timestamp"]).tzinfo is not None
 
@@ -96,7 +96,7 @@ def test_model_text_and_private_memory_are_redacted_before_writing(tmp_path: Pat
             }
             return httpx.Response(200, json=body)
 
-        game = game_at_market()
+        game = game_in_town()
         game.remember("r1", key, "short_term")
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
             brain = ChatCompletionsBrain(
@@ -138,7 +138,7 @@ def test_incomplete_rounds_preserve_the_actions_already_taken(tmp_path: Path, ou
                     raise RuntimeError("provider unreachable")
                 await asyncio.Event().wait()
 
-        game = game_at_market()
+        game = game_in_town()
         with TurnLogger(tmp_path, game.world.residents) as record:
             task = asyncio.create_task(
                 AgentRunner(game, "r1", InterruptedBrain(), Pace(0, 0, 60), record).run()
@@ -168,7 +168,7 @@ def test_replacing_an_agent_appends_to_the_same_game_file(tmp_path: Path) -> Non
             return self.remark
 
     async def scenario() -> list[dict[str, Any]]:
-        game = game_at_market()
+        game = game_in_town()
         with TurnLogger(tmp_path, game.world.residents) as record:
             # Use Game's actual lifecycle and shared recorder for each replacement.
             game = Game(game.world, clock=lambda: 0, record=record)
@@ -231,7 +231,7 @@ def test_used_credentials_remain_redacted_across_models_and_residents(
                 return key
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-            world = game_at_market().world
+            world = game_in_town().world
             with TurnLogger(tmp_path, world.residents) as record:
                 game = Game(world, clock=lambda: 0, record=record)
                 game.start_agent(

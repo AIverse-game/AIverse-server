@@ -1,21 +1,10 @@
 import math
-from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
 
 from aiverse_server.core.events import Event, EventPayload, EventQueue
-from aiverse_server.core.world import (
-    GatherJob,
-    Mine,
-    Position,
-    Resident,
-    Studio,
-    WalkJob,
-    World,
-    WorldMap,
-    WriteJob,
-)
+from aiverse_server.core.world import Position, Resident, WalkJob, World, WorldMap
 from aiverse_server.game.layout import MAP_SIZE, STARTING_COINS, create_default_world
 
 
@@ -97,57 +86,7 @@ def test_world_keeps_pending_events_between_residents_still_playing() -> None:
     assert world.events.pending == (event,)
 
 
-@pytest.mark.parametrize(
-    ("make", "match"),
-    [
-        (lambda: Mine("q", Position(5, 5), 0, 10), "radius"),
-        (lambda: Mine("q", Position(5, 5), 4, -1), "data"),
-        (lambda: Studio(Position(5, 5), math.nan), "radius"),
-        (
-            lambda: replace(
-                resident("a", 5, 5),
-                gathering=GatherJob("q", 10, 6),
-                walking=WalkJob(Position(1, 1), 0, 2),
-            ),
-            "more than one",
-        ),
-        (lambda: replace(resident("a", 5, 5), writing=WriteJob("v1", 9), left=True), "left"),
-        (lambda: replace(resident("a", 5, 5), gathering=GatherJob("q", 10, 0)), "gathering 0"),
-        (lambda: replace(resident("a", 5, 5), programs_written=-1), "written"),
-    ],
-    ids=[
-        "mine_radius",
-        "mine_reserve",
-        "studio_radius",
-        "two_jobs",
-        "job_after_leaving",
-        "empty_gather",
-        "negative_written",
-    ],
-)
-def test_impossible_mines_studios_and_jobs_are_rejected(
-    make: Callable[[], object], match: str
-) -> None:
-    with pytest.raises(ValueError, match=match):
-        make()
+def test_only_a_walking_resident_is_busy() -> None:
+    walker = replace(resident("a", 5, 5), walking=WalkJob(Position(1, 1), 0, 2))
 
-
-@pytest.mark.parametrize(
-    ("busy", "mines", "ended", "match"),
-    [
-        (replace(resident("a", 5, 5), gathering=GatherJob("nowhere", 10, 6)), (), False, "unknown"),
-        (
-            replace(resident("a", 5, 5), gathering=GatherJob("m1", 10, 6)),
-            (Mine("m1", Position(5, 5), 4, 10),),
-            True,
-            "after the game",
-        ),
-        (replace(resident("a", 5, 5), writing=WriteJob("v1", 9)), (), True, "after the game"),
-    ],
-    ids=["unknown_mine", "gather_after_end", "write_after_end"],
-)
-def test_the_world_rejects_jobs_it_cannot_hold(
-    busy: Resident, mines: tuple[Mine, ...], ended: bool, match: str
-) -> None:
-    with pytest.raises(ValueError, match=match):
-        World(WorldMap(size=10), (busy,), mines=mines, ended=ended)
+    assert (walker.busy, resident("a", 5, 5).busy) == (True, False)

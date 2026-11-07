@@ -1,13 +1,13 @@
 """What an agent is shown at the start of each round: its perception, put together with what
 the resident knows of themselves and what is public.
 
-`observe` adds to the perception (`perception.py`) the resident's own coins, compute, programs
-and what they are busy with; the offers and contract proposals waiting for them and those
-they sent, the contracts they are party to and the last few of theirs that ended; and every
-resident's name, coins and place, which the page shows anyway and which an agent needs to
-whisper or trade. Other residents' positions stay limited to those in sight. Distances and
-walking costs are worked out from where the resident stands, so a model need not do the
-arithmetic. `to_json` turns an observation into compact JSON for a model.
+`observe` adds to the perception (`perception.py`) the resident's own coins, items and whether
+they are walking; the land and the exchange; the offers and contract proposals waiting for them
+and those they sent, the contracts they are party to and the last few of theirs that ended; and
+every resident's name, coins and place, which the page shows anyway and which an agent needs to
+whisper or trade. Other residents' positions stay limited to those in sight. Walking times are
+worked out from where the resident stands, so a model need not do the arithmetic. `to_json`
+turns an observation into compact JSON for a model.
 """
 
 from __future__ import annotations
@@ -17,51 +17,14 @@ import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
-from ..core.collectors import Collector, CollectorSlot
 from ..core.events import Event, pending_for, pending_from
-from ..core.land import Parcel
 from ..core.orders import order_coins
-from ..core.world import Contract, ContractEnd, Position, PricePoint, SpringSighting, World
-from ..economy.collectors import (
-    COLLECTOR_CAPACITY,
-    COLLECTOR_PRICE,
-    COLLECTOR_SECONDS,
-    COLLECTOR_YIELD,
-    RENT_PER_100,
-    UPKEEP_PER_100,
-    collector_coins,
-    cycle_amount,
-    cycle_cost,
-    slot_status,
-    spring_draw_rate,
-)
-from ..economy.compute import COMPUTE, walk_cost
+from ..core.world import Contract, ContractEnd, Position, World
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
-from ..economy.facilities import (
-    AD_MATERIALS,
-    AD_RATE,
-    AD_SHARE_RADIUS,
-    FACILITY_SECONDS,
-    HOST_RADIUS,
-    MEETING_COMPUTE,
-    MEETING_MATERIALS,
-    MEETING_RATE,
-    MEETING_SHARE_RADIUS,
-    SERVER_CAPACITY,
-    SERVER_MATERIALS,
-    ad_incomes,
-    host_for,
-    hosting_fee,
-    meeting_incomes,
-    visitors,
-)
-from ..economy.gathering import DATA
-from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot, plot_at, plots
-from ..economy.market import unit_price
-from ..economy.programs import PROGRAM_TIERS
-from ..economy.studio import MATERIAL, MATERIAL_RECIPE, RECIPES, write_seconds
-from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
+from ..economy.footfall import footfall, visitors
+from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot_at, plots
+from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
 from ..residents.perception import Perception
@@ -79,7 +42,6 @@ VOLUME_WINDOW = 120.0
 FILLS_SHOWN = 10
 """Fills of the resident's own orders an observation lists, the latest."""
 TREND_SECONDS = 300.0
-MARKET_TREND_INTERVAL = 30.0
 EXCHANGE_TRADES_SHOWN = 8
 """A bounded public history for forecasting without replaying full world snapshots."""
 
@@ -93,69 +55,16 @@ class Me:
     """Spendable coins."""
     coins_in_offers: int
     """Coins set aside in purchase offers still waiting for an answer."""
-    compute: int
-    """Compute carried, which walking and speaking spend."""
-    compute_in_offers: int
     coins_in_orders: int
     """Coins set aside in buy orders resting on the exchange."""
     coins_in_contracts: int
     """Coins set aside as a buyer's payments or a supplier's deposits, in contracts in force
     and in proposals not yet answered."""
-    programs: dict[str, int]
-    """Programs carried, tier to count."""
-    data: int
-    """Data carried, which writing spends."""
-    materials: int
-    """Materials carried, which building facilities spends."""
-    programs_written: int
-    """Programs written so far, which makes writing faster."""
+    items: dict[str, int]
+    """Items carried, kind to count."""
     walking_to: Position | None
     arrives_in: float | None
     """Seconds until the walk ends."""
-    harvesting_spring: str | None
-    harvesting_done_in: float | None
-    """Seconds until the harvesting job pays out."""
-    gathering_mine: str | None
-    gathering_done_in: float | None
-    writing_program: str | None
-    """Tier of the program being written, or `material` while making materials."""
-    writing_done_in: float | None
-    at_market: bool
-    at_spring: str | None
-    """The spring the resident stands close enough to harvest, if any."""
-    at_mine: str | None
-    at_studio: bool
-
-
-@dataclass(frozen=True)
-class ProgramOnSale:
-    tier: str
-    price: int
-    compute_per_job: int
-
-
-@dataclass(frozen=True)
-class MarketTrendPoint:
-    time: float
-    price: float | None
-    """Observed market price, or None if its history sample was evicted."""
-    sold: int
-    """Anonymous compute sold to the market in this 30-second bucket."""
-
-
-@dataclass(frozen=True)
-class MarketView:
-    position: Position
-    radius: float
-    compute_price: float
-    """Coins one more compute fetches right now; it falls as compute is sold."""
-    distance: float
-    walk_cost: int
-    """Compute a walk from here to the market's centre costs."""
-    walk_seconds: float
-    programs: tuple[ProgramOnSale, ...]
-    trend: tuple[MarketTrendPoint, ...]
-    """At most one price point per 30-second bucket over the last five minutes."""
 
 
 @dataclass(frozen=True)
@@ -214,50 +123,6 @@ class ExchangeView:
 
 
 @dataclass(frozen=True)
-class MineView:
-    """A data mine; mines are public, so the reserve is always current."""
-
-    id: str
-    position: Position
-    radius: float
-    reserve: int
-    distance: float
-    walk_cost: int
-    walk_seconds: float
-
-
-@dataclass(frozen=True)
-class RecipeView:
-    tier: str
-    data: int
-    compute: int
-    consumes: str | None
-    """Tier of the program it uses up; None for v1."""
-    seconds: float
-    """Game seconds writing takes this resident, practice counted."""
-
-
-@dataclass(frozen=True)
-class MaterialRecipeView:
-    data: int
-    compute: int
-    count: int
-    """Materials one job makes."""
-    seconds: float
-
-
-@dataclass(frozen=True)
-class StudioView:
-    position: Position
-    radius: float
-    distance: float
-    walk_cost: int
-    walk_seconds: float
-    recipes: tuple[RecipeView, ...]
-    materials: MaterialRecipeView
-
-
-@dataclass(frozen=True)
 class ParcelView:
     """A parcel of land, with its centre to walk to."""
 
@@ -265,60 +130,21 @@ class ParcelView:
     centre: Position
     price: int
     """Coins it costs from the town; what its owner paid if it is owned."""
-    reserved: bool
-    """It touches a spring, mine, the studio or the market and can never be bought."""
     owner: str | None
-    facility: str | None
-    """What is built on it: `ad`, `server` or `meeting`; None when nothing is."""
-    ad_income: int | None
-    """Coins per cycle an ad slot here earns now: the working one, or one built now on land
-    you could build on. None otherwise."""
-    meeting_income: int | None
-    """Coins per cycle a meeting room here earns now when hosted, before the fee: the working
-    one, or one built now on land you could build on. None otherwise."""
-    host: str | None
-    """Where meeting_income is shown, the server that would host the room now; None if none
-    can."""
-    host_fee: int | None
-    """That server's fee for the room's owner (you, on land you could build on); 0 for their
-    own server."""
+    footfall: float
+    """Visitors and residents passing its centre now; more where it is nearer the middle of the
+    map."""
     distance: float
-    walk_cost: int
+    walk_seconds: float
 
 
 @dataclass(frozen=True)
 class MyParcelView:
     id: str
     centre: Position
-    facility: str | None
-    last_income: int
-    """Coins its latest cycle paid you, after the hosting fee."""
-    earned: int
-    """Coins it has paid you so far; for a server, the hosting fees it collected."""
-    next_payout_in: float | None
-    ad_income: int | None
-    """Coins per cycle an ad slot earns if paid now: the one here, or one built on bare land."""
-    meeting_income: int | None
-    """Coins per cycle a hosted meeting room earns if paid now, before the fee: the one here,
-    or one built on bare land."""
-    host: str | None
-    """For a meeting room, the server that hosted its latest cycle; None if none could."""
-    compute: int | None
-    """For a server, the compute it holds."""
-    fee: int | None
-    """For a server, what it charges others' meeting rooms per cycle."""
-
-
-@dataclass(frozen=True)
-class ServerView:
-    """A working server and what it charges."""
-
-    id: str
-    owner: str
-    centre: Position
-    compute: int
-    fee: int
+    footfall: float
     distance: float
+    walk_seconds: float
 
 
 @dataclass(frozen=True)
@@ -327,45 +153,12 @@ class LandView:
     grid: int
     """Parcels along each side; ids are `L<col>-<row>` from the north-west corner."""
     visitors_now: float
-    """Footfall at the market now; it grows as the game goes on."""
-    rules: dict[str, int | float]
+    """Visitors at the middle of the map now; they grow as the game goes on."""
     here: ParcelView | None
     """The parcel the resident stands in; None while walking."""
     mine: tuple[MyParcelView, ...]
     best_free: tuple[ParcelView, ...]
-    """Free parcels where a new ad slot would earn most per cycle now, best first."""
-    servers: tuple[ServerView, ...]
-    """Working servers nearest you, nearest first."""
-
-
-@dataclass(frozen=True)
-class SpringView:
-    id: str
-    position: Position
-    radius: float
-    reserve: int
-    """Compute left when last seen."""
-    seen_ago: float
-    """Seconds since the reserve was seen; 0 when in sight."""
-    in_sight: bool
-    """Seen this round, so the reserve is current."""
-    collector_draw_per_second: float | None
-    """Compute per second the running collectors on this spring take out of it; None unless in
-    sight, since a spring out of sight is not watched. Manual harvesting is not counted."""
-    seconds_to_empty: float | None
-    """Seconds until the reserve is gone at that rate; None unless in sight and collectors are
-    drawing on it."""
-    distance: float
-    walk_cost: int
-    walk_seconds: float
-    reserve_history: tuple[SpringReserveView, ...]
-    """Only reserves this resident actually observed, never unseen updates."""
-
-
-@dataclass(frozen=True)
-class SpringReserveView:
-    seen_ago: float
-    reserve: int
+    """Free parcels with the most footfall now, best first."""
 
 
 @dataclass(frozen=True)
@@ -373,7 +166,6 @@ class NearbyResident:
     id: str
     name: str
     position: Position
-    harvesting_spring: str | None
     walking_to: Position | None
 
 
@@ -387,7 +179,6 @@ class Standing:
     """Total coins, including those set aside in offers."""
     rank: int
     left: bool
-    programs_written: int
 
 
 @dataclass(frozen=True)
@@ -491,7 +282,6 @@ class Happening:
     resident_id: str
     kind: str
     position: Position
-    spring_id: str | None
 
 
 @dataclass(frozen=True)
@@ -508,17 +298,8 @@ class Observation:
     """Game seconds since the start."""
     remaining_seconds: float
     me: Me
-    market: MarketView | None
     exchange: ExchangeView
-    mines: tuple[MineView, ...]
-    """Every mine, nearest first."""
-    studio: StudioView | None
     land: LandView
-    known_springs: tuple[SpringView, ...]
-    """Every spring discovered so far, nearest first."""
-    discovered: tuple[str, ...]
-    """Springs seen for the first time since the last round: from where the resident stands, or
-    on the way there."""
     nearby_residents: tuple[NearbyResident, ...]
     residents: tuple[Standing, ...]
     offers_to_me: tuple[OfferView, ...]
@@ -536,9 +317,6 @@ class Observation:
     """What others did nearby since the resident last looked."""
     long_term_notes: tuple[NoteView, ...]
     short_term_notes: tuple[NoteView, ...]
-    collector_balance: int
-    collector_rules: dict[str, int | float]
-    collectors: tuple[dict[str, object], ...]
     notices: tuple[NoticeView, ...] = ()
     """What the server announced to everyone since the resident last looked."""
     last_thinking_seconds: float | None = None
@@ -560,49 +338,9 @@ def observe(
     resident's earlier rounds took, oldest first."""
     me = next(resident for resident in world.residents if resident.id == resident_id)
     here = perception.position
-    program_tiers = {program.tier for program in PROGRAM_TIERS}
     walk = me.walking
-    job = me.harvesting
-    gather = me.gathering
-    write = me.writing
-    market = world.market
-    studio = world.studio
     standings = ranks(world)
-    at_spring = next(
-        (spring.id for spring in world.springs if spring.reaches(here) and walk is None),
-        None,
-    )
-    in_sight = frozenset(sighting.spring_id for sighting in perception.springs)
-    # A neighbour's or a happening's spring is named only if the resident has seen that spring.
-    known_ids = {sighting.spring_id for sighting in perception.known_springs}
-    springs = sorted(
-        (
-            _spring_view(
-                world,
-                sighting,
-                here,
-                sighting.spring_id in in_sight,
-                tuple(
-                    SpringReserveView(max(world.time - sample.time, 0.0), sample.reserve)
-                    for sample in perception.spring_reserve_history
-                    if sample.spring_id == sighting.spring_id
-                ),
-            )
-            for sighting in perception.known_springs
-        ),
-        key=lambda spring: spring.distance,
-    )
     return Observation(
-        collector_balance=collector_coins(world, resident_id),
-        collector_rules={
-            "price": COLLECTOR_PRICE,
-            "capacity": COLLECTOR_CAPACITY,
-            "cycle_seconds": COLLECTOR_SECONDS,
-            "yield_multiplier": COLLECTOR_YIELD,
-            "rent_per_100": RENT_PER_100,
-            "upkeep_per_100": UPKEEP_PER_100,
-        },
-        collectors=_collector_views(world, resident_id, in_sight),
         time=perception.time,
         remaining_seconds=remaining,
         last_thinking_seconds=thinking[-1] if thinking else None,
@@ -613,103 +351,19 @@ def observe(
             position=here,
             coins=me.coins,
             coins_in_offers=reserved_coins(world, resident_id),
-            compute=me.inventory.count(COMPUTE),
-            compute_in_offers=reserved_items(world, resident_id, COMPUTE),
             coins_in_orders=order_coins(world.orders, resident_id),
             coins_in_contracts=contract_coins(world, resident_id),
-            programs={
-                kind: count
-                for kind, count in me.inventory.counts().items()
-                if kind in program_tiers
-            },
-            data=me.inventory.count(DATA),
-            materials=me.inventory.count(MATERIAL),
-            programs_written=me.programs_written,
+            items=me.inventory.counts(),
             walking_to=walk.target if walk is not None else None,
             arrives_in=max(walk.arrives_at - world.time, 0.0) if walk is not None else None,
-            harvesting_spring=job.spring_id if job is not None else None,
-            harvesting_done_in=max(job.ends_at - world.time, 0.0) if job is not None else None,
-            gathering_mine=gather.mine_id if gather is not None else None,
-            gathering_done_in=max(gather.ends_at - world.time, 0.0) if gather is not None else None,
-            writing_program=write.tier if write is not None else None,
-            writing_done_in=max(write.ends_at - world.time, 0.0) if write is not None else None,
-            at_market=market is not None and walk is None and market.reaches(here),
-            at_spring=at_spring,
-            at_mine=next(
-                (mine.id for mine in world.mines if mine.reaches(here) and walk is None),
-                None,
-            ),
-            at_studio=studio is not None and walk is None and studio.reaches(here),
-        ),
-        market=None
-        if perception.market is None
-        else MarketView(
-            position=perception.market.position,
-            radius=perception.market.radius,
-            compute_price=perception.market.price,
-            distance=_distance(here, perception.market.position),
-            walk_cost=walk_cost(here, perception.market.position),
-            walk_seconds=walk_seconds(here, perception.market.position),
-            programs=tuple(
-                ProgramOnSale(program.tier, program.price, program.compute_per_job)
-                for program in perception.market.programs
-            ),
-            trend=_market_trend(world),
         ),
         exchange=_exchange_view(world, resident_id),
-        mines=tuple(
-            sorted(
-                (
-                    MineView(
-                        mine.id,
-                        mine.position,
-                        mine.radius,
-                        mine.reserve,
-                        _distance(here, mine.position),
-                        walk_cost(here, mine.position),
-                        walk_seconds(here, mine.position),
-                    )
-                    for mine in world.mines
-                ),
-                key=lambda mine: mine.distance,
-            )
-        ),
-        studio=None
-        if studio is None
-        else StudioView(
-            studio.position,
-            studio.radius,
-            _distance(here, studio.position),
-            walk_cost(here, studio.position),
-            walk_seconds(here, studio.position),
-            tuple(
-                RecipeView(
-                    recipe.tier,
-                    recipe.data,
-                    recipe.compute,
-                    recipe.consumes,
-                    write_seconds(recipe, me.programs_written),
-                )
-                for recipe in RECIPES
-            ),
-            MaterialRecipeView(
-                MATERIAL_RECIPE.data,
-                MATERIAL_RECIPE.compute,
-                MATERIAL_RECIPE.count,
-                MATERIAL_RECIPE.seconds,
-            ),
-        ),
         land=_land_view(world, resident_id, here, standing=walk is None),
-        known_springs=tuple(springs),
-        discovered=perception.discovered,
         nearby_residents=tuple(
             NearbyResident(
                 id=sighting.resident_id,
                 name=sighting.name,
                 position=sighting.position,
-                harvesting_spring=sighting.harvesting_spring_id
-                if sighting.harvesting_spring_id in known_ids
-                else None,
                 walking_to=sighting.walking_to,
             )
             for sighting in perception.residents
@@ -721,7 +375,6 @@ def observe(
                 coins=total_coins(world, resident.id),
                 rank=standings[resident.id],
                 left=resident.left,
-                programs_written=resident.programs_written,
             )
             for resident in world.residents
         ),
@@ -748,13 +401,7 @@ def observe(
         ),
         notices=tuple(NoticeView(notice.time, notice.text) for notice in perception.notices),
         activity=tuple(
-            Happening(
-                entry.time,
-                entry.resident_id,
-                entry.kind,
-                entry.position,
-                entry.spring_id if entry.spring_id in known_ids else None,
-            )
+            Happening(entry.time, entry.resident_id, entry.kind, entry.position)
             for entry in perception.activity
         ),
         long_term_notes=tuple(NoteView(note.id, note.text, None) for note in perception.long_term),
@@ -772,116 +419,45 @@ def observe(
 LAND_SHOWN = 5
 """Free parcels an observation suggests."""
 
-SERVERS_SHOWN = 5
-"""Servers an observation lists, the nearest."""
-
 
 def _land_view(world: World, resident_id: str, here: Position, *, standing: bool) -> LandView:
-    squares = plots(world)
-    ads = ad_incomes(world, squares)
-    meetings = meeting_incomes(world, squares)
-    parcels = {(parcel.col, parcel.row): parcel for parcel in world.parcels}
-
-    def kind(square: Plot) -> str | None:
-        parcel = parcels.get((square.col, square.row))
-        return parcel.facility.kind if parcel is not None and parcel.facility else None
-
-    def shown(square: Plot, facility: str) -> bool:
-        """Whether to show what a facility of this kind earns here."""
-        built = kind(square)
-        bare = built is None and not square.reserved and square.owner_id in (None, resident_id)
-        return bare or built == facility
-
     def view(square: Plot) -> ParcelView:
-        spot = (square.col, square.row)
-        meeting = shown(square, "meeting")
-        owner = square.owner_id or resident_id
-        host = host_for(world, square.centre, owner) if meeting else None
         return ParcelView(
             square.id,
             square.centre,
             square.price,
-            square.reserved,
             square.owner_id,
-            kind(square),
-            ads[spot] if shown(square, "ad") else None,
-            meetings[spot] if meeting else None,
-            None if host is None else host.id,
-            None if host is None else hosting_fee(host, owner),
+            footfall(world, square.centre),
             _distance(here, square.centre),
-            walk_cost(here, square.centre),
+            walk_seconds(here, square.centre),
         )
 
-    def my_view(parcel: Parcel) -> MyParcelView:
-        square = plot(world, parcel.col, parcel.row)
-        spot = (parcel.col, parcel.row)
-        facility = parcel.facility
-        server = facility is not None and facility.kind == "server"
-        return MyParcelView(
-            parcel.id,
-            square.centre,
-            None if facility is None else facility.kind,
-            0 if facility is None else facility.last_income,
-            0 if facility is None else facility.earned,
-            None
-            if facility is None or facility.next_at is None
-            else max(facility.next_at - world.time, 0.0),
-            ads[spot] if shown(square, "ad") else None,
-            meetings[spot] if shown(square, "meeting") else None,
-            None if facility is None else facility.host,
-            facility.compute if facility is not None and server else None,
-            facility.fee if facility is not None and server else None,
-        )
-
-    free = [square for square in squares if not square.reserved and square.owner_id is None]
+    squares = plots(world)
+    mine = [square for square in squares if square.owner_id == resident_id]
     best = sorted(
-        free,
+        (square for square in squares if square.owner_id is None),
         key=lambda square: (
-            -ads[(square.col, square.row)],
+            -footfall(world, square.centre),
             square.price,
             _distance(here, square.centre),
         ),
     )[:LAND_SHOWN]
-    gone = {resident.id for resident in world.residents if resident.left}
-    servers = sorted(
-        (
-            ServerView(
-                parcel.id,
-                parcel.owner_id,
-                centre,
-                parcel.facility.compute,
-                parcel.facility.fee,
-                _distance(here, centre),
-            )
-            for parcel in world.parcels
-            if parcel.facility is not None
-            and parcel.facility.kind == "server"
-            and parcel.owner_id not in gone
-            for centre in (plot(world, parcel.col, parcel.row).centre,)
-        ),
-        key=lambda server: (server.distance, server.id),
-    )[:SERVERS_SHOWN]
     return LandView(
         parcel_size=PARCEL_SIZE,
         grid=grid_size(world),
         visitors_now=visitors(world.time),
-        rules={
-            "cycle_seconds": FACILITY_SECONDS,
-            "ad_materials": AD_MATERIALS,
-            "ad_coins_per_footfall": AD_RATE,
-            "ad_share_radius": AD_SHARE_RADIUS,
-            "server_materials": SERVER_MATERIALS,
-            "server_capacity": SERVER_CAPACITY,
-            "host_radius": HOST_RADIUS,
-            "meeting_materials": MEETING_MATERIALS,
-            "meeting_compute_per_cycle": MEETING_COMPUTE,
-            "meeting_coins_per_visitor": MEETING_RATE,
-            "meeting_share_radius": MEETING_SHARE_RADIUS,
-        },
         here=view(plot_at(world, here)) if standing else None,
-        mine=tuple(my_view(parcel) for parcel in world.parcels if parcel.owner_id == resident_id),
+        mine=tuple(
+            MyParcelView(
+                square.id,
+                square.centre,
+                footfall(world, square.centre),
+                _distance(here, square.centre),
+                walk_seconds(here, square.centre),
+            )
+            for square in mine
+        ),
         best_free=tuple(view(square) for square in best),
-        servers=tuple(servers),
     )
 
 
@@ -928,38 +504,6 @@ def _exchange_view(world: World, resident_id: str) -> ExchangeView:
             if world.time - TREND_SECONDS <= fill.time <= world.time
         )[-EXCHANGE_TRADES_SHOWN:],
     )
-
-
-def _market_trend(world: World) -> tuple[MarketTrendPoint, ...]:
-    market = world.market
-    if market is None:
-        return ()
-    cutoff = max(world.time - TREND_SECONDS, 0.0)
-    points = {
-        int(point.time // MARKET_TREND_INTERVAL): point
-        for point in market.history
-        if cutoff <= point.time <= world.time
-    }
-    bucket_now = int(world.time // MARKET_TREND_INTERVAL)
-    points[bucket_now] = PricePoint(world.time, unit_price(market, world.time))
-    sold: dict[int, int] = {}
-    for transfer in world.ledger.transfers:
-        if transfer.channel == "market" and cutoff <= transfer.time <= world.time:
-            bucket = int(transfer.time // MARKET_TREND_INTERVAL)
-            sold[bucket] = sold.get(bucket, 0) + transfer.quantity
-    trend = []
-    for bucket in sorted(points.keys() | sold.keys()):
-        point = points.get(bucket)
-        trend.append(
-            MarketTrendPoint(
-                point.time
-                if point is not None
-                else min((bucket + 1) * MARKET_TREND_INTERVAL, world.time),
-                point.price if point is not None else None,
-                sold.get(bucket, 0),
-            )
-        )
-    return tuple(trend)
 
 
 def to_json(observation: Observation) -> str:
@@ -1056,82 +600,6 @@ def _ended(end: ContractEnd, resident_id: str, now: float) -> EndedContractView:
         deliveries_missed=contract.deliveries_left,
         deposit_forfeited=end.forfeit,
         ended_ago=max(now - end.time, 0.0),
-    )
-
-
-def known_slots(
-    collector: Collector, resident_id: str, in_sight: frozenset[str]
-) -> tuple[CollectorSlot, ...] | None:
-    """The slots of a collector the resident can know of: all of them when its spring is in sight
-    or the resident owns it, else only their own; None when they know nothing of it. A collector
-    on a spring they have not seen would give the spring's state away."""
-    if collector.spring_id in in_sight or collector.owner_id == resident_id:
-        return collector.slots
-    own = tuple(slot for slot in collector.slots if slot.resident_id == resident_id)
-    return own or None
-
-
-def _collector_views(
-    world: World, resident_id: str, in_sight: frozenset[str]
-) -> tuple[dict[str, object], ...]:
-    """The collectors the resident can know of, see `known_slots`."""
-    views: list[dict[str, object]] = []
-    for collector in world.collectors:
-        slots = known_slots(collector, resident_id, in_sight)
-        if slots is None:
-            continue
-        views.append(
-            {
-                "id": collector.id,
-                "owner_id": collector.owner_id,
-                "spring_id": collector.spring_id,
-                "position": asdict(
-                    next(p.position for p in world.springs if p.id == collector.spring_id)
-                ),
-                "slots": [
-                    {
-                        "id": s.id,
-                        "resident_id": s.resident_id,
-                        "program": s.program,
-                        "balance": s.balance,
-                        "harvested": s.harvested,
-                        "rent_paid": s.rent_paid,
-                        "status": slot_status(world, collector, s),
-                        "next_in": max(s.next_at - world.time, 0.0),
-                        "compute_per_cycle": cycle_amount(world, collector, s),
-                        "rent_and_upkeep": sum(
-                            cycle_cost(collector, s, cycle_amount(world, collector, s))
-                        ),
-                    }
-                    for s in slots
-                ],
-            }
-        )
-    return tuple(views)
-
-
-def _spring_view(
-    world: World,
-    sighting: SpringSighting,
-    here: Position,
-    in_sight: bool,
-    reserve_history: tuple[SpringReserveView, ...],
-) -> SpringView:
-    """A known spring; how fast collectors drain it is told only while the resident can see it."""
-    draw = spring_draw_rate(world, sighting.spring_id) if in_sight else None
-    return SpringView(
-        id=sighting.spring_id,
-        position=sighting.position,
-        radius=sighting.radius,
-        reserve=sighting.reserve,
-        seen_ago=0.0 if in_sight else max(world.time - sighting.seen_at, 0.0),
-        in_sight=in_sight,
-        collector_draw_per_second=draw,
-        seconds_to_empty=sighting.reserve / draw if draw else None,
-        distance=_distance(here, sighting.position),
-        walk_cost=walk_cost(here, sighting.position),
-        walk_seconds=walk_seconds(here, sighting.position),
-        reserve_history=reserve_history,
     )
 
 

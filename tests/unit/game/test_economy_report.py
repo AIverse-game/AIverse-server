@@ -14,7 +14,6 @@ from aiverse_server.core.world import (
     World,
     WorldMap,
 )
-from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.game.economy_report import (
     economy_report,
     format_report,
@@ -27,14 +26,16 @@ def resident(id: str, coins: int) -> Resident:
     return Resident(id, id.upper(), "#123456", Position(1, 1), coins=coins)
 
 
-# a harvests and sells to the market, b buys compute from a and rents a's collector, c does nothing.
+# a earns from visitors, b buys posters and information from a, both buy land, c does nothing.
+POSTER = "poster"
+
 TRANSFERS = (
-    Transfer(10, SYSTEM, "a", 600, "market", COMPUTE, 30),
-    Transfer(20, "b", "a", 300, "offer", COMPUTE, 20),
-    Transfer(30, "b", "a", 100, "offer", COMPUTE, 5),
-    Transfer(40, "b", "a", 30, "rent"),
-    Transfer(40, "b", SYSTEM, 12, "upkeep"),
-    Transfer(50, "a", SYSTEM, 300, "program_import", "v1", 1),
+    Transfer(10, SYSTEM, "a", 600, "visitors"),
+    Transfer(20, "b", "a", 300, "offer", POSTER, 20),
+    Transfer(30, "b", "a", 100, "offer", POSTER, 5),
+    Transfer(40, "b", "a", 30, "information"),
+    Transfer(40, "b", SYSTEM, 12, "land"),
+    Transfer(50, "a", SYSTEM, 300, "land"),
 )
 WORLD = World(
     WorldMap(10),
@@ -55,18 +56,17 @@ def test_channels_total_their_transfers_and_coins() -> None:
     channels = economy_report(WORLD).channels
 
     assert {name: (t.transfers, t.coins) for name, t in channels.items()} == {
-        "program_import": (1, 300),
-        "upkeep": (1, 12),
-        "market": (1, 600),
+        "land": (2, 312),
+        "visitors": (1, 600),
         "offer": (2, 400),
-        "rent": (1, 30),
+        "information": (1, 30),
     }
 
 
 def test_prices_weigh_each_trade_by_its_quantity() -> None:
-    offer = economy_report(WORLD).prices["offer"][COMPUTE]
+    offer = economy_report(WORLD).prices["offer"][POSTER]
 
-    # 300 for 20 is 15 each and 100 for 5 is 20 each: 400 coins for 25 compute is 16.
+    # 300 for 20 is 15 each and 100 for 5 is 20 each: 400 coins for 25 posters is 16.
     assert (offer.trades, offer.quantity, offer.mean) == (2, 25, 16)
     assert (offer.low, offer.high, offer.stdev) == (15, 20, 2.5)
 
@@ -74,9 +74,9 @@ def test_prices_weigh_each_trade_by_its_quantity() -> None:
 def test_each_resident_has_income_and_spending_by_channel() -> None:
     a, b, c = economy_report(WORLD).residents
 
-    assert a.income == {"market": 600, "offer": 400, "rent": 30}
-    assert a.spending == {"program_import": 300}
-    assert b.spending == {"upkeep": 12, "offer": 400, "rent": 30}
+    assert a.income == {"visitors": 600, "offer": 400, "information": 30}
+    assert a.spending == {"land": 300}
+    assert b.spending == {"land": 12, "offer": 400, "information": 30}
     assert a.income_concentration == pytest.approx((600**2 + 400**2 + 30**2) / 1030**2)
     assert (b.income_concentration, c.income_concentration) == (None, None)
 
@@ -104,7 +104,7 @@ def test_no_coins_moved_gives_no_share_and_no_concentration() -> None:
 
 
 def test_contracts_count_signings_deliveries_forfeits_and_endings() -> None:
-    contract = Contract(1, "a", "b", COMPUTE, 10, 200, 1, 0, 60, deposit=50)
+    contract = Contract(1, "a", "b", POSTER, 10, 200, 1, 0, 60, deposit=50)
     world = World(
         WorldMap(10),
         (resident("a", 0), resident("b", 0)),
@@ -112,7 +112,7 @@ def test_contracts_count_signings_deliveries_forfeits_and_endings() -> None:
         contracts=ContractBook(next_id=3, ended=(ContractEnd(contract, 60, "lapsed", None, 50),)),
         ledger=Ledger(
             (
-                Transfer(10, "b", "a", 200, "contract_payment", COMPUTE, 10),
+                Transfer(10, "b", "a", 200, "contract_payment", POSTER, 10),
                 Transfer(60, "a", "b", 50, "contract_forfeit"),
             )
         ),
@@ -136,7 +136,7 @@ def test_the_report_writes_as_json_and_reads_back_its_figures(tmp_path: Path) ->
     assert data == json.loads(report_to_json(report))
     assert data["between_residents"] == 430
     assert math.isclose(data["resident_share"], 430 / 1030)
-    assert data["residents"][0]["income"]["rent"] == 30
+    assert data["residents"][0]["income"]["information"] == 30
 
 
 def test_the_console_summary_names_the_share_and_a_partial_ledger() -> None:

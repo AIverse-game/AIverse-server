@@ -1,25 +1,21 @@
 import json
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from typing import Any
 
 import pytest
 
 from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.tools import TOOLS, ResidentTools, ToolSpec, tool_specs
-from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
-from aiverse_server.economy.compute import COMPUTE
-from aiverse_server.economy.market import quote
-from aiverse_server.game.actions import BuildCollector, InstallProgram, MoveTo, SellCompute, perform
+from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.server.app import Game
 
+POSTER = "poster"
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((COMPUTE, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((COMPUTE, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((POSTER, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((POSTER, 100),)), coins=5000),
     ),
-    springs=(Spring("p1", Position(80, 50), 4, 300),),
-    market=Market(Position(50, 50), 5),
 )
 
 
@@ -50,12 +46,11 @@ def test_tools_act_for_their_own_resident_only() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
 
-    result = tools.call("buy_program", {"tier": "v1"})
+    result = tools.call("buy_parcel", {})
 
     assert result.ok
-    assert me(game, "a").inventory.count("v1") == 1
-    assert me(game, "b").inventory.count("v1") == 0
-    assert result.status is not None and result.status["coins"] == 4400
+    assert [parcel.owner_id for parcel in game.world.parcels] == ["a"]
+    assert result.status is not None and result.status["coins"] == 5000 - 2790
 
 
 @pytest.mark.parametrize("spec", TOOLS, ids=lambda spec: spec.name)
@@ -73,24 +68,11 @@ def test_no_tool_takes_the_resident_who_acts(spec: ToolSpec) -> None:
         ("move_to", '{"x": 1, "y": 2, "resident_id": "b"}', "invalid_arguments"),
         ("move_to", "not json", "invalid_arguments"),
         ("move_to", "[1, 2]", "invalid_arguments"),
-        ("sell_compute", '{"quantity": ' + "9" * 5000 + "}", "invalid_arguments"),
-        ("sell_compute", {"quantity": "5"}, "invalid_arguments"),
         ("move_to", {"x": 500, "y": 2}, "out_of_bounds"),
-        ("harvest", {"spring_id": "p1"}, "unknown_spring"),
-        ("build_collector", {"spring_id": "p1"}, "unknown_spring"),
-        (
-            "install_program",
-            {"collector_id": 1, "program": "v1", "deposit": 10},
-            "unknown_collector",
-        ),
-        ("buy_program", {"tier": "C9"}, "unknown_program"),
         ("forget", {"note_id": 3}, "unknown_note"),
-        ("sell_compute", {"quantity": 100}, "last_compute"),
-        (
-            "offer_to_sell",
-            {"buyer_id": "b", "kind": "compute", "quantity": 100, "price": 1},
-            "last_compute",
-        ),
+        ("buy_parcel", {"x": 1}, "invalid_arguments"),
+        ("place_order", {"side": "buy", "item": POSTER, "quantity": 1, "price": 1}, "unknown_item"),
+        ("harvest", {"spring_id": "p1"}, "unknown_tool"),
     ],
 )
 def test_bad_calls_come_back_as_failures_and_change_nothing(
@@ -109,154 +91,28 @@ def test_bad_calls_come_back_as_failures_and_change_nothing(
     assert json.loads(result.to_json())["ok"] is False
 
 
-def test_a_spring_in_sight_is_known_even_before_it_is_remembered() -> None:
+def test_a_walk_costs_time_and_nothing_else() -> None:
     game, _ = make_game()
-    tools = ResidentTools(game, "b")
 
-    result = tools.call("harvest", {"spring_id": "p1"})
-
-    assert result.code == "no_program"  # Refused for the program, not as an unknown spring.
-
-
-def test_collectors_never_seen_are_refused_alike_whether_or_not_they_exist() -> None:
-    harvester = Resident(
-        "c", "丙", "#778899", Position(80, 50), Inventory((("v1", 1),)), coins=10000
-    )
-    game, _ = make_game(replace(WORLD, residents=(*WORLD.residents, harvester)))
-    ResidentTools(game, "c").call("build_collector", {"spring_id": "p1"})
-    tools = ResidentTools(game, "a")
-
-    calls = [
-        tools.call(
-            "install_program", {"collector_id": collector_id, "program": "v1", "deposit": 10}
-        )
-        for collector_id in (1, 2)
-    ] + [
-        tools.call("fund_collector", {"collector_id": collector_id, "slot_id": 1, "amount": 10})
-        for collector_id in (1, 2)
-    ]
-    calls += [
-        tools.call("remove_program", {"collector_id": collector_id, "slot_id": 1})
-        for collector_id in (1, 2)
-    ]
-
-    assert {(call.code, call.message) for call in calls} == {
-        ("unknown_collector", "unknown collector")
-    }
-
-
-def away_from_a_shared_collector() -> tuple[Game, FakeClock]:
-    """Owner "c" (slot 1) and tenant "b" (slot 2) share collector 1 on p1, then both walk off."""
-    stock = Inventory((("v1", 1), (COMPUTE, 100)))
-    at_spring = Position(80, 50)
-    residents = (
-        WORLD.residents[0],
-        Resident("b", "乙", "#445566", at_spring, stock, coins=10000),
-        Resident("c", "丙", "#778899", at_spring, stock, coins=10000),
-    )
-    world = perform(replace(WORLD, residents=residents), BuildCollector("c", "p1"))
-    world = perform(
-        perform(world, InstallProgram("c", 1, "v1", 500)), InstallProgram("b", 1, "v1", 500)
-    )
-    game, clock = make_game(world)
-    look(game, "b")
-    look(game, "c")
-    game.act(MoveTo("b", Position(50, 50)))
-    game.act(MoveTo("c", Position(50, 50)))
-    clock.now = 20
-    return game, clock
-
-
-def test_tenant_and_owner_can_fund_and_remove_their_slots_from_afar() -> None:
-    game, _ = away_from_a_shared_collector()
-    tenant, owner = ResidentTools(game, "b"), ResidentTools(game, "c")
-
-    funded = tenant.call("fund_collector", {"collector_id": 1, "slot_id": 2, "amount": 50})
-    removed_by_tenant = tenant.call("remove_program", {"collector_id": 1, "slot_id": 2})
-    removed_by_owner = owner.call("remove_program", {"collector_id": 1, "slot_id": 1})
-
-    assert funded.ok and removed_by_tenant.ok and removed_by_owner.ok
-    assert me(game, "b").inventory.count("v1") == 1
-
-
-def test_a_spring_once_seen_is_not_unknown_after_walking_away() -> None:
-    game, _ = away_from_a_shared_collector()
-
-    result = ResidentTools(game, "b").call("build_collector", {"spring_id": "p1"})
-
-    assert result.code == "not_at_spring"
-
-
-def test_a_walk_that_would_spend_the_last_compute_is_refused() -> None:
-    poor = replace(WORLD.residents[0], inventory=Inventory(((COMPUTE, 10),)))
-    game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
-    before = game.world
-
-    # From (50, 50) to (70, 50) costs 10 compute, all the resident has.
     result = ResidentTools(game, "a").call("move_to", {"x": 70, "y": 50})
 
-    assert result.code == "last_compute"
-    assert game.world == before
+    assert result.ok and result.status is not None
+    assert result.status["walking_to"] == {"x": 70.0, "y": 50.0}
+    assert result.status["arrives_in"] == 8.0
+    assert (result.status["coins"], result.status["items"]) == (5000, {POSTER: 100})
 
 
-def test_a_whisper_on_the_way_that_would_spend_the_last_compute_is_refused() -> None:
-    poor = replace(WORLD.residents[0], inventory=Inventory(((COMPUTE, 6),)))
-    game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
+def test_a_resident_cannot_act_while_walking_but_can_still_whisper() -> None:
+    game, _ = make_game()
     tools = ResidentTools(game, "a")
-    assert tools.call("move_to", {"x": 60, "y": 50}).ok
+    assert tools.call("move_to", {"x": 70, "y": 50}).ok
 
-    result = tools.call("say", {"text": "hi", "to": "b"})
+    parcel = tools.call("buy_parcel", {})
+    whisper = tools.call("say", {"text": "hi", "to": "b"})
 
-    assert result.code == "last_compute"
-    assert me(game, "a").inventory.count(COMPUTE) == 1
-
-
-def test_selling_all_but_one_compute_keeps_the_resident_in_the_game() -> None:
-    game, _ = make_game()
-
-    result = ResidentTools(game, "a").call("sell_compute", {"quantity": 99})
-
-    assert result.ok
-    assert me(game, "a").inventory.count(COMPUTE) == 1
-    assert not me(game, "a").left
-
-
-@pytest.mark.parametrize("parts", [[30], [10, 20], [1] * 30])
-def test_splitting_a_sale_within_a_round_earns_no_more_than_selling_at_once(
-    parts: list[int],
-) -> None:
-    game, _ = make_game()
-    tools = ResidentTools(game, "a", seen_pressure=0.0)
-
-    for part in parts:
-        assert tools.call("sell_compute", {"quantity": part}).ok
-
-    # 30 compute sold at once into an untouched market fetch 578 coins, see the market's tests;
-    # parts round down on their own.
-    assert 5000 + 578 - len(parts) < me(game, "a").coins <= 5000 + 578
-
-
-@pytest.mark.parametrize(("waited", "held"), [(29.0, True), (30.0, True), (31.0, False)])
-def test_a_sale_keeps_the_price_the_agent_saw_for_thirty_seconds_only(
-    waited: float, held: bool
-) -> None:
-    dumper = replace(
-        WORLD.residents[1], position=Position(52, 50), inventory=Inventory(((COMPUTE, 1000),))
-    )
-    game, clock = make_game(replace(WORLD, residents=(WORLD.residents[0], dumper)))
-    tools = ResidentTools(game, "a", seen_pressure=0.0, seen_at=0.0)
-    game.act(SellCompute("b", 1000))
-    market = game.world.market
-    assert market is not None
-    clock.now = waited
-    at_the_market_price = quote(market, waited, 30)
-
-    result = tools.call("sell_compute", {"quantity": 30})
-
-    assert result.ok
-    # 30 compute into an untouched market fetch 578 coins, see the market's tests.
-    assert at_the_market_price < 578
-    assert me(game, "a").coins == 5000 + (578 if held else at_the_market_price)
+    assert (parcel.ok, parcel.code) == (False, "busy")
+    assert whisper.ok
+    assert me(game, "a").inventory.count(POSTER) == 100
 
 
 def test_tools_take_arguments_as_json_text_as_models_send_them() -> None:
@@ -264,28 +120,28 @@ def test_tools_take_arguments_as_json_text_as_models_send_them() -> None:
     tools = ResidentTools(game, "a")
 
     moved = tools.call("move_to", '{"x": 60, "y": 50}')
-    remembered = tools.call("remember", '{"text": "spring p1 east", "term": "long_term"}')
+    remembered = tools.call("remember", '{"text": "parcel L1-1 is cheap", "term": "long_term"}')
 
     assert moved.ok and remembered.ok
     assert tools.calls[0].arguments == {"x": 60, "y": 50}
-    assert [note.text for note in me(game, "a").memory.long_term] == ["spring p1 east"]
+    assert [note.text for note in me(game, "a").memory.long_term] == ["parcel L1-1 is cheap"]
 
 
 def test_the_remember_tool_keeps_a_note_short_term_when_no_term_is_given() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
 
-    remembered = tools.call("remember", {"text": "spring p1 east"})
+    remembered = tools.call("remember", {"text": "parcel L1-1 is cheap"})
 
     assert remembered.ok
-    assert [note.text for note in me(game, "a").memory.short_term] == ["spring p1 east"]
+    assert [note.text for note in me(game, "a").memory.short_term] == ["parcel L1-1 is cheap"]
     assert me(game, "a").memory.long_term == ()
 
 
 def test_the_forget_tool_drops_a_note_the_resident_remembered() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
-    assert tools.call("remember", {"text": "spring p1 east", "term": "long_term"}).ok
+    assert tools.call("remember", {"text": "parcel L1-1 is cheap", "term": "long_term"}).ok
     note = me(game, "a").memory.long_term[0]
 
     forgot = tools.call("forget", {"note_id": note.id})
@@ -299,14 +155,14 @@ def test_trading_tools_send_and_answer_offers() -> None:
     seller, buyer = ResidentTools(game, "a"), ResidentTools(game, "b")
 
     offered = seller.call(
-        "offer_to_sell", {"buyer_id": "b", "kind": "compute", "quantity": 10, "price": 150}
+        "offer_to_sell", {"buyer_id": "b", "kind": POSTER, "quantity": 10, "price": 150}
     )
     event_id = game.world.events.pending[0].id
     accepted = buyer.call("respond_to_offer", {"event_id": event_id, "accept": True})
 
     assert offered.ok and accepted.ok
     assert me(game, "a").coins == 5150
-    assert me(game, "b").inventory.count(COMPUTE) == 110
+    assert me(game, "b").inventory.count(POSTER) == 110
 
 
 def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -> None:
@@ -314,8 +170,8 @@ def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -
     seller, buyer = ResidentTools(game, "a"), ResidentTools(game, "b")
     arguments = {
         "buyer_id": "b",
-        "summary": "a rich spring",
-        "content": "spring p9 near (40, 90) holds 900 compute",
+        "summary": "a cheap parcel",
+        "content": "parcel L9-9 near (95, 95) is cheap and busy",
         "price": 150,
     }
 
@@ -326,10 +182,10 @@ def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -
 
     assert offered.ok and accepted.ok
     [offer] = before.information_offers_to_me
-    assert (offer.from_id, offer.summary, offer.price) == ("a", "a rich spring", 150)
-    assert "spring p9" not in json.dumps(asdict(before))
+    assert (offer.from_id, offer.summary, offer.price) == ("a", "a cheap parcel", 150)
+    assert "L9-9" not in json.dumps(asdict(before))
     assert me(game, "a").coins == 5150 and me(game, "b").coins == 4850
-    assert "spring p9" in me(game, "b").memory.long_term[0].text
+    assert "L9-9" in me(game, "b").memory.long_term[0].text
     assert me(game, "a").memory == WORLD.residents[0].memory
 
 
@@ -339,8 +195,8 @@ def test_the_seller_sees_their_own_information_offer_without_the_content() -> No
         "offer_information",
         {
             "buyer_id": "b",
-            "summary": "a rich spring",
-            "content": "spring p9 holds 900",
+            "summary": "a cheap parcel",
+            "content": "parcel L9-9 is cheap",
             "price": 150,
         },
     )
@@ -348,8 +204,8 @@ def test_the_seller_sees_their_own_information_offer_without_the_content() -> No
     seen = look(game, "a")
 
     [offer] = seen.my_information_offers
-    assert (offer.to_id, offer.summary, offer.price) == ("b", "a rich spring", 150)
-    assert "spring p9" not in json.dumps(asdict(seen))
+    assert (offer.to_id, offer.summary, offer.price) == ("b", "a cheap parcel", 150)
+    assert "L9-9" not in json.dumps(asdict(seen))
 
 
 @pytest.mark.parametrize(
@@ -374,10 +230,10 @@ def test_information_offers_with_bad_arguments_fail_and_change_nothing(
 
 
 def proposed() -> tuple[Game, FakeClock]:
-    """a, buying, proposes b 2 deliveries of 20 compute for 300 coins within 120 s, b staking
+    """a, buying, proposes b 2 deliveries of 20 posters for 300 coins within 120 s, b staking
     50 on each."""
     game, clock = make_game()
-    assert ResidentTools(game, "a").propose_contract("b", "buyer", COMPUTE, 20, 300, 2, 120, 50).ok
+    assert ResidentTools(game, "a").propose_contract("b", "buyer", POSTER, 20, 300, 2, 120, 50).ok
     return game, clock
 
 
@@ -447,7 +303,7 @@ def test_the_deliver_tool_works_for_the_supplier_only() -> None:
     assert not refused.ok and refused.code == "not_supplier"
     assert delivered.ok
     assert me(game, "b").coins == 5000 - 100 + 300 + 50
-    assert me(game, "a").inventory.count(COMPUTE) == 120
+    assert me(game, "a").inventory.count(POSTER) == 120
 
 
 def test_cancelling_shows_the_buyer_how_the_contract_ended() -> None:

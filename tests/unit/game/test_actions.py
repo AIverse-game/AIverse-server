@@ -5,8 +5,7 @@ import pytest
 
 from aiverse_server.core.events import Event, EventPayload, send_event
 from aiverse_server.core.inventory import item_count, store_item, take_item
-from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.compute import COMPUTE
+from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.game.actions import (
     ActionRejected,
     MoveTo,
@@ -17,13 +16,11 @@ from aiverse_server.game.actions import (
 from aiverse_server.game.clock import settle_due
 from aiverse_server.residents.walking import next_arrival
 
-STOCK = Inventory(((COMPUTE, 100),))
-
 WORLD = World(
     map=WorldMap(size=10),
     residents=(
-        Resident(id="a", name="a", color="#ffffff", position=Position(1, 1), inventory=STOCK),
-        Resident(id="b", name="b", color="#000000", position=Position(9, 9), inventory=STOCK),
+        Resident(id="a", name="a", color="#ffffff", position=Position(1, 1)),
+        Resident(id="b", name="b", color="#000000", position=Position(9, 9)),
     ),
 )
 
@@ -53,6 +50,24 @@ def test_move_to_rejects_targets_outside_the_map(x: float, y: float) -> None:
     with pytest.raises(ActionRejected) as raised:
         perform(WORLD, MoveTo(resident_id="a", target=Position(x, y)))
     assert raised.value.code == "out_of_bounds"
+
+
+def test_a_walker_is_busy_until_they_arrive() -> None:
+    walking = perform(WORLD, MoveTo(resident_id="a", target=Position(3.5, 7)))
+
+    with pytest.raises(ActionRejected) as raised:
+        perform(walking, MoveTo(resident_id="a", target=Position(1, 1)))
+
+    assert raised.value.code == "busy"
+
+
+def test_walking_costs_time_and_nothing_else() -> None:
+    walking = perform(WORLD, MoveTo(resident_id="a", target=Position(9, 1)))
+
+    assert walking.residents[0].walking is not None
+    assert walking.residents[0].walking.arrives_at == 8 / 2.5
+    assert walking.residents[0].inventory == WORLD.residents[0].inventory
+    assert walking.residents[0].coins == WORLD.residents[0].coins
 
 
 def test_move_to_rejects_unknown_residents() -> None:

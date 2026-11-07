@@ -6,27 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from aiverse_server.core.world import (
-    HarvestJob,
-    Inventory,
-    Market,
-    Position,
-    PricePoint,
-    Resident,
-    Spring,
-    World,
-    WorldMap,
-)
-from aiverse_server.economy.compute import COMPUTE
-from aiverse_server.economy.harvesting import HARVEST_SECONDS
-from aiverse_server.economy.market import (
-    MARKET_BASE_PRICE,
-    MARKET_DEPTH,
-    MARKET_HALF_LIFE,
-    MARKET_RESTING_PRESSURE,
-)
-from aiverse_server.economy.programs import PROGRAM_TIERS
-from aiverse_server.game.layout import SPRING_COUNT, STARTING_COMPUTE
+from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.game.lifecycle import GAME_DURATION
 from aiverse_server.residents.walking import WALK_SPEED
 from aiverse_server.server.app import CLOSE_POLICY_VIOLATION, create_app
@@ -38,18 +18,12 @@ from aiverse_server.server.protocol import (
 
 HELLO = {"type": "hello", "protocolVersion": PROTOCOL_VERSION}
 
-STOCK = Inventory(((COMPUTE, 100), ("v1", 1)))
-
-HARVEST_YIELD = PROGRAM_TIERS[0].compute_per_job
-"""What a job pays with v1, the program both residents carry."""
-
 SMALL_WORLD = World(
     map=WorldMap(size=50),
     residents=(
-        Resident(id="a", name="甲", color="#112233", position=Position(0, 50), inventory=STOCK),
-        Resident(id="b", name="乙", color="#AABBCC", position=Position(12.5, 7), inventory=STOCK),
+        Resident(id="a", name="甲", color="#112233", position=Position(0, 50)),
+        Resident(id="b", name="乙", color="#AABBCC", position=Position(12.5, 7)),
     ),
-    springs=(Spring(id="p1", position=Position(10, 10), radius=4, reserve=40),),
 )
 
 
@@ -85,9 +59,6 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
             "type": "state",
             "world": {
                 "map": {"size": 50},
-                "springs": [
-                    {"id": "p1", "position": {"x": 10, "y": 10}, "radius": 4, "reserve": 40}
-                ],
                 "residents": [
                     {
                         "id": "a",
@@ -96,14 +67,8 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "position": {"x": 0, "y": 50},
                         "coins": 0,
                         "spendableCoins": 0,
-                        "collectorBalance": 0,
-                        "carriedPrograms": {"v1": 1},
                         "left": False,
                         "rank": 1,
-                        "compute": 100,
-                        "programs": {"v1": 1},
-                        "data": 0,
-                        "programsWritten": 0,
                     },
                     {
                         "id": "b",
@@ -112,40 +77,16 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "position": {"x": 12.5, "y": 7},
                         "coins": 0,
                         "spendableCoins": 0,
-                        "collectorBalance": 0,
-                        "carriedPrograms": {"v1": 1},
                         "left": False,
                         "rank": 1,
-                        "compute": 100,
-                        "programs": {"v1": 1},
-                        "data": 0,
-                        "programsWritten": 0,
                     },
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
-                "mines": [],
-                "exchange": {
-                    "books": [
-                        {"item": item, "bids": [], "asks": []}
-                        for item in ("compute", "data", "v1", "v2", "v3", "material")
-                    ],
-                    "fills": [],
-                    "orders": [],
-                    "maxOrders": 8,
-                },
+                "exchange": {"books": [], "fills": [], "orders": [], "maxOrders": 8},
                 "speech": [],
                 "offers": [],
                 "contractProposals": [],
                 "contracts": [],
-                "collectors": [],
-                "collectorRules": {
-                    "price": 9000,
-                    "capacity": 4,
-                    "cycleSeconds": 20,
-                    "yieldMultiplier": 2,
-                    "rentPer100": 50,
-                    "upkeepPer100": 20,
-                },
             },
         }
 
@@ -158,6 +99,7 @@ def test_default_app_serves_the_fixed_layout() -> None:
     assert world["map"]["size"] == 150
     assert [r["id"] for r in world["residents"]] == [f"r{n}" for n in range(1, 9)]
     assert {r["coins"] for r in world["residents"]} == {10_000}
+    assert {(r["position"]["x"], r["position"]["y"]) for r in world["residents"]} == {(75, 75)}
 
 
 @pytest.mark.parametrize(
@@ -432,16 +374,11 @@ def test_the_clock_ends_the_game_without_any_action() -> None:
     assert world["game"] == {"ended": True, "remainingSeconds": 0}
 
 
-def harvest(resident_id: str, spring_id: str) -> str:
-    action = {"type": "harvest", "residentId": resident_id, "springId": spring_id}
-    return json.dumps({"type": "action", "action": action})
-
-
 def resident_view(world: dict[str, Any], resident_id: str) -> dict[str, Any]:
     return next(r for r in world["residents"] if r["id"] == resident_id)
 
 
-def test_a_walk_spends_compute_shown_in_the_next_state(client: TestClient) -> None:
+def test_a_walk_costs_nothing_but_time(client: TestClient) -> None:
     with client.websocket_connect("/ws") as ws:
         greet(ws)
 
@@ -450,104 +387,28 @@ def test_a_walk_spends_compute_shown_in_the_next_state(client: TestClient) -> No
         b = resident_view(ws.receive_json()["world"], "b")
 
     assert reply["ok"] is True
-    assert b["compute"] == 98
-
-
-def test_a_harvesting_job_is_shown_and_paid_out_to_every_page(
-    client: TestClient, clock: FakeClock
-) -> None:
-    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
-        greet(ws)
-        greet(watcher)
-        ws.send_text(move("b", 12.5, 10))
-        assert ws.receive_json()["ok"] is True
-        ws.receive_json(), watcher.receive_json()
-
-        clock.now = 2
-        ws.send_text(harvest("b", "p1"))
-        assert ws.receive_json()["ok"] is True
-        started = [ws.receive_json()["world"], watcher.receive_json()["world"]]
-        # The first frame after the job ends pays it out and tells everyone, then is handled.
-        clock.now = 2 + HARVEST_SECONDS
-        ws.send_text(move("b", 12.5, 10))
-        assert ws.receive_json()["ok"] is True
-        paid = [resident_view(c.receive_json()["world"], "b") for c in (ws, watcher)]
-
-    for world in started:
-        assert world["springs"][0]["reserve"] == 40 - HARVEST_YIELD
-        assert resident_view(world, "b")["harvesting"] == {
-            "springId": "p1",
-            "amount": HARVEST_YIELD,
-            "program": "v1",
-            "remainingSeconds": HARVEST_SECONDS,
-        }
-    for b in paid:
-        assert b["compute"] == 98 + HARVEST_YIELD
-        assert "harvesting" not in b
-
-
-@pytest.mark.parametrize(
-    ("frame", "code"),
-    [
-        (harvest("a", "p1"), "not_at_spring"),
-        (harvest("b", "p9"), "unknown_spring"),
-    ],
-)
-def test_compute_and_harvesting_rejections_reach_the_sender(
-    client: TestClient, frame: str, code: str
-) -> None:
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(frame)
-        assert ws.receive_json()["code"] == code
-
-
-def test_a_walk_beyond_the_compute_left_is_refused(client: TestClient, clock: FakeClock) -> None:
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(move("a", 50, 0))
-        assert ws.receive_json()["ok"] is True
-        assert resident_view(ws.receive_json()["world"], "a")["compute"] == 64
-
-        clock.now = 100
-        ws.send_text(move("a", 0, 50))
-        assert ws.receive_json()["ok"] is True
-        assert resident_view(ws.receive_json()["world"], "a")["compute"] == 28
-
-        clock.now = 200
-        ws.send_text(move("a", 50, 0))
-        reply = ws.receive_json()
-
-    assert reply["code"] == "not_enough_compute"
+    assert b["coins"] == 0
+    assert b["walking"] == {"target": {"x": 12.5, "y": 10}, "remainingSeconds": 3 / WALK_SPEED}
 
 
 @pytest.mark.parametrize(
     "action",
     [
-        {"type": "harvest", "residentId": "a"},
-        {"type": "harvest", "springId": "p1"},
-        {"type": "harvest", "residentId": "a", "springId": 1},
+        {"type": "harvest", "residentId": "a", "springId": "p1"},
+        {"type": "sell_compute", "residentId": "a", "quantity": 1},
+        {"type": "buy_program", "residentId": "a", "tier": "v1"},
+        {"type": "gather_data", "residentId": "a", "mineId": "m1"},
+        {"type": "build_collector", "residentId": "a", "springId": "p1"},
     ],
 )
-def test_malformed_harvest_actions_get_a_bounded_error(
-    client: TestClient, action: dict[str, Any]
-) -> None:
+def test_the_old_actions_are_gone(client: TestClient, action: dict[str, object]) -> None:
     with client.websocket_connect("/ws") as ws:
         greet(ws)
         ws.send_text(json.dumps({"type": "action", "action": action}))
-        assert ws.receive_json()["code"] == "bad_message"
 
+        reply = ws.receive_json()
 
-def test_the_timer_pays_out_harvesting_without_any_action() -> None:
-    job = HarvestJob("p1", ends_at=0.2, amount=5, program="v1")
-    harvester = replace(SMALL_WORLD.residents[1], position=Position(10, 10), harvesting=job)
-    world = replace(SMALL_WORLD, residents=(SMALL_WORLD.residents[0], harvester))
-    with TestClient(create_app(world)) as client, client.websocket_connect("/ws") as ws:
-        b = resident_view(greet(ws), "b")
-        if "harvesting" in b:
-            b = resident_view(ws.receive_json()["world"], "b")
-    assert b["compute"] == 105
-    assert "harvesting" not in b
+    assert (reply["type"], reply["code"]) == ("error", "bad_message")
 
 
 def test_the_timer_brings_a_walker_in_without_any_action() -> None:
@@ -569,281 +430,6 @@ def test_the_timer_brings_a_walker_in_without_any_action() -> None:
     assert "walking" not in b
 
 
-def test_default_world_gives_everyone_compute_and_scatters_springs() -> None:
-    with TestClient(create_app()).websocket_connect("/ws") as ws:
-        world = greet(ws)
-    assert {r["compute"] for r in world["residents"]} == {STARTING_COMPUTE}
-    assert len(world["springs"]) == SPRING_COUNT
-
-
-def test_a_frame_after_the_deadline_pays_jobs_due_before_it_and_voids_the_rest(
-    clock: FakeClock,
-) -> None:
-    early = replace(
-        SMALL_WORLD.residents[0], harvesting=HarvestJob("p1", GAME_DURATION - 1, 5, "v1")
-    )
-    late = replace(
-        SMALL_WORLD.residents[1], harvesting=HarvestJob("p1", GAME_DURATION + 5, 7, "v1")
-    )
-    world = replace(SMALL_WORLD, residents=(early, late))
-    client = TestClient(create_app(world, clock=clock))
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        clock.now = GAME_DURATION + 10
-        ws.send_text(move("a", 1, 1))
-        assert ws.receive_json()["code"] == "game_over"
-        final = ws.receive_json()["world"]
-    assert final["game"]["ended"] is True
-    assert resident_view(final, "a")["compute"] == 105
-    assert resident_view(final, "b")["compute"] == 100
-    assert final["springs"][0]["reserve"] == 47
-
-
-def test_the_timer_wakes_for_a_job_started_while_it_waits(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("aiverse_server.economy.harvesting.HARVEST_SECONDS", 0.2)
-    harvester = replace(SMALL_WORLD.residents[1], position=Position(10, 10))
-    world = replace(SMALL_WORLD, residents=(SMALL_WORLD.residents[0], harvester))
-    # The timer is already asleep until the end of the game when the job starts. The game is
-    # short, so a timer that never wakes for the job fails here rather than hangs.
-    app = create_app(world, duration=3)
-    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(harvest("b", "p1"))
-        assert ws.receive_json()["ok"] is True
-        assert "harvesting" in resident_view(ws.receive_json()["world"], "b")
-        # No frame follows: only the timer can send this, and it must come before the end.
-        paid = ws.receive_json()["world"]
-    assert paid["game"]["ended"] is False
-    b = resident_view(paid, "b")
-    assert b["compute"] == 100 + HARVEST_YIELD
-    assert "harvesting" not in b
-
-
-def sell(resident_id: str, quantity: object) -> str:
-    action = {"type": "sell_compute", "residentId": resident_id, "quantity": quantity}
-    return json.dumps({"type": "action", "action": action})
-
-
-MARKET_WORLD = replace(SMALL_WORLD, market=Market(Position(12, 7), radius=5))
-
-
-def test_states_show_the_market_and_its_prices(clock: FakeClock) -> None:
-    with TestClient(create_app(MARKET_WORLD, clock=clock)).websocket_connect("/ws") as ws:
-        world = greet(ws)
-
-    assert world["market"] == {
-        "position": {"x": 12, "y": 7},
-        "radius": 5,
-        "basePrice": MARKET_BASE_PRICE,
-        "depth": MARKET_DEPTH,
-        "halfLifeSeconds": MARKET_HALF_LIFE,
-        "restingPressure": MARKET_RESTING_PRESSURE,
-        "pressure": 0,
-        "programs": [
-            {"tier": "v1", "price": 600, "computePerJob": 30},
-            {"tier": "v2", "price": 2400, "computePerJob": 60},
-            {"tier": "v3", "price": 6000, "computePerJob": 100},
-        ],
-        "priceHistory": [],
-    }
-
-
-def test_states_show_the_price_noted_through_a_quiet_stretch_and_a_sale(clock: FakeClock) -> None:
-    noted = Market(Position(12, 7), radius=5, history=(PricePoint(0.0, MARKET_BASE_PRICE),))
-    client = TestClient(create_app(replace(MARKET_WORLD, market=noted), clock=clock))
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-
-        clock.now = 12.0
-        ws.send_text(sell("b", 30))
-        assert ws.receive_json()["ok"] is True
-        world = ws.receive_json()["world"]
-
-    history = world["market"]["priceHistory"]
-    times = [point["time"] for point in history]
-    prices = [point["price"] for point in history]
-    # Noted at 0, 5 and 10 s with no sale, then before and after the sale at 12 s.
-    assert times == [0.0, 5.0, 10.0, 12.0, 12.0]
-    assert prices[0] == MARKET_BASE_PRICE
-    assert prices[0] < prices[1] < prices[2] < prices[3]
-    assert prices[4] < prices[3]
-
-
-def test_selling_compute_pays_coins_and_lowers_the_price_for_everyone(clock: FakeClock) -> None:
-    client = TestClient(create_app(MARKET_WORLD, clock=clock))
-    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
-        greet(ws)
-        greet(watcher)
-
-        ws.send_text(sell("b", 30))
-        reply = ws.receive_json()
-        seen = [ws.receive_json()["world"], watcher.receive_json()["world"]]
-
-    assert reply["ok"] is True
-    for world in seen:
-        b = resident_view(world, "b")
-        # 30 compute into an untouched market, as in the market's unit tests.
-        assert (b["coins"], b["compute"], b["rank"]) == (578, 70, 1)
-        assert resident_view(world, "a")["rank"] == 2
-        assert world["market"]["pressure"] == 30
-
-
-def test_a_later_state_shows_the_pressure_faded_since_the_sale(clock: FakeClock) -> None:
-    client = TestClient(create_app(MARKET_WORLD, clock=clock))
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(sell("b", 30))
-        ws.receive_json(), ws.receive_json()
-
-        clock.now = MARKET_HALF_LIFE
-        ws.send_text(sell("b", 1))
-        assert ws.receive_json()["ok"] is True
-        world = ws.receive_json()["world"]
-
-    # Halfway from 30 to the resting -200, plus the compute just sold.
-    assert world["market"]["pressure"] == pytest.approx(-84)
-
-
-@pytest.mark.parametrize(
-    ("frame", "code"),
-    [
-        (sell("b", 0), "invalid_quantity"),
-        (sell("b", 101), "not_enough_compute"),
-        (sell("a", 1), "not_at_market"),
-    ],
-)
-def test_market_rejections_reach_the_sender(clock: FakeClock, frame: str, code: str) -> None:
-    client = TestClient(create_app(MARKET_WORLD, clock=clock))
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(frame)
-        assert ws.receive_json()["code"] == code
-
-
-@pytest.mark.parametrize(
-    "action",
-    [
-        {"type": "sell_compute", "residentId": "b"},
-        {"type": "sell_compute", "quantity": 1},
-        {"type": "sell_compute", "residentId": "b", "quantity": 1.5},
-        {"type": "sell_compute", "residentId": "b", "quantity": "1"},
-        {"type": "sell_compute", "residentId": "b", "quantity": True},
-    ],
-)
-def test_malformed_sell_actions_get_a_bounded_error(
-    client: TestClient, action: dict[str, Any]
-) -> None:
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(json.dumps({"type": "action", "action": action}))
-        assert ws.receive_json()["code"] == "bad_message"
-
-
-def test_a_quantity_too_big_for_a_float_is_refused_and_the_socket_stays_usable(
-    clock: FakeClock,
-) -> None:
-    client = TestClient(create_app(MARKET_WORLD, clock=clock))
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        action = '{"type": "sell_compute", "residentId": "b", "quantity": 1' + "0" * 400 + "}"
-        ws.send_text('{"type": "action", "action": ' + action + "}")
-        assert ws.receive_json()["code"] == "not_enough_compute"
-        ws.send_text(sell("b", 1))
-        assert ws.receive_json()["ok"] is True
-
-
-def test_default_world_has_a_market_in_the_middle() -> None:
-    with TestClient(create_app()).websocket_connect("/ws") as ws:
-        world = greet(ws)
-    assert world["market"]["position"] == {"x": 75, "y": 75}
-    # The real clock has barely moved the pressure since the world was made: about 2.3 compute
-    # a second at first, so a few seconds of slack.
-    assert world["market"]["pressure"] == pytest.approx(0, abs=10)
-
-
-def buy(resident_id: str, tier: object) -> str:
-    action = {"type": "buy_program", "residentId": resident_id, "tier": tier}
-    return json.dumps({"type": "action", "action": action})
-
-
-# b stands at both the market and the spring, with coins for v1 but not v2, and no program.
-SHOP_WORLD = replace(
-    MARKET_WORLD,
-    residents=(
-        MARKET_WORLD.residents[0],
-        replace(MARKET_WORLD.residents[1], coins=1_000, inventory=Inventory(((COMPUTE, 100),))),
-    ),
-)
-
-
-def test_a_program_bought_shows_on_every_page(clock: FakeClock) -> None:
-    client = TestClient(create_app(SHOP_WORLD, clock=clock))
-    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
-        before = resident_view(greet(ws), "b")
-        greet(watcher)
-
-        ws.send_text(buy("b", "v1"))
-        reply = ws.receive_json()
-        after = [resident_view(c.receive_json()["world"], "b") for c in (ws, watcher)]
-
-    assert before["programs"] == {}
-    assert reply["ok"] is True
-    assert [(b["coins"], b["programs"]) for b in after] == [(400, {"v1": 1})] * 2
-
-
-def test_a_program_bought_harvests(clock: FakeClock) -> None:
-    client = TestClient(create_app(SHOP_WORLD, clock=clock))
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(buy("b", "v1"))
-        assert ws.receive_json()["ok"] is True
-        ws.receive_json()
-
-        ws.send_text(harvest("b", "p1"))
-        reply = ws.receive_json()
-        b = resident_view(ws.receive_json()["world"], "b")
-
-    assert reply["ok"] is True
-    assert b["harvesting"]["program"] == "v1"
-    assert b["harvesting"]["amount"] == 30
-
-
-@pytest.mark.parametrize(
-    ("frame", "code"),
-    [
-        (buy("b", "C9"), "unknown_program"),
-        (buy("a", "v1"), "not_at_market"),
-        (buy("b", "v2"), "not_enough_coins"),
-        (harvest("b", "p1"), "no_program"),
-    ],
-)
-def test_purchase_rejections_reach_the_sender(clock: FakeClock, frame: str, code: str) -> None:
-    client = TestClient(create_app(SHOP_WORLD, clock=clock))
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(frame)
-        assert ws.receive_json()["code"] == code
-
-
-@pytest.mark.parametrize(
-    "action",
-    [
-        {"type": "buy_program", "residentId": "b"},
-        {"type": "buy_program", "tier": "v1"},
-        {"type": "buy_program", "residentId": "b", "tier": 1},
-    ],
-)
-def test_malformed_buy_actions_get_a_bounded_error(
-    client: TestClient, action: dict[str, Any]
-) -> None:
-    with client.websocket_connect("/ws") as ws:
-        greet(ws)
-        ws.send_text(json.dumps({"type": "action", "action": action}))
-        assert ws.receive_json()["code"] == "bad_message"
-
-
 def say(resident_id: str, text: object, to: object = None) -> str:
     action: dict[str, object] = {"type": "say", "residentId": resident_id, "text": text}
     if to is not None:
@@ -856,7 +442,7 @@ SPEECH_WORLD = replace(
     SMALL_WORLD,
     residents=(
         *SMALL_WORLD.residents,
-        Resident(id="c", name="丙", color="#445566", position=Position(25, 25), inventory=STOCK),
+        Resident(id="c", name="丙", color="#445566", position=Position(25, 25)),
     ),
 )
 
@@ -975,7 +561,7 @@ def test_states_carry_only_the_latest_speech(client: TestClient) -> None:
         greet(ws)
         ws.send_text(view_as("a"))
         ws.receive_json()
-        # Whispers, at one compute each, so a's 100 compute last.
+        # Whispers, which are free, so a can say more than the page keeps.
         for i in range(SPEECH_VIEW_LIMIT + 3):
             ws.send_text(say("a", str(i), to="b"))
             assert ws.receive_json()["ok"] is True

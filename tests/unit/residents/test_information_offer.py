@@ -27,8 +27,8 @@ WORLD = World(
     ),
 )
 
-SUMMARY = "a rich spring"
-CONTENT = "spring p3 near (40, 90) held 900 compute"
+SUMMARY = "a busy corner"
+CONTENT = "parcel L7-3 near (75, 40) draws the crowd"
 
 
 def sell(world: World, buyer_id: str = "b", price: int = 30) -> World:

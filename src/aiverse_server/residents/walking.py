@@ -1,8 +1,8 @@
 """Walking: residents cross the map at a fixed speed instead of arriving at once.
 
-`MoveTo` starts a walk in a straight line at `WALK_SPEED`. The resident pays for the whole
-walk when setting off, see `compute.walk_cost`, and arrives `walk_seconds` of game time later.
-Until then they are busy, as when harvesting: they can do nothing but talk or leave the game.
+`MoveTo` starts a walk in a straight line at `WALK_SPEED`. Walking costs time and nothing else:
+the resident arrives `walk_seconds` of game time later. Until then they are busy: they can do
+nothing but talk or leave the game.
 During the walk `Resident.position` stays where they set off; `position_at` tells where they
 are on the way, which is what others see. Leaving the game, or the game ending, stops them
 there.
@@ -21,9 +21,7 @@ from dataclasses import replace
 from ..core.world import Position, Resident, WalkJob, World
 
 WALK_SPEED = 2.5
-"""Map units a resident walks per game second. A spring is about 20 units from the nearest
-spot on the default map, some 8 seconds away, close to the 10 seconds one harvesting job takes;
-crossing the whole map takes 40."""
+"""Map units a resident walks per game second; crossing the whole map takes 60."""
 
 
 def walk_seconds(start: Position, end: Position) -> float:
@@ -51,7 +49,7 @@ def position_at(resident: Resident, time: float) -> Position:
 
 def start_walk(world: World, resident_id: str, target: Position) -> World:
     """Set the resident off towards `target`; standing still takes no time and starts nothing.
-    The caller checks the target and charges the walk."""
+    The caller checks the target."""
     resident = _find(world, resident_id)
     seconds = walk_seconds(resident.position, target)
     if seconds == 0:

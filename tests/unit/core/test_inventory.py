@@ -16,8 +16,7 @@ from aiverse_server.core.inventory import (
     take_item,
 )
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.compute import COMPUTE
-from aiverse_server.game.layout import STARTING_COMPUTE, create_default_world
+from aiverse_server.game.layout import create_default_world
 
 WORLD = World(
     map=WorldMap(size=10),
@@ -34,10 +33,10 @@ WORLD = World(
 )
 
 
-def test_residents_start_with_nothing_but_their_compute() -> None:
+def test_residents_start_with_nothing() -> None:
     assert list_items(WORLD, "a") == {}
     world = create_default_world()
-    assert all(list_items(world, r.id) == {COMPUTE: STARTING_COMPUTE} for r in world.residents)
+    assert all(list_items(world, r.id) == {} for r in world.residents)
 
 
 def test_list_items_is_sorted_by_kind() -> None:

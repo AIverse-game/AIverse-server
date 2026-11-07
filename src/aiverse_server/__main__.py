@@ -1,5 +1,5 @@
 """Run the server: `uv run aiverse-server [--host HOST] [--port PORT] [--duration SECONDS]
-[--seed N] [--config FILE] [--game-config FILE] [--agent RESIDENT=BRAIN ...]
+[--config FILE] [--game-config FILE] [--agent RESIDENT=BRAIN ...]
 [--log-dir DIR] [--agent-log FILE]`.
 
 `--agent r1=scripted` drives resident r1 with the fixed-plan bot, `--agent r2=llm` or
@@ -59,12 +59,6 @@ def main() -> None:
         help="seconds until the game ends (overrides the game config)",
     )
     parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="seed for where the springs go (default: different every game)",
-    )
-    parser.add_argument(
         "--config",
         type=Path,
         default=None,
@@ -121,7 +115,7 @@ def main() -> None:
     override = config.llm_override()
     resident_overrides = config.resident_overrides()
     llm_brain = partial(ChatCompletionsBrain, max_tokens=config.override.max_tokens)
-    world = create_default_world(args.seed)
+    world = create_default_world()
     resident_ids = {resident.id for resident in world.residents}
     unknown = sorted(set(resident_overrides) - resident_ids)
     if unknown:
@@ -142,7 +136,7 @@ def main() -> None:
         if resident_id in agents:
             parser.error(f"resident {resident_id!r} is given two agents")
         if kind == "scripted":
-            agents[resident_id] = ScriptedBrain(seed=args.seed)
+            agents[resident_id] = ScriptedBrain()
         else:
             try:
                 theirs = resident_overrides.get(resident_id, override)

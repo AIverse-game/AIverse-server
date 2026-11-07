@@ -4,7 +4,7 @@ Each round the runner calls `Game.begin_turn`, turns the perception into an obse
 hands it, with tools bound to the resident, to the brain. Then it sleeps until one of these
 happens, see decision 0003 in the client repository:
 
-- the resident stops being busy: a walk or a harvesting, gathering or writing job has ended;
+- the resident stops being busy: a walk has ended;
 - while free, an offer arrives for them, a contract of theirs ends other than by their
   own doing, such as the supplier's last delivery or the contract lapsing, or someone else's
   order fills one of theirs resting on the exchange;
@@ -32,7 +32,6 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
-from ..economy.market import pressure_at
 from ..game.lifecycle import GameError
 from .llm_brain import ChatCompletionsBrain
 from .observation import Observation, observe, to_json
@@ -185,7 +184,7 @@ class _Attention:
     heard: int = 0
     """Sequence number of the latest line said by someone else in the resident's hearing."""
     done: int = 0
-    """Sequence number of the resident's latest activity ending a walk or a harvesting job."""
+    """Sequence number of the resident's latest activity ending a walk."""
     announced: int = 0
     """Sequence number of the latest notice the server announced to everyone."""
     filled: int = 0
@@ -216,7 +215,7 @@ class AgentRunner:
         try:
             while not self._finished():
                 started = asyncio.get_running_loop().time()
-                # Offers, speech, ended contracts and finished jobs as of the look, so those
+                # Offers, speech, ended contracts and finished walks as of the look, so those
                 # arriving while the brain thinks still wake it, a walk that also ended
                 # meanwhile included; free or busy as the brain left the resident.
                 before = self._attention()
@@ -246,13 +245,7 @@ class AgentRunner:
                 self.game.remaining(),
                 self._thinking,
             )
-            market = self.game.world.market
-            tools = ResidentTools(
-                self.game,
-                self.resident_id,
-                seen_pressure=pressure_at(market, self.game.world.time) if market else None,
-                seen_at=self.game.world.time,
-            )
+            tools = ResidentTools(self.game, self.resident_id)
             balance = resource_balance(self.game, self.resident_id)
             remark: str | None = None
             error: str | None = None
@@ -387,7 +380,7 @@ class AgentRunner:
                 (
                     entry.seq
                     for entry in world.activity.entries
-                    if entry.resident_id == me.id and entry.kind in ("moved", "finished_harvesting")
+                    if entry.resident_id == me.id and entry.kind == "moved"
                 ),
                 default=0,
             ),

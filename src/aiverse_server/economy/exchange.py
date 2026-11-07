@@ -7,8 +7,7 @@ side, oldest first at the same price, each fill at the resting order's price; a 
 offered more gets the difference back. What is left rests on the book until it fills, is
 cancelled, expires, or its owner leaves or the game ends, all of which hand back what is still
 set aside. Fills reach both sides wherever they are, and are logged without names for others
-to read. The market's own buying of compute, see `market.py`, is separate: the system never
-places orders.
+to read. The system never places orders.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -21,13 +20,9 @@ from ..core.inventory import add_coins, store_item, take_coins, take_item
 from ..core.ledger import record_transfer
 from ..core.orders import FILL_LIMIT, Fill, Order, OrderBook, Side
 from ..core.world import Resident, World
-from .compute import COMPUTE
-from .gathering import DATA
-from .programs import PROGRAM_TIERS
-from .studio import MATERIAL
 
-EXCHANGE_ITEMS = (COMPUTE, DATA, *(tier.tier for tier in PROGRAM_TIERS), MATERIAL)
-"""Items with an order book."""
+EXCHANGE_ITEMS: tuple[str, ...] = ()
+"""Items with an order book. No item exists yet; the content residents make will be the first."""
 
 MAX_ORDERS = 8
 """Resting orders one resident may have at a time; with that many, only an order that fills

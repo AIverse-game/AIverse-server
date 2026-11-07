@@ -1,1 +1,1 @@
-"""The economy: compute as stamina, programs, harvesting springs, the market and trade offers."""
+"""The economy: land, footfall, the exchange, trade offers and contracts."""

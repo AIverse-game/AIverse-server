@@ -1,7 +1,7 @@
 """Resident inventories: store, take, count, list and clear items, and pay or earn coins.
 
 These are server-side building blocks, not operation primitives: clients and AI cannot call
-them directly. Game rules such as gathering, crafting and trading will be primitives in
+them directly. Game rules such as trading will be primitives in
 `actions.py` that use them and turn `InventoryError` into a rejection.
 
 Like the rest of the world, every function returns a new world and leaves its argument

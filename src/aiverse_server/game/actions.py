@@ -6,10 +6,9 @@ a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
-leaving and speaking, for a resident who is busy harvesting or walking. A resident whose last
-compute is spent by a primitive, their own or one they agreed to, is out of the game
-afterwards, see `lifecycle.py`. What a primitive changes on the map goes into the activity
-log for others nearby to notice, see `perception.py`.
+leaving, speaking and withdrawing orders, for a resident who is busy walking. What a primitive
+changes on the map goes into the activity log for others nearby to notice, see
+`perception.py`.
 """
 
 from dataclasses import dataclass
@@ -26,15 +25,6 @@ from ..core.events import (
 from ..core.inventory import InventoryError, InventoryErrorCode
 from ..core.orders import Side
 from ..core.world import Position, World
-from ..economy.collectors import (
-    CollectorError,
-    CollectorErrorCode,
-    build_collector,
-    fund_slot,
-    install_program,
-    remove_program,
-)
-from ..economy.compute import ComputeError, ComputeErrorCode, pay_for_walk
 from ..economy.contracts import (
     ContractError,
     ContractErrorCode,
@@ -49,28 +39,14 @@ from ..economy.exchange import (
     cancel_order,
     place_order,
 )
-from ..economy.facilities import (
-    FacilityError,
-    FacilityErrorCode,
-    build_ad,
-    build_meeting_room,
-    build_server,
-    set_hosting_fee,
-    supply_server,
-)
-from ..economy.gathering import DataError, DataErrorCode, start_gathering
-from ..economy.harvesting import HarvestError, HarvestErrorCode, check_not_busy, start_harvesting
 from ..economy.land import LandError, LandErrorCode, buy_parcel
-from ..economy.market import MarketError, MarketErrorCode, sell_compute
-from ..economy.programs import ProgramError, ProgramErrorCode, buy_program
-from ..economy.studio import StudioError, StudioErrorCode, start_making_material, start_writing
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
 from ..residents.memory import NoteError, NoteErrorCode
 from ..residents.perception import record_activity
 from ..residents.speech import SpeechError, SpeechErrorCode, say
 from ..residents.walking import start_walk
-from .lifecycle import GameError, GameErrorCode, check_can_act, knock_out_exhausted, leave_game
+from .lifecycle import GameError, GameErrorCode, check_can_act, check_not_busy, leave_game
 
 # Sending or answering an event runs that kind's hooks, which may refuse with their own codes.
 RejectionCode = (
@@ -79,18 +55,10 @@ RejectionCode = (
     | InventoryErrorCode
     | TradeErrorCode
     | GameErrorCode
-    | ComputeErrorCode
-    | HarvestErrorCode
-    | MarketErrorCode
-    | ProgramErrorCode
     | SpeechErrorCode
     | ContractErrorCode
-    | CollectorErrorCode
-    | DataErrorCode
     | ExchangeErrorCode
-    | StudioErrorCode
     | LandErrorCode
-    | FacilityErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -105,12 +73,11 @@ class ActionRejected(Exception):
 
 @dataclass(frozen=True)
 class MoveTo:
-    """Set a resident walking to `target`, paying for the walk in compute, see `compute.py`.
+    """Set a resident walking to `target`; the walk costs time only.
 
     The walk is a straight line at a fixed speed, see `walking.py`; the resident is busy
     until they arrive. Per-round distance and obstacles are still open design questions, see
-    docs/status.md in the client repository. A walk the resident cannot pay for is refused;
-    one that spends their last compute takes them out of the game when they arrive.
+    docs/status.md in the client repository.
     """
 
     resident_id: str
@@ -233,94 +200,10 @@ class LeaveGame:
 
 
 @dataclass(frozen=True)
-class Harvest:
-    """Spend time at a spring the resident stands next to with the best program
-    they carry, see `harvesting.py`: the compute arrives when the job ends, and until then the
-    resident stays with the program and can do nothing but leave."""
-
-    resident_id: str
-    spring_id: str
-
-
-@dataclass(frozen=True)
-class GatherData:
-    """Spend time at a mine the resident stands next to, see `gathering.py`: the data arrive
-    when the job ends, and until then the resident can do nothing but talk or leave."""
-
-    resident_id: str
-    mine_id: str
-
-
-@dataclass(frozen=True)
-class WriteProgram:
-    """Spend the recipe's data, compute and lower program at the studio the resident stands
-    at to write a program of `tier`, see `studio.py`: it arrives when the job ends, and until
-    then the resident can do nothing but talk or leave."""
-
-    resident_id: str
-    tier: str
-
-
-@dataclass(frozen=True)
-class MakeMaterial:
-    """Spend data and compute at the studio the resident stands at to make materials, see
-    `studio.py`: they arrive when the job ends, and until then the resident can do nothing but
-    talk or leave."""
-
-    resident_id: str
-
-
-@dataclass(frozen=True)
 class BuyParcel:
     """Buy the parcel of land the resident stands in from the town, see `land.py`."""
 
     resident_id: str
-
-
-@dataclass(frozen=True)
-class BuildAd:
-    """Build an ad slot of carried materials on the resident's own parcel they stand in, see
-    `facilities.py`; from then on it pays them for the visitors passing by."""
-
-    resident_id: str
-
-
-@dataclass(frozen=True)
-class BuildServer:
-    """Build a server of carried materials on the resident's own parcel they stand in, see
-    `facilities.py`; it hosts meeting rooms around it with the compute supplied to it, charging
-    other owners `fee` coins a cycle."""
-
-    resident_id: str
-    fee: int
-
-
-@dataclass(frozen=True)
-class BuildMeetingRoom:
-    """Build a meeting room of carried materials and a program on the resident's own parcel
-    they stand in, see `facilities.py`; it pays them for visitors in every cycle a server hosts
-    it."""
-
-    resident_id: str
-
-
-@dataclass(frozen=True)
-class SupplyServer:
-    """Put carried compute into the server on the parcel the resident stands in, whoever owns
-    it, see `facilities.py`."""
-
-    resident_id: str
-    amount: int
-
-
-@dataclass(frozen=True)
-class SetHostingFee:
-    """Change the fee the resident's server on parcel `server_id` charges, from anywhere, see
-    `facilities.py`."""
-
-    resident_id: str
-    server_id: str
-    fee: int
 
 
 @dataclass(frozen=True)
@@ -348,64 +231,13 @@ class CancelOrder:
 
 
 @dataclass(frozen=True)
-class SellCompute:
-    """Sell `quantity` carried compute to the market the resident stands at, for coins at the
-    market price, see `market.py`. Selling the last compute owned takes them out of the game."""
-
-    resident_id: str
-    quantity: int
-    seen_pressure: float | None = None
-    """Market pressure the seller saw when their round began, set by the agent tools only: the
-    sale is priced as if others had sold nothing since, see `market.quote`."""
-
-
-@dataclass(frozen=True)
-class BuyProgram:
-    """Buy one program of `tier` at the market the resident stands at, for its fixed
-    price in coins, see `programs.py`."""
-
-    resident_id: str
-    tier: str
-
-
-@dataclass(frozen=True)
 class Say:
     """Say `text` aloud to everyone within earshot, or, given `to`, to that one resident
-    wherever they are, see `speech.py`. Costs a few carried compute, more aloud than to one
-    resident, and works while walking or harvesting."""
+    wherever they are, see `speech.py`. Works while walking."""
 
     resident_id: str
     text: str
     to: str | None = None
-
-
-@dataclass(frozen=True)
-class BuildCollector:
-    resident_id: str
-    spring_id: str
-
-
-@dataclass(frozen=True)
-class InstallProgram:
-    resident_id: str
-    collector_id: int
-    program: str
-    deposit: int
-
-
-@dataclass(frozen=True)
-class FundCollector:
-    resident_id: str
-    collector_id: int
-    slot_id: int
-    amount: int
-
-
-@dataclass(frozen=True)
-class RemoveProgram:
-    resident_id: str
-    collector_id: int
-    slot_id: int
 
 
 Action = (
@@ -419,25 +251,10 @@ Action = (
     | Deliver
     | CancelContract
     | LeaveGame
-    | Harvest
-    | GatherData
-    | WriteProgram
-    | MakeMaterial
     | BuyParcel
-    | BuildAd
-    | BuildServer
-    | BuildMeetingRoom
-    | SupplyServer
-    | SetHostingFee
     | PlaceOrder
     | CancelOrder
-    | SellCompute
-    | BuyProgram
     | Say
-    | BuildCollector
-    | InstallProgram
-    | FundCollector
-    | RemoveProgram
 )
 
 
@@ -446,40 +263,13 @@ def perform(world: World, action: Action) -> World:
         check_can_act(world, action.resident_id)
         if not isinstance(action, LeaveGame | Say | CancelOrder):
             check_not_busy(world, action.resident_id)
-    except (GameError, HarvestError) as error:
+    except GameError as error:
         raise ActionRejected(error.code, error.message) from error
-    return record_activity(world, knock_out_exhausted(world, _carry_out(world, action)))
+    return record_activity(world, _carry_out(world, action))
 
 
 def _carry_out(world: World, action: Action) -> World:
     match action:
-        case BuildCollector() | InstallProgram() | FundCollector() | RemoveProgram():
-            try:
-                match action:
-                    case BuildCollector():
-                        return build_collector(world, action.resident_id, action.spring_id)
-                    case InstallProgram():
-                        return install_program(
-                            world,
-                            action.resident_id,
-                            action.collector_id,
-                            action.program,
-                            action.deposit,
-                        )
-                    case FundCollector():
-                        return fund_slot(
-                            world,
-                            action.resident_id,
-                            action.collector_id,
-                            action.slot_id,
-                            action.amount,
-                        )
-                    case RemoveProgram():
-                        return remove_program(
-                            world, action.resident_id, action.collector_id, action.slot_id
-                        )
-            except (CollectorError, InventoryError) as error:
-                raise ActionRejected(error.code, error.message) from error
         case MoveTo():
             return _move_to(world, action)
         case RespondToEvent() | WithdrawEvent():
@@ -514,55 +304,10 @@ def _carry_out(world: World, action: Action) -> World:
                 raise ActionRejected(error.code, error.message) from error
         case LeaveGame():
             return leave_game(world, action.resident_id)
-        case Harvest():
-            try:
-                return start_harvesting(world, action.resident_id, action.spring_id)
-            except HarvestError as error:
-                raise ActionRejected(error.code, error.message) from error
-        case GatherData():
-            try:
-                return start_gathering(world, action.resident_id, action.mine_id)
-            except DataError as error:
-                raise ActionRejected(error.code, error.message) from error
-        case WriteProgram():
-            try:
-                return start_writing(world, action.resident_id, action.tier)
-            except StudioError as error:
-                raise ActionRejected(error.code, error.message) from error
-        case MakeMaterial():
-            try:
-                return start_making_material(world, action.resident_id)
-            except StudioError as error:
-                raise ActionRejected(error.code, error.message) from error
         case BuyParcel():
             try:
                 return buy_parcel(world, action.resident_id)
             except (LandError, InventoryError) as error:
-                raise ActionRejected(error.code, error.message) from error
-        case BuildAd():
-            try:
-                return build_ad(world, action.resident_id)
-            except (FacilityError, InventoryError) as error:
-                raise ActionRejected(error.code, error.message) from error
-        case BuildServer():
-            try:
-                return build_server(world, action.resident_id, action.fee)
-            except (FacilityError, InventoryError) as error:
-                raise ActionRejected(error.code, error.message) from error
-        case BuildMeetingRoom():
-            try:
-                return build_meeting_room(world, action.resident_id)
-            except (FacilityError, InventoryError) as error:
-                raise ActionRejected(error.code, error.message) from error
-        case SupplyServer():
-            try:
-                return supply_server(world, action.resident_id, action.amount)
-            except (FacilityError, InventoryError) as error:
-                raise ActionRejected(error.code, error.message) from error
-        case SetHostingFee():
-            try:
-                return set_hosting_fee(world, action.resident_id, action.server_id, action.fee)
-            except FacilityError as error:
                 raise ActionRejected(error.code, error.message) from error
         case PlaceOrder():
             try:
@@ -582,22 +327,10 @@ def _carry_out(world: World, action: Action) -> World:
                 return cancel_order(world, action.resident_id, action.order_id)
             except ExchangeError as error:
                 raise ActionRejected(error.code, error.message) from error
-        case SellCompute():
-            try:
-                return sell_compute(
-                    world, action.resident_id, action.quantity, action.seen_pressure
-                )
-            except (MarketError, ComputeError) as error:
-                raise ActionRejected(error.code, error.message) from error
-        case BuyProgram():
-            try:
-                return buy_program(world, action.resident_id, action.tier)
-            except (ProgramError, InventoryError) as error:
-                raise ActionRejected(error.code, error.message) from error
         case Say():
             try:
                 return say(world, action.resident_id, action.text, action.to)
-            except (SpeechError, ComputeError) as error:
+            except SpeechError as error:
                 raise ActionRejected(error.code, error.message) from error
 
 
@@ -642,9 +375,4 @@ def _move_to(world: World, action: MoveTo) -> World:
             "out_of_bounds",
             f"target ({target.x:g}, {target.y:g}) is outside the map [0, {size:g}]",
         )
-    start = next(r.position for r in world.residents if r.id == action.resident_id)
-    try:
-        world = pay_for_walk(world, action.resident_id, start, target)
-    except ComputeError as error:
-        raise ActionRejected(error.code, error.message) from error
     return start_walk(world, action.resident_id, target)

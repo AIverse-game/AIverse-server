@@ -23,55 +23,16 @@ from pydantic.alias_generators import to_camel
 from ..agents.llm_brain import LLMSetting, LLMSettings
 from ..agents.runner import TurnRecord
 from ..core.events import Event
-from ..core.orders import Fill, order_items
+from ..core.orders import Fill
 from ..core.world import COLOR_PATTERN, Position, World
-from ..economy.collectors import (
-    COLLECTOR_CAPACITY,
-    COLLECTOR_PRICE,
-    COLLECTOR_SECONDS,
-    COLLECTOR_YIELD,
-    RENT_PER_100,
-    UPKEEP_PER_100,
-    collector_coins,
-    cycle_amount,
-    cycle_cost,
-    slot_status,
-)
-from ..economy.compute import compute_total
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
-from ..economy.gathering import DATA
-from ..economy.market import (
-    MARKET_BASE_PRICE,
-    MARKET_DEPTH,
-    MARKET_HALF_LIFE,
-    MARKET_RESTING_PRESSURE,
-    pressure_at,
-)
-from ..economy.programs import PROGRAM_TIERS
-from ..economy.studio import FASTEST_SHARE, RECIPES, SPEEDUP_PER_PROGRAM
-from ..economy.trade import PurchaseOffer, SaleOffer, reserved_items
-from ..game.actions import (
-    Action,
-    ActionRejected,
-    BuildCollector,
-    BuyProgram,
-    FundCollector,
-    GatherData,
-    Harvest,
-    InstallProgram,
-    LeaveGame,
-    MoveTo,
-    RejectionCode,
-    RemoveProgram,
-    Say,
-    SellCompute,
-    WriteProgram,
-)
+from ..economy.trade import PurchaseOffer, SaleOffer
+from ..game.actions import Action, ActionRejected, LeaveGame, MoveTo, RejectionCode, Say
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 22
+PROTOCOL_VERSION = 23
 
 ERROR_MAX_LENGTH = 200
 
@@ -112,36 +73,6 @@ class LeaveGameInput(_Message):
     resident_id: str
 
 
-class HarvestInput(_Message):
-    type: Literal["harvest"]
-    resident_id: str
-    spring_id: str
-
-
-class SellComputeInput(_Message):
-    type: Literal["sell_compute"]
-    resident_id: str
-    quantity: StrictInt
-
-
-class BuyProgramInput(_Message):
-    type: Literal["buy_program"]
-    resident_id: str
-    tier: str
-
-
-class GatherDataInput(_Message):
-    type: Literal["gather_data"]
-    resident_id: str
-    mine_id: str
-
-
-class WriteProgramInput(_Message):
-    type: Literal["write_program"]
-    resident_id: str
-    tier: str
-
-
 class SayInput(_Message):
     type: Literal["say"]
     resident_id: str
@@ -150,48 +81,8 @@ class SayInput(_Message):
     """The one resident spoken to; left out to speak aloud to everyone within earshot."""
 
 
-class BuildCollectorInput(_Message):
-    type: Literal["build_collector"]
-    resident_id: str
-    spring_id: str
-
-
-class InstallProgramInput(_Message):
-    type: Literal["install_program"]
-    resident_id: str
-    collector_id: StrictInt
-    program: str
-    deposit: StrictInt
-
-
-class FundCollectorInput(_Message):
-    type: Literal["fund_collector"]
-    resident_id: str
-    collector_id: StrictInt
-    slot_id: StrictInt
-    amount: StrictInt
-
-
-class RemoveProgramInput(_Message):
-    type: Literal["remove_program"]
-    resident_id: str
-    collector_id: StrictInt
-    slot_id: StrictInt
-
-
 ActionInput = Annotated[
-    MoveToInput
-    | LeaveGameInput
-    | HarvestInput
-    | SellComputeInput
-    | BuyProgramInput
-    | GatherDataInput
-    | WriteProgramInput
-    | SayInput
-    | BuildCollectorInput
-    | InstallProgramInput
-    | FundCollectorInput
-    | RemoveProgramInput,
+    MoveToInput | LeaveGameInput | SayInput,
     Field(discriminator="type"),
 ]
 
@@ -267,29 +158,6 @@ class PositionView(_Message):
     y: float
 
 
-class HarvestView(_Message):
-    spring_id: str
-    amount: int
-    """Compute paid out when the job ends."""
-    program: str
-    """Tier of the program doing the work."""
-    remaining_seconds: float
-    """Time left in the job when this was sent."""
-
-
-class GatherView(_Message):
-    mine_id: str
-    amount: int
-    """Data paid out when the job ends."""
-    remaining_seconds: float
-
-
-class WriteView(_Message):
-    tier: str
-    """Tier of the program the job makes, or `material` while making materials."""
-    remaining_seconds: float
-
-
 class WalkingView(_Message):
     target: PositionView
     remaining_seconds: float
@@ -311,71 +179,16 @@ class ResidentView(_Message):
     """Where the resident is when this was sent, on the way while walking."""
     coins: int
     spendable_coins: int
-    collector_balance: int
-    """Total coins, including those set aside by pending offers, contracts, collectors and buy
-    orders; public to everyone."""
+    """Total coins, including those set aside by pending offers, contracts and buy orders;
+    public to everyone."""
     left: bool
     rank: int
     """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""
-    compute: int
-    """Compute owned, the resident's stamina, including those set aside by pending offers and
-    sell orders."""
-    programs: dict[str, int]
-    carried_programs: dict[str, int]
-    """Programs owned, tier to count, including those set aside by pending offers and sell orders;
-    tiers with none are left out."""
-    data: int
-    """Data owned, including those set aside by pending offers and sell orders."""
-    programs_written: int
-    """Programs the resident has written so far; each makes the next job quicker."""
-    harvesting: HarvestView | None = None
-    """Present while the resident is busy harvesting."""
-    gathering: GatherView | None = None
-    """Present while the resident is busy gathering data."""
-    writing: WriteView | None = None
-    """Present while the resident is busy writing a program or making materials."""
     walking: WalkingView | None = None
     """Present while the resident is walking; they head straight for `target` at a steady
     pace and arrive after `remaining_seconds`."""
     agent: AgentView | None = None
     """Present while an agent drives the resident rather than the pages."""
-
-
-class SpringView(_Message):
-    id: str
-    position: PositionView
-    radius: float
-    reserve: int
-
-
-class MineView(_Message):
-    id: str
-    position: PositionView
-    radius: float
-    reserve: int
-
-
-class RecipeView(_Message):
-    tier: str
-    data: int
-    compute: int
-    consumes: str | None = None
-    """Tier of the program it uses up; left out for the first tier."""
-    seconds: float
-    """Game seconds the job takes for a resident who has written nothing yet."""
-
-
-class StudioView(_Message):
-    """Where programs are written: a job takes a recipe's `seconds`, less
-    `speedup_per_program` of them for every program the resident has written before, but never
-    less than `fastest_share` of them."""
-
-    position: PositionView
-    radius: float
-    recipes: list[RecipeView]
-    """One per tier, worst first."""
-    speedup_per_program: float
-    fastest_share: float
 
 
 class LevelView(_Message):
@@ -437,45 +250,6 @@ class ExchangeView(_Message):
     as nobody. Others' orders show only as totals in the books."""
     max_orders: int
     """Resting orders a resident may have at once."""
-
-
-class ProgramTierView(_Message):
-    tier: str
-    price: int
-    """Coins one program costs at the market."""
-    compute_per_job: int
-    """Compute one harvesting job draws while the spring has that much left."""
-
-
-class PricePointView(_Message):
-    time: float
-    """Game seconds since the start."""
-    price: float
-    """Coins one more compute fetched then, before rounding."""
-
-
-class MarketView(_Message):
-    """The market and what sets its price, so clients can follow the price as it moves
-    between states: one more compute fetches `base_price * depth / (depth + p)` coins, where
-    the distance of the pressure p from `resting_pressure` halves every `half_life_seconds`
-    after this was sent, and selling q compute pays
-    `floor(base_price * depth * ln((depth + p + q) / (depth + p)))`."""
-
-    position: PositionView
-    radius: float
-    base_price: float
-    depth: float
-    half_life_seconds: float
-    resting_pressure: float
-    """Pressure the market drifts to with no sales; below zero, so the price then climbs
-    above `base_price`."""
-    pressure: float
-    """Recent sales in compute when this was sent; below zero after a quiet while."""
-    programs: list[ProgramTierView]
-    """Programs on sale here at fixed prices, worst first."""
-    price_history: list[PricePointView]
-    """The compute price over the game so far, oldest first: noted at every sale and every few
-    seconds in between, so a market nobody sells to still shows its price climbing."""
 
 
 class SpeechView(_Message):
@@ -559,7 +333,6 @@ class GameView(_Message):
 
 class ResourceBalanceView(_Message):
     coins: int
-    compute: int
 
 
 class AgentCallView(_Message):
@@ -569,7 +342,6 @@ class AgentCallView(_Message):
     ok: bool
     code: str | None = None
     coins_change: int
-    compute_change: int
 
 
 class AgentTurnView(_Message):
@@ -603,8 +375,8 @@ def agent_turn_view(
         summary=redact(turn.remark)[:500] if turn.remark else None,
         # Exception text is diagnostic, may contain private input, and stays in server logs.
         error="本轮 AI 调用失败，请查看服务端日志。" if turn.error else None,
-        before=ResourceBalanceView(coins=turn.before.coins, compute=turn.before.compute),
-        after=ResourceBalanceView(coins=turn.after.coins, compute=turn.after.compute),
+        before=ResourceBalanceView(coins=turn.before.coins),
+        after=ResourceBalanceView(coins=turn.after.coins),
         calls=[
             AgentCallView(
                 name=redact(call.name)[:80],
@@ -618,7 +390,6 @@ def agent_turn_view(
                 ok=call.result.ok,
                 code=call.result.code,
                 coins_change=call.coins_change,
-                compute_change=call.compute_change,
             )
             for call in turn.calls[:128]
         ],
@@ -635,80 +406,10 @@ def _redacted_arguments(value: object, redact: Callable[[str], str]) -> object:
     return value
 
 
-class CollectorSlotView(_Message):
-    id: int
-    resident_id: str
-    program: str
-    balance: int
-    harvested: int
-    rent_paid: int
-    status: Literal["running", "no_funds", "spring_empty"]
-    remaining_seconds: float
-    compute_per_cycle: int
-    rent_per_cycle: int
-    upkeep_per_cycle: int
-
-
-class CollectorView(_Message):
-    id: int
-    owner_id: str
-    spring_id: str
-    slots: list[CollectorSlotView]
-
-
-class CollectorRulesView(_Message):
-    price: int = COLLECTOR_PRICE
-    capacity: int = COLLECTOR_CAPACITY
-    cycle_seconds: float = COLLECTOR_SECONDS
-    yield_multiplier: int = COLLECTOR_YIELD
-    """A program in a collector harvests this many times its compute per job each cycle."""
-    rent_per_100: int = RENT_PER_100
-    upkeep_per_100: int = UPKEEP_PER_100
-
-
-def collector_views(world: World) -> list[CollectorView]:
-    return [
-        CollectorView(
-            id=collector.id,
-            owner_id=collector.owner_id,
-            spring_id=collector.spring_id,
-            slots=[
-                CollectorSlotView(
-                    id=slot.id,
-                    resident_id=slot.resident_id,
-                    program=slot.program,
-                    balance=slot.balance,
-                    harvested=slot.harvested,
-                    rent_paid=slot.rent_paid,
-                    status=slot_status(world, collector, slot),
-                    remaining_seconds=max(slot.next_at - world.time, 0.0),
-                    compute_per_cycle=cycle_amount(world, collector, slot),
-                    rent_per_cycle=cycle_cost(
-                        collector, slot, cycle_amount(world, collector, slot)
-                    )[0],
-                    upkeep_per_cycle=cycle_cost(
-                        collector, slot, cycle_amount(world, collector, slot)
-                    )[1],
-                )
-                for slot in collector.slots
-            ],
-        )
-        for collector in world.collectors
-    ]
-
-
 class WorldView(_Message):
     map: MapView
-    springs: list[SpringView]
     residents: list[ResidentView]
     game: GameView
-    collectors: list[CollectorView]
-    collector_rules: CollectorRulesView
-    market: MarketView | None = None
-    """Left out on a map without a market."""
-    mines: list[MineView]
-    studio: StudioView | None = None
-    """Left out on a map without a studio."""
     exchange: ExchangeView
     speech: list[SpeechView]
     """The latest `SPEECH_VIEW_LIMIT` lines the connection may see, oldest first: every line
@@ -808,23 +509,12 @@ def world_view(
         if line.to is None or (viewer is not None and viewer in (line.speaker_id, line.to))
     ]
     return WorldView(
-        collectors=collector_views(world),
-        collector_rules=CollectorRulesView(),
         agent_timeline=AgentTimelineView(
             resident_id=viewer, turns=list((agent_turns or {}).get(viewer, ()))
         )
         if viewer is not None
         else None,
         map=MapView(size=world.map.size),
-        springs=[
-            SpringView(
-                id=spring.id,
-                position=_position_view(spring.position),
-                radius=spring.radius,
-                reserve=spring.reserve,
-            )
-            for spring in world.springs
-        ],
         residents=[
             ResidentView(
                 id=resident.id,
@@ -833,39 +523,8 @@ def world_view(
                 position=_position_view(position_at(resident, world.time)),
                 coins=total_coins(world, resident.id),
                 spendable_coins=resident.coins,
-                collector_balance=collector_coins(world, resident.id),
-                carried_programs={
-                    m.tier: resident.inventory.count(m.tier)
-                    for m in PROGRAM_TIERS
-                    if resident.inventory.count(m.tier)
-                },
                 left=resident.left,
                 rank=places[resident.id],
-                compute=compute_total(world, resident.id),
-                programs=_programs_owned(world, resident.id),
-                data=_owned(world, resident.id, DATA),
-                programs_written=resident.programs_written,
-                harvesting=None
-                if resident.harvesting is None
-                else HarvestView(
-                    spring_id=resident.harvesting.spring_id,
-                    amount=resident.harvesting.amount,
-                    program=resident.harvesting.program,
-                    remaining_seconds=max(resident.harvesting.ends_at - world.time, 0.0),
-                ),
-                gathering=None
-                if resident.gathering is None
-                else GatherView(
-                    mine_id=resident.gathering.mine_id,
-                    amount=resident.gathering.amount,
-                    remaining_seconds=max(resident.gathering.ends_at - world.time, 0.0),
-                ),
-                writing=None
-                if resident.writing is None
-                else WriteView(
-                    tier=resident.writing.tier,
-                    remaining_seconds=max(resident.writing.ends_at - world.time, 0.0),
-                ),
                 walking=None
                 if resident.walking is None
                 else WalkingView(
@@ -879,53 +538,6 @@ def world_view(
         game=GameView(
             ended=world.ended,
             remaining_seconds=0.0 if world.ended else max(remaining_seconds, 0.0),
-        ),
-        market=None
-        if world.market is None
-        else MarketView(
-            position=_position_view(world.market.position),
-            radius=world.market.radius,
-            base_price=MARKET_BASE_PRICE,
-            depth=MARKET_DEPTH,
-            half_life_seconds=MARKET_HALF_LIFE,
-            resting_pressure=MARKET_RESTING_PRESSURE,
-            pressure=pressure_at(world.market, world.time),
-            programs=[
-                ProgramTierView(
-                    tier=tier.tier, price=tier.price, compute_per_job=tier.compute_per_job
-                )
-                for tier in PROGRAM_TIERS
-            ],
-            price_history=[
-                PricePointView(time=point.time, price=point.price) for point in world.market.history
-            ],
-        ),
-        mines=[
-            MineView(
-                id=mine.id,
-                position=_position_view(mine.position),
-                radius=mine.radius,
-                reserve=mine.reserve,
-            )
-            for mine in world.mines
-        ],
-        studio=None
-        if world.studio is None
-        else StudioView(
-            position=_position_view(world.studio.position),
-            radius=world.studio.radius,
-            recipes=[
-                RecipeView(
-                    tier=recipe.tier,
-                    data=recipe.data,
-                    compute=recipe.compute,
-                    consumes=recipe.consumes,
-                    seconds=recipe.seconds,
-                )
-                for recipe in RECIPES
-            ],
-            speedup_per_program=SPEEDUP_PER_PROGRAM,
-            fastest_share=FASTEST_SHARE,
         ),
         exchange=_exchange_view(world, viewer),
         speech=[
@@ -1046,21 +658,6 @@ def _exchange_view(world: World, viewer: str | None) -> ExchangeView:
     )
 
 
-def _owned(world: World, resident_id: str, item: str) -> int:
-    """Items of `item` the resident carries or has set aside in offers and sell orders."""
-    resident = next(resident for resident in world.residents if resident.id == resident_id)
-    return (
-        resident.inventory.count(item)
-        + reserved_items(world, resident_id, item)
-        + order_items(world.orders, resident_id, item)
-    )
-
-
-def _programs_owned(world: World, resident_id: str) -> dict[str, int]:
-    owned = {tier.tier: _owned(world, resident_id, tier.tier) for tier in PROGRAM_TIERS}
-    return {tier: count for tier, count in owned.items() if count > 0}
-
-
 def _position_view(position: Position) -> PositionView:
     return PositionView(x=position.x, y=position.y)
 
@@ -1073,28 +670,6 @@ def to_action(message: ActionMessage) -> Action:
             return MoveTo(resident_id=action.resident_id, target=target)
         case LeaveGameInput():
             return LeaveGame(resident_id=action.resident_id)
-        case HarvestInput():
-            return Harvest(resident_id=action.resident_id, spring_id=action.spring_id)
-        case SellComputeInput():
-            return SellCompute(resident_id=action.resident_id, quantity=action.quantity)
-        case BuyProgramInput():
-            return BuyProgram(resident_id=action.resident_id, tier=action.tier)
-        case GatherDataInput():
-            return GatherData(action.resident_id, action.mine_id)
-        case WriteProgramInput():
-            return WriteProgram(action.resident_id, action.tier)
-        case BuildCollectorInput():
-            return BuildCollector(action.resident_id, action.spring_id)
-        case InstallProgramInput():
-            return InstallProgram(
-                action.resident_id, action.collector_id, action.program, action.deposit
-            )
-        case FundCollectorInput():
-            return FundCollector(
-                action.resident_id, action.collector_id, action.slot_id, action.amount
-            )
-        case RemoveProgramInput():
-            return RemoveProgram(action.resident_id, action.collector_id, action.slot_id)
         case SayInput():
             return Say(resident_id=action.resident_id, text=action.text, to=action.to)
 

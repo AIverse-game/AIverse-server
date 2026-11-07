@@ -1,8 +1,7 @@
 """Memory a resident keeps by choice: long-term and short-term notes.
 
-Perception (`perception.py`) remembers some things on its own, such as the springs a resident
-has seen. Anything else is up to whoever drives the resident, such as the AI that will: it
-writes down what it wants to keep as a note with `remember`, and chooses how long it lasts:
+What a resident keeps in mind is up to whoever drives it, such as the AI: it writes down what
+it wants to keep as a note with `remember`, and chooses how long it lasts:
 
 - a long-term note stays for the rest of the game, until the resident forgets it;
 - a short-term note is cleared `SHORT_TERM_SECONDS` of game time after it is written.
@@ -13,7 +12,7 @@ so deciding what is worth keeping stays with the resident. Every note is handed 
 round in the resident's perception, see `perception.begin_turn`.
 
 Keeping notes is not a primitive (`actions.py`): it changes nothing on the map, costs no
-compute, works while harvesting or walking, and is not broadcast, since memory is not in the
+time, works while walking, and is not broadcast, since memory is not in the
 protocol. Like perception, it is refused for a resident who does not exist or has left, and
 once the game is over. Notes live in the in-memory world, so a new game starts without any.
 

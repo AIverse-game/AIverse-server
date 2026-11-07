@@ -5,53 +5,29 @@ import pytest
 from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import Parcel
 from aiverse_server.core.ledger import SYSTEM
-from aiverse_server.core.world import (
-    Inventory,
-    Market,
-    Position,
-    Resident,
-    Spring,
-    World,
-    WorldMap,
-)
-from aiverse_server.economy.compute import COMPUTE
+from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy.land import grid_size, plot, plot_at, plots
 from aiverse_server.game.actions import ActionRejected, BuyParcel, LeaveGame, perform
 from aiverse_server.game.layout import create_default_world
 
 
 def resident(resident_id: str, x: float, y: float, coins: int = 5_000) -> Resident:
-    return Resident(
-        resident_id,
-        resident_id,
-        "#123456",
-        Position(x, y),
-        Inventory(((COMPUTE, 100),)),
-        coins=coins,
-    )
+    return Resident(resident_id, resident_id, "#123456", Position(x, y), coins=coins)
 
 
-# A 10 x 10 grid of parcels. a stands in L5-3, b in L0-0 with little money, c on the spring.
+# A 10 x 10 grid of parcels. a stands in L5-3, b in L0-0 with little money.
 WORLD = World(
     map=WorldMap(size=100),
-    residents=(
-        resident("a", 55, 35),
-        resident("b", 5, 5, coins=1_000),
-        resident("c", 15, 15),
-    ),
-    market=Market(Position(50, 50), 5),
-    springs=(Spring("s1", Position(15, 15), 4, 100),),
+    residents=(resident("a", 55, 35), resident("b", 5, 5, coins=1_000)),
 )
 
 
-def test_the_grid_reserves_every_parcel_touching_a_shared_place() -> None:
-    reserved = [square.id for square in plots(WORLD) if square.reserved]
-
+def test_the_map_is_cut_into_a_grid_of_parcels() -> None:
     assert grid_size(WORLD) == 10
-    assert reserved == ["L1-1", "L4-4", "L5-4", "L4-5", "L5-5"]
+    assert len(plots(WORLD)) == 100
 
 
-def test_land_costs_more_nearer_the_market() -> None:
+def test_land_costs_more_nearer_the_centre() -> None:
     assert [plot(WORLD, 0, 0).price, plot(WORLD, 5, 3).price, plot(WORLD, 9, 9).price] == [
         1_130,
         2_540,
@@ -75,7 +51,6 @@ def test_buying_a_parcel_pays_the_town_and_makes_it_the_buyers() -> None:
 @pytest.mark.parametrize(
     ("world", "action", "code"),
     [
-        (WORLD, BuyParcel("c"), "parcel_reserved"),
         (replace(WORLD, parcels=(Parcel(5, 3, "b"),)), BuyParcel("a"), "parcel_owned"),
         (WORLD, BuyParcel("b"), "not_enough_coins"),
     ],
@@ -96,8 +71,8 @@ def test_land_stays_its_owners_after_they_leave() -> None:
     assert plot(world, 5, 3).owner_id == "a"
 
 
-def test_the_default_map_leaves_most_land_free_to_buy() -> None:
-    squares = plots(create_default_world(1))
+def test_the_default_map_is_a_15_by_15_grid_with_nothing_owned() -> None:
+    squares = plots(create_default_world())
 
     assert len(squares) == 225
-    assert 150 < sum(not square.reserved for square in squares) < 225
+    assert all(square.owner_id is None for square in squares)

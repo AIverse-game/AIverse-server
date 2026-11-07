@@ -6,29 +6,24 @@ import pytest
 from aiverse_server.core.world import (
     SPEECH_LENGTH_LIMIT,
     SPEECH_LIMIT,
-    Inventory,
     Memory,
     Position,
     Resident,
     Speech,
     SpeechLog,
-    Spring,
     World,
     WorldMap,
 )
-from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.game.actions import (
     ActionRejected,
-    Harvest,
     LeaveGame,
     MoveTo,
-    OfferToSell,
     Say,
     perform,
 )
 from aiverse_server.game.lifecycle import end_game
 from aiverse_server.residents.perception import begin_turn
-from aiverse_server.residents.speech import HEARING_RADIUS, SPEECH_COSTS, SpeechError, say
+from aiverse_server.residents.speech import HEARING_RADIUS, SpeechError, say
 
 
 def resident(resident_id: str, x: float, y: float) -> Resident:
@@ -37,7 +32,6 @@ def resident(resident_id: str, x: float, y: float) -> Resident:
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((COMPUTE, 1000), ("v1", 1))),
     )
 
 
@@ -50,7 +44,6 @@ WORLD = World(
         resident("c", 80, 80),
         resident("d", 10, 10 + HEARING_RADIUS),
     ),
-    springs=(Spring("p", Position(10, 10), radius=4, reserve=100),),
     time=4.0,
 )
 
@@ -62,20 +55,20 @@ def heard(world: World, resident_id: str) -> tuple[World, list[tuple[str, str]]]
 
 
 def test_words_spoken_aloud_reach_everyone_in_earshot_and_no_further() -> None:
-    world = perform(WORLD, Say("a", "  anyone selling compute?  "))
+    world = perform(WORLD, Say("a", "  anyone selling posters?  "))
     line = world.speech.entries[0]
     assert line == Speech(
-        1, 4.0, "a", "anyone selling compute?", Position(10, 10), None, ("b", "d")
+        1, 4.0, "a", "anyone selling posters?", Position(10, 10), None, ("b", "d")
     )
     for listener in ("b", "d"):
-        assert heard(world, listener)[1] == [("a", "anyone selling compute?")]
+        assert heard(world, listener)[1] == [("a", "anyone selling posters?")]
     assert heard(world, "c")[1] == []
 
 
 def test_a_whisper_reaches_only_its_listener_wherever_they_are() -> None:
-    world = perform(WORLD, Say("a", "meet me at the spring", to="c"))
+    world = perform(WORLD, Say("a", "meet me at the plaza", to="c"))
     assert world.speech.entries[0].listeners == ("c",)
-    assert heard(world, "c")[1] == [("a", "meet me at the spring")]
+    assert heard(world, "c")[1] == [("a", "meet me at the plaza")]
     # b stands right next to a and still hears nothing.
     assert heard(world, "b")[1] == []
 
@@ -136,15 +129,10 @@ def test_walkers_hear_and_speak_where_they_have_got_to() -> None:
     assert "a" in spoken.listeners
 
 
-@pytest.mark.parametrize(
-    ("busy", "line"),
-    [
-        (perform(WORLD, Harvest("a", "p")), Say("a", "gathering")),
-        (perform(WORLD, MoveTo("b", Position(50, 50))), Say("b", "walking", to="c")),
-    ],
-    ids=["harvesting", "walking"],
-)
-def test_busy_residents_can_still_talk(busy: World, line: Say) -> None:
+def test_a_walker_can_still_talk() -> None:
+    busy = perform(WORLD, MoveTo("b", Position(50, 50)))
+    line = Say("b", "walking", to="c")
+
     spoken = perform(busy, line).speech.entries[-1]
 
     assert (spoken.speaker_id, spoken.text, spoken.to) == (line.resident_id, line.text, line.to)
@@ -225,56 +213,18 @@ def test_the_log_keeps_only_the_latest_lines_and_numbering_goes_on() -> None:
     assert len(lines) == SPEECH_LIMIT
 
 
-def compute(world: World, resident_id: str) -> int:
-    return next(r for r in world.residents if r.id == resident_id).inventory.count(COMPUTE)
-
-
-def with_compute(world: World, resident_id: str, count: int) -> World:
-    items = Inventory(((COMPUTE, count),)) if count else Inventory()
-    residents = tuple(
-        replace(r, inventory=items) if r.id == resident_id else r for r in world.residents
-    )
-    return replace(world, residents=residents)
-
-
-def test_speaking_aloud_costs_more_than_a_whisper() -> None:
+def test_speaking_is_free() -> None:
     aloud = perform(WORLD, Say("a", "hello all"))
     whisper = perform(WORLD, Say("a", "hello b", to="b"))
-    assert compute(aloud, "a") == 1000 - SPEECH_COSTS["aloud"]
-    assert compute(whisper, "a") == 1000 - SPEECH_COSTS["to_one"]
-    assert SPEECH_COSTS == {"aloud": 2, "to_one": 1}
+
+    assert aloud.residents == WORLD.residents
+    assert whisper.residents == WORLD.residents
 
 
 def test_speaking_moves_nothing_on_the_map() -> None:
     world = perform(WORLD, Say("a", "just talking"))
     assert [r.position for r in world.residents] == [r.position for r in WORLD.residents]
     assert world.activity == WORLD.activity
-
-
-def test_too_little_compute_to_speak_is_refused_and_changes_nothing() -> None:
-    world = with_compute(WORLD, "a", 1)
-
-    with pytest.raises(ActionRejected) as refused:
-        perform(world, Say("a", "hello all"))
-
-    assert refused.value.code == "not_enough_compute"
-
-
-def test_whispering_with_the_last_compute_takes_the_speaker_out() -> None:
-    world = with_compute(WORLD, "a", 1)
-
-    after = perform(world, Say("a", "goodbye", to="b"))
-
-    assert next(r for r in after.residents if r.id == "a").left
-    assert after.speech.entries[-1].text == "goodbye"
-
-
-def test_compute_set_aside_in_an_offer_does_not_pay_for_speech() -> None:
-    world = with_compute(WORLD, "a", 2)
-    world = perform(world, OfferToSell("a", "b", COMPUTE, 1, 10))
-    with pytest.raises(ActionRejected) as refused:
-        perform(world, Say("a", "hello all"))
-    assert refused.value.code == "not_enough_compute"
 
 
 LINE = Speech(1, 0.0, "a", "hi", Position(0, 0), None, ("b",))
