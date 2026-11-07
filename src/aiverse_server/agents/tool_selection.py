@@ -19,6 +19,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "land": ("buy_parcel", "joint_buy_parcel"),
     "compute": ("buy_node", "build_ad"),
     "content": ("make_content", "place_content"),
+    "transport": ("build_portal", "link_portals", "teleport"),
     "exchange": ("place_order", "cancel_order"),
     "offers": (
         "offer_to_buy",
@@ -38,8 +39,8 @@ DISCOVER_TOOL_SPEC: dict[str, Any] = {
         "name": "discover_tools",
         "description": (
             "Make additional game tools available in this round. Choose a group when the "
-            "current tools cannot carry out your plan: land, compute, content, exchange, offers, "
-            "contracts or memory. The group's tools appear in the next request."
+            "current tools cannot carry out your plan: land, compute, content, transport, "
+            "exchange, offers, contracts or memory. The group's tools appear in the next request."
         ),
         "parameters": {
             "type": "object",
@@ -79,8 +80,13 @@ def selected_tool_names(observation: Observation) -> set[str]:
         and me.coins >= compute.node_seconds[0] * compute.node_coins_per_second
     ):
         names.add("buy_node")
+    transport = observation.transport
+    if transport is not None and (
+        len(transport.mine) >= 2 or (transport.mine and transport.others)
+    ):
+        names.add("link_portals")
     if me.items.get(CONTENT_ITEM) and any(
-        parcel.facility is not None
+        parcel.facility == "ad"
         and len(parcel.content_goes_stale_in) < observation.land.slot_capacity
         for parcel in observation.land.mine
     ):
@@ -92,11 +98,14 @@ def selected_tool_names(observation: Observation) -> set[str]:
             names.add("joint_buy_parcel")
             if me.coins >= here.price:
                 names.add("buy_parcel")
+        if transport is not None and transport.here is not None and transport.here.lines:
+            names.add("teleport")
         if (
             observation.offers_to_me
             or observation.information_offers_to_me
             or observation.share_offers_to_me
             or observation.joint_purchases_to_me
+            or observation.link_proposals_to_me
         ):
             names.add("respond_to_offer")
         if any(parcel.shares.get(me.id) for parcel in observation.land.mine) or (
@@ -110,6 +119,7 @@ def selected_tool_names(observation: Observation) -> set[str]:
             or observation.my_information_offers
             or observation.my_share_offers
             or observation.my_joint_purchases
+            or observation.my_link_proposals
         ):
             names.add("withdraw_offer")
         if observation.my_contract_proposals:
@@ -141,9 +151,20 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     ):
         names.add("buy_node")
     if me.inventory.count(CONTENT_ITEM) and any(
-        parcel.owner_id == me.id and parcel.facility is not None for parcel in world.parcels
+        parcel.owner_id == me.id and parcel.facility is not None and parcel.facility.kind == "ad"
+        for parcel in world.parcels
     ):
         names.add("place_content")
+    portals = [
+        parcel
+        for parcel in world.parcels
+        if parcel.facility is not None and parcel.facility.kind == "portal"
+    ]
+    mine = [parcel for parcel in portals if parcel.owner_id == me.id]
+    gone = {resident.id for resident in world.residents if resident.left}
+    joinable = [p for p in portals if p.owner_id != me.id and p.owner_id not in gone]
+    if len(mine) >= 2 or (mine and joinable):
+        names.add("link_portals")
     if me.busy:
         return names
 
@@ -157,6 +178,9 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         names.update(("offer_to_buy", "offer_to_sell", "offer_information", "propose_contract"))
     if any(parcel.held_by(me.id) for parcel in world.parcels):
         names.add("offer_shares")
+    here = plot_at(world, me.position).id
+    if any(link.joins(here) for link in world.links):
+        names.add("teleport")
     if any(event.recipient_id == me.id for event in world.events.pending):
         names.add("respond_to_offer")
     if any(event.sender_id == me.id for event in world.events.pending):

@@ -48,7 +48,7 @@ class ScriptedBrain:
         """Keep content flowing into its ad slot: show what it carries, and start the next
         piece on its own compute when that is free."""
         land, compute = observation.land, observation.compute
-        slots = [parcel for parcel in land.mine if parcel.facility is not None]
+        slots = [parcel for parcel in land.mine if parcel.facility == "ad"]
         if slots and observation.me.items.get(CONTENT_ITEM):
             roomy = min(slots, key=lambda parcel: len(parcel.content_goes_stale_in))
             if len(roomy.content_goes_stale_in) < land.slot_capacity:

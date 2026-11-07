@@ -6,10 +6,9 @@ a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
-leaving, speaking, withdrawing orders and handling compute and content, for a resident who is busy
-walking. What a primitive
-changes on the map goes into the activity log for others nearby to notice, see
-`perception.py`.
+leaving, speaking, withdrawing orders and handling compute, content and lines between portals,
+for a resident who is busy walking. What a primitive changes on the map goes into the
+activity log for others nearby to notice, see `perception.py`.
 """
 
 from dataclasses import dataclass
@@ -33,6 +32,7 @@ from ..economy.compute import (
     ComputeErrorCode,
     buy_node,
     start_build_ad,
+    start_build_portal,
     start_make_content,
 )
 from ..economy.contracts import (
@@ -51,6 +51,7 @@ from ..economy.exchange import (
 )
 from ..economy.joint_purchase import JointPurchase
 from ..economy.land import LandError, LandErrorCode, buy_parcel, plot_at
+from ..economy.portals import LinkProposal, PortalsError, PortalsErrorCode, link_portals, teleport
 from ..economy.shares import ShareOffer, SharesError, SharesErrorCode
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
@@ -74,6 +75,7 @@ RejectionCode = (
     | ComputeErrorCode
     | AdsErrorCode
     | SharesErrorCode
+    | PortalsErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -274,6 +276,41 @@ class BuildAd:
 
 
 @dataclass(frozen=True)
+class BuildPortal:
+    """Start building a portal on the resident's own bare parcel `parcel_id`, on the same
+    sources as `BuildAd`, see `compute.py` and `portals.py`. The portal appears when the job
+    ends."""
+
+    resident_id: str
+    parcel_id: str
+    source: JobSource
+    node_id: int | None = None
+
+
+@dataclass(frozen=True)
+class LinkPortals:
+    """Join the resident's portal on `parcel_id` to the portal on `other_parcel_id` with a
+    line costing `toll` per trip, from anywhere, see `portals.py`. When both portals are the
+    resident's the line is drawn at once; otherwise the owner of the other one is asked, and
+    the line is drawn when they accept."""
+
+    resident_id: str
+    parcel_id: str
+    other_parcel_id: str
+    toll: int
+    """Coins one trip along the line costs, paid to the holders of both parcels' shares."""
+
+
+@dataclass(frozen=True)
+class Teleport:
+    """Travel at once from the portal in the parcel the resident stands in to the portal on
+    `to_parcel_id`, which a line must join to it, paying the line's toll, see `portals.py`."""
+
+    resident_id: str
+    to_parcel_id: str
+
+
+@dataclass(frozen=True)
 class MakeContent:
     """Start rendering a piece of content from anywhere, on the same sources as `BuildAd`
     but a render node, see `compute.py`. The resident need not stay: the piece joins what
@@ -343,6 +380,9 @@ Action = (
     | OfferJointPurchase
     | BuyNode
     | BuildAd
+    | BuildPortal
+    | LinkPortals
+    | Teleport
     | MakeContent
     | PlaceContent
     | PlaceOrder
@@ -356,7 +396,15 @@ def perform(world: World, action: Action) -> World:
         check_can_act(world, action.resident_id)
         if not isinstance(
             action,
-            LeaveGame | Say | CancelOrder | BuyNode | BuildAd | MakeContent | PlaceContent,
+            LeaveGame
+            | Say
+            | CancelOrder
+            | BuyNode
+            | BuildAd
+            | BuildPortal
+            | LinkPortals
+            | MakeContent
+            | PlaceContent,
         ):
             check_not_busy(world, action.resident_id)
     except GameError as error:
@@ -425,6 +473,20 @@ def _carry_out(world: World, action: Action) -> World:
                 )
             except (ComputeError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
+        case BuildPortal():
+            try:
+                return start_build_portal(
+                    world, action.resident_id, action.parcel_id, action.source, action.node_id
+                )
+            except (ComputeError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case LinkPortals():
+            return _link_portals(world, action)
+        case Teleport():
+            try:
+                return teleport(world, action.resident_id, action.to_parcel_id)
+            except (PortalsError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
         case MakeContent():
             try:
                 return start_make_content(world, action.resident_id, action.source, action.node_id)
@@ -473,6 +535,7 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
         TradeError,
         ContractError,
         SharesError,
+        PortalsError,
         LandError,
         InformationError,
         NoteError,
@@ -487,6 +550,21 @@ def _offer_joint_purchase(world: World, action: OfferJointPurchase) -> World:
     try:
         return send_event(world, action.resident_id, action.partner_id, payload)[0]
     except (EventError, InventoryError, SharesError, LandError) as error:
+        raise ActionRejected(error.code, error.message) from error
+
+
+def _link_portals(world: World, action: LinkPortals) -> World:
+    other = next((p for p in world.parcels if p.id == action.other_parcel_id), None)
+    try:
+        if other is None:
+            raise PortalsError("unknown_parcel", f"no one owns a parcel {action.other_parcel_id!r}")
+        if other.owner_id == action.resident_id:
+            return link_portals(
+                world, action.resident_id, action.parcel_id, action.other_parcel_id, action.toll
+            )
+        proposal = LinkProposal(action.parcel_id, action.other_parcel_id, action.toll)
+        return send_event(world, action.resident_id, other.owner_id, proposal)[0]
+    except (EventError, PortalsError) as error:
         raise ActionRejected(error.code, error.message) from error
 
 

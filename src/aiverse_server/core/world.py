@@ -13,7 +13,7 @@ from typing import Literal
 
 from .compute import ComputeBook
 from .events import EventQueue
-from .land import Parcel
+from .land import Link, Parcel
 from .ledger import Ledger
 from .orders import OrderBook
 
@@ -484,6 +484,8 @@ class World:
     """Land residents bought and what they built on it, see `land.py` and `compute.py`."""
     compute: ComputeBook = ComputeBook()
     """Subscribed nodes and running jobs, see `compute.py`."""
+    links: tuple[Link, ...] = ()
+    """Lines between portals, see `portals.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -530,6 +532,17 @@ class World:
             if parcel.facility is not None and parcel.facility.built_at > self.time:
                 raise ValueError(f"parcel {parcel.id} has a facility built in the future")
         owners = {parcel.id: parcel.owner_id for parcel in self.parcels}
+        portals = {
+            parcel.id
+            for parcel in self.parcels
+            if parcel.facility and parcel.facility.kind == "portal"
+        }
+        pairs = [(link.a, link.b) for link in self.links]
+        if len(set(pairs)) != len(pairs):
+            raise ValueError("two portals are linked twice")
+        for link in self.links:
+            if not {link.a, link.b} <= portals:
+                raise ValueError(f"link {link.a}-{link.b} joins a parcel without a portal")
         for node in self.compute.nodes:
             if node.owner_id not in ids or node.owner_id in left or self.ended:
                 raise ValueError(f"node {node.id} outlives its game or resident")

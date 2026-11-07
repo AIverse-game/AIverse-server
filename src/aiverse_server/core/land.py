@@ -5,9 +5,16 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-FacilityKind = Literal["ad"]
-"""What a facility is. Only the ad slot exists so far; other kinds come with the designs that
-need them, see the client repository's docs/design/facilities.md."""
+FacilityKind = Literal["ad", "portal"]
+"""What a facility is: an ad slot, which earns from the content it shows, or a portal, which
+earns nothing itself but joins parcels into a transport network, see `economy/portals.py`.
+Other kinds come with the designs that need them, see the client repository's
+docs/design/facilities.md."""
+
+FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal")
+
+MAX_TOLL = 1_000
+"""Most coins one trip through a link may cost."""
 
 
 AD_SLOT_CAPACITY = 5
@@ -31,8 +38,10 @@ class Facility:
     """Game time the town next pays it for the content it shows, see `economy/ads.py`."""
 
     def __post_init__(self) -> None:
-        if self.kind != "ad":
+        if self.kind not in FACILITY_KINDS:
             raise ValueError(f"unknown facility kind {self.kind!r}")
+        if self.kind != "ad" and (self.contents or self.next_pay_at):
+            raise ValueError(f"a {self.kind} shows no content and is never paid for it")
         if not math.isfinite(self.built_at) or self.built_at < 0:
             raise ValueError(f"facility built at {self.built_at!r}")
         if len(self.contents) > AD_SLOT_CAPACITY:
@@ -86,6 +95,36 @@ class Parcel:
     def held_by(self, resident_id: str) -> int:
         """Shares of this parcel `resident_id` holds."""
         return dict(self.shares).get(resident_id, 0)
+
+
+@dataclass(frozen=True)
+class Link:
+    """A line between the portals on two parcels, which residents can travel along for `toll`
+    coins and which shortens the distance visitors cover, see `economy/portals.py`."""
+
+    a: str
+    b: str
+    """The two parcels' ids, `a` sorting before `b`."""
+    toll: int
+    """Coins one resident pays for one trip either way; split between the holders of both
+    parcels' shares."""
+
+    def __post_init__(self) -> None:
+        if not self.a or not self.b or self.a == self.b:
+            raise ValueError(f"a link joins two different parcels, not {self.a!r} and {self.b!r}")
+        if type(self.toll) is not int or not 0 <= self.toll <= MAX_TOLL:
+            raise ValueError(f"toll must be an integer in 0..{MAX_TOLL}, got {self.toll!r}")
+        if self.a > self.b:
+            first, second = self.b, self.a
+            object.__setattr__(self, "a", first)
+            object.__setattr__(self, "b", second)
+
+    def other(self, parcel_id: str) -> str:
+        """The parcel at the far end from `parcel_id`."""
+        return self.b if parcel_id == self.a else self.a
+
+    def joins(self, parcel_id: str) -> bool:
+        return parcel_id in (self.a, self.b)
 
 
 def parcel_id(col: int, row: int) -> str:

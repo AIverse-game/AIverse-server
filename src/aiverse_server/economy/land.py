@@ -80,6 +80,14 @@ def plot(world: World, col: int, row: int) -> Plot:
     return replace(_layout(world.map.size)[row * grid_size(world) + col], owner_id=owner)
 
 
+def parcel_centre(size: float, col: int, row: int) -> Position:
+    """Centre of the grid square at `col`, `row` on a map of side `size`."""
+    count = max(int(size // PARCEL_SIZE), 1)
+    if not 0 <= col < count or not 0 <= row < count:
+        raise ValueError(f"no parcel at column {col}, row {row}")
+    return _layout(size)[row * count + col].centre
+
+
 def plots(world: World) -> tuple[Plot, ...]:
     """Every grid square, row by row from the north-west corner."""
     owners = {(parcel.col, parcel.row): parcel.owner_id for parcel in world.parcels}

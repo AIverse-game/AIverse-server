@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
 from ..core.compute import JobSource, NodeKind
-from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
+from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, PAY_PERIOD
 from ..economy.compute import (
@@ -36,6 +36,7 @@ from ..economy.compute import (
     NODE_RATE,
     NODE_SECONDS,
     ON_DEMAND_PRICE,
+    PORTAL_WORKLOAD,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
     job_seconds,
@@ -43,15 +44,18 @@ from ..economy.compute import (
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
+from ..economy.portals import MAX_LINKS_PER_PORTAL, MAX_PORTALS, MIN_LINK_DISTANCE
 from ..game.actions import (
     Action,
     ActionRejected,
     BuildAd,
+    BuildPortal,
     BuyNode,
     BuyParcel,
     CancelContract,
     CancelOrder,
     Deliver,
+    LinkPortals,
     MakeContent,
     MoveTo,
     OfferInformation,
@@ -64,6 +68,7 @@ from ..game.actions import (
     ProposeContract,
     RespondToEvent,
     Say,
+    Teleport,
     WithdrawEvent,
     perform,
 )
@@ -111,7 +116,7 @@ class JointBuyParcelArgs(_Args):
 class BuyNodeArgs(_Args):
     kind: Literal["generative", "render"] = Field(
         default="generative",
-        description="generative: builds facilities (build_ad); render: makes content "
+        description="generative: builds facilities (build_ad, build_portal); render: makes content "
         "(make_content).",
     )
     seconds: StrictInt = Field(
@@ -130,6 +135,37 @@ class BuildAdArgs(_Args):
         default=None,
         description="id of one of your idle nodes in compute.my_nodes; only with source "
         "subscription.",
+    )
+
+
+class BuildPortalArgs(_Args):
+    parcel_id: str = Field(description="id of one of your parcels with no facility and no job.")
+    source: Literal["self", "on_demand", "subscription"] = Field(
+        description="self: your own compute, free; on_demand: a node hired for this job, "
+        "paid now; subscription: one of your generative nodes, named in node_id."
+    )
+    node_id: StrictInt | None = Field(
+        default=None,
+        description="id of one of your idle generative nodes in compute.my_nodes; only with "
+        "source subscription.",
+    )
+
+
+class LinkPortalsArgs(_Args):
+    parcel_id: str = Field(description="id of one of your parcels with a portal.")
+    other_parcel_id: str = Field(
+        description="id of the parcel with the portal to join it to: yours, or another "
+        "resident's, who is then asked."
+    )
+    toll: StrictInt = Field(
+        description=f"Coins one trip along the line costs, 0 to {MAX_TOLL}, paid by whoever "
+        "travels to the holders of both parcels' shares."
+    )
+
+
+class TeleportArgs(_Args):
+    to_parcel_id: str = Field(
+        description="id of the parcel at the other end of a line from the portal you stand in."
     )
 
 
@@ -222,7 +258,7 @@ class RespondToOfferArgs(_Args):
     event_id: StrictInt = Field(
         description="event_id of an offer in offers_to_me, information_offers_to_me, "
         "share_offers_to_me or joint_purchases_to_me, or a proposal in "
-        "contract_proposals_to_me."
+        "contract_proposals_to_me or link_proposals_to_me."
     )
     accept: StrictBool = Field(description="true to accept, false to reject.")
 
@@ -230,7 +266,8 @@ class RespondToOfferArgs(_Args):
 class WithdrawOfferArgs(_Args):
     event_id: StrictInt = Field(
         description="event_id of an offer in my_offers, my_information_offers, "
-        "my_share_offers or my_joint_purchases, or a proposal in my_contract_proposals."
+        "my_share_offers or my_joint_purchases, or a proposal in my_contract_proposals "
+        "or my_link_proposals."
     )
 
 
@@ -382,8 +419,9 @@ TOOLS = (
     ToolSpec(
         "buy_node",
         "Subscribe to a compute node for a stretch of time, from anywhere, even while walking. "
-        "A generative node builds ad slots (build_ad), a render node makes content "
-        "(make_content). It is yours until it runs out and does one job at a time at "
+        "A generative node builds ad slots and portals (build_ad, build_portal), a render "
+        "node makes content (make_content). It is yours until it runs out and does one job at "
+        "a time at "
         f"{NODE_RATE:g} workload per second, {NODE_RATE / SELF_RATE:g} times your own compute; "
         f"you pay {SUBSCRIPTION_PRICE} coins per second whether it works or not, and nothing is "
         f"paid back. You may hold {MAX_NODES} nodes at once, and each works on its own job.",
@@ -400,6 +438,36 @@ TOOLS = (
         f"the job carries on at your own speed, {SELF_RATE:g} workload per second). "
         "An ad slot earns only while it shows content.",
         BuildAdArgs,
+    ),
+    ToolSpec(
+        "build_portal",
+        "Start building a portal on one of your parcels, from anywhere, even while walking; it "
+        f"appears when the job ends. Up to {MAX_PORTALS} portals, built or being built. It "
+        f"takes {PORTAL_WORKLOAD:g} workload: {job_seconds(PORTAL_WORKLOAD, 'self'):g} s on "
+        f"your own compute (free, one job at a time), "
+        f"{job_seconds(PORTAL_WORKLOAD, 'on_demand'):g} s on a node hired for it "
+        f"({on_demand_cost(PORTAL_WORKLOAD)} coins), or on one of your subscribed generative "
+        "nodes. A portal earns nothing itself: it matters through its lines (link_portals) "
+        "and trips (teleport).",
+        BuildPortalArgs,
+    ),
+    ToolSpec(
+        "link_portals",
+        "Join one of your portals to another with a line, from anywhere. When both are yours "
+        "the line is drawn at once; when the other belongs to someone else they are asked, and "
+        "it is drawn if they accept. The portals must be at least "
+        f"{MIN_LINK_DISTANCE:g} units apart and a portal ends at most {MAX_LINKS_PER_PORTAL} "
+        "lines. A line brings visitors: a spot next to a portal gets the footfall of the "
+        "nearest portal joined to it to the middle of the map. It also lets residents "
+        "teleport between the two for the toll.",
+        LinkPortalsArgs,
+    ),
+    ToolSpec(
+        "teleport",
+        "Travel at once from the portal in the parcel you stand in to the portal at the other "
+        "end of one of its lines, paying the line's toll to the holders of the shares of both "
+        "parcels. No time is spent, and you cannot while walking.",
+        TeleportArgs,
     ),
     ToolSpec(
         "make_content",
@@ -577,6 +645,21 @@ class ResidentTools:
             arguments["node_id"] = node_id
         return self.call("build_ad", arguments)
 
+    def build_portal(
+        self, parcel_id: str, source: JobSource, node_id: int | None = None
+    ) -> ToolResult:
+        arguments: dict[str, Any] = {"parcel_id": parcel_id, "source": source}
+        if node_id is not None:
+            arguments["node_id"] = node_id
+        return self.call("build_portal", arguments)
+
+    def link_portals(self, parcel_id: str, other_parcel_id: str, toll: int) -> ToolResult:
+        arguments = {"parcel_id": parcel_id, "other_parcel_id": other_parcel_id, "toll": toll}
+        return self.call("link_portals", arguments)
+
+    def teleport(self, to_parcel_id: str) -> ToolResult:
+        return self.call("teleport", {"to_parcel_id": to_parcel_id})
+
     def make_content(self, source: JobSource, node_id: int | None = None) -> ToolResult:
         arguments: dict[str, Any] = {"source": source}
         if node_id is not None:
@@ -668,6 +751,20 @@ class ResidentTools:
                 job = self.game.world.compute.jobs[-1]
                 seconds = job.ends_at - job.started_at
                 return f"job {job.id}: ad slot on {job.parcel_id} ready in {seconds:g} s"
+            case BuildPortalArgs():
+                act(BuildPortal(me, args.parcel_id, args.source, args.node_id))
+                job = self.game.world.compute.jobs[-1]
+                seconds = job.ends_at - job.started_at
+                return f"job {job.id}: portal on {job.parcel_id} ready in {seconds:g} s"
+            case LinkPortalsArgs():
+                lines = len(self.game.world.links)
+                act(LinkPortals(me, args.parcel_id, args.other_parcel_id, args.toll))
+                if len(self.game.world.links) > lines:
+                    return f"{args.parcel_id} and {args.other_parcel_id} are now linked"
+                return f"asked the owner of {args.other_parcel_id}; the line waits for their answer"
+            case TeleportArgs():
+                act(Teleport(me, args.to_parcel_id))
+                return f"arrived at {args.to_parcel_id}"
             case MakeContentArgs():
                 act(MakeContent(me, args.source, args.node_id))
                 job = self.game.world.compute.jobs[-1]

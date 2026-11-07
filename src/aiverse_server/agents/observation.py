@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass, field
 
 from ..core.compute import Job
 from ..core.events import Event, pending_for, pending_from
-from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES, Parcel
+from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES, Parcel
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
 from ..economy.ads import CONTENT_LIFETIME, PAY_PERIOD, expected_income
@@ -29,6 +29,7 @@ from ..economy.compute import (
     CONTENT_WORKLOAD,
     MAX_NODES,
     NODE_SECONDS,
+    PORTAL_WORKLOAD,
     SUBSCRIPTION_PRICE,
     job_seconds,
     on_demand_cost,
@@ -37,7 +38,14 @@ from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
 from ..economy.footfall import footfall, visitors
 from ..economy.joint_purchase import JointPurchase, reserved_purchase_coins
-from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot, plot_at, plots
+from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot, plot_at, plots, town_centre
+from ..economy.portals import (
+    MAX_LINKS_PER_PORTAL,
+    MAX_PORTALS,
+    MIN_LINK_DISTANCE,
+    LinkProposal,
+    links_of,
+)
 from ..economy.shares import ShareOffer, split_income
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins
 from ..game.lifecycle import ranks, total_coins
@@ -246,12 +254,69 @@ class ComputeView:
     """Every job of the resident's, on any source, soonest first."""
     ad_slot: tuple[AdOption, ...]
     """Time and coins for an ad slot on each source."""
+    portal: tuple[AdOption, ...]
+    """Time and coins for a portal on each source."""
     content: tuple[AdOption, ...]
     """Time and coins for a piece of content on each source."""
     node_coins_per_second: int
     node_seconds: tuple[int, int]
     """Least and most seconds one subscription lasts."""
     max_nodes: int
+
+
+@dataclass(frozen=True)
+class LineView:
+    """A line from a portal to another, seen from the portal it starts at."""
+
+    to_parcel: str
+    to_owner: str
+    to_centre: Position
+    toll: int
+    """Coins one trip along the line costs, either way."""
+
+
+@dataclass(frozen=True)
+class PortalView:
+    parcel: str
+    owner: str
+    centre: Position
+    footfall: float
+    """Visitors and residents passing its centre now, lines counted."""
+    lines: tuple[LineView, ...]
+
+
+@dataclass(frozen=True)
+class TransportView:
+    """Portals, the lines between them and the trips along them."""
+
+    max_portals: int
+    """Portals one resident may hold, built or being built."""
+    max_lines_per_portal: int
+    min_line_distance: float
+    """Least distance between the centres of a line's two parcels."""
+    max_toll: int
+    here: PortalView | None
+    """The portal in the parcel the resident stands in, whoever owns it: teleport to one of
+    its lines. None without one, and while walking."""
+    mine: tuple[PortalView, ...]
+    others: tuple[PortalView, ...]
+    """Portals of other residents, nearest the middle of the map first, a few of them."""
+
+
+@dataclass(frozen=True)
+class LinkProposalView:
+    event_id: int
+    from_id: str
+    to_id: str
+    from_parcel: str
+    """The proposer's portal."""
+    to_parcel: str
+    """The recipient's portal."""
+    from_centre: Position
+    to_centre: Position
+    toll: int
+    """Coins one trip along the line would cost, split between the holders of both parcels'
+    shares."""
 
 
 @dataclass(frozen=True)
@@ -475,6 +540,9 @@ class Observation:
     my_share_offers: tuple[ShareOfferView, ...] = ()
     joint_purchases_to_me: tuple[JointPurchaseView, ...] = ()
     my_joint_purchases: tuple[JointPurchaseView, ...] = ()
+    transport: TransportView | None = None
+    link_proposals_to_me: tuple[LinkProposalView, ...] = ()
+    my_link_proposals: tuple[LinkProposalView, ...] = ()
     last_thinking_seconds: float | None = None
     """Game seconds the resident's previous round took, from its look to the end of the
     round, whether it went well or not; None in the first round."""
@@ -542,6 +610,9 @@ def observe(
         my_share_offers=_share_offers(world, pending_from(world, resident_id)),
         joint_purchases_to_me=_joint_purchases(world, pending_for(world, resident_id)),
         my_joint_purchases=_joint_purchases(world, pending_from(world, resident_id)),
+        transport=_transport_view(world, resident_id, here, standing=walk is None),
+        link_proposals_to_me=_link_proposals(world, pending_for(world, resident_id)),
+        my_link_proposals=_link_proposals(world, pending_from(world, resident_id)),
         information_offers_to_me=_information_offers(pending_for(world, resident_id)),
         my_information_offers=_information_offers(pending_from(world, resident_id)),
         contract_proposals_to_me=_proposals(pending_for(world, resident_id)),
@@ -719,6 +790,15 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
             ),
             AdOption("subscription", job_seconds(AD_WORKLOAD, "subscription"), 0),
         ),
+        portal=(
+            AdOption("self", job_seconds(PORTAL_WORKLOAD, "self"), 0),
+            AdOption(
+                "on_demand",
+                job_seconds(PORTAL_WORKLOAD, "on_demand"),
+                on_demand_cost(PORTAL_WORKLOAD),
+            ),
+            AdOption("subscription", job_seconds(PORTAL_WORKLOAD, "subscription"), 0),
+        ),
         content=(
             AdOption("self", job_seconds(CONTENT_WORKLOAD, "self"), 0),
             AdOption(
@@ -826,6 +906,77 @@ def _share_offers(world: World, events: tuple[Event, ...]) -> tuple[ShareOfferVi
             )
         )
     return tuple(views)
+
+
+PORTALS_SHOWN = 12
+"""Portals of other residents an observation lists."""
+
+
+def _transport_view(
+    world: World, resident_id: str, here: Position, *, standing: bool
+) -> TransportView:
+    def portal_view(parcel: Parcel) -> PortalView:
+        centre = plot(world, parcel.col, parcel.row).centre
+        lines = []
+        for line in links_of(world, parcel.id):
+            far = next(p for p in world.parcels if p.id == line.other(parcel.id))
+            lines.append(
+                LineView(far.id, far.owner_id, plot(world, far.col, far.row).centre, line.toll)
+            )
+        return PortalView(parcel.id, parcel.owner_id, centre, footfall(world, centre), tuple(lines))
+
+    portals = [p for p in world.parcels if p.facility is not None and p.facility.kind == "portal"]
+    town = town_centre(world.map.size)
+
+    def from_the_middle(parcel: Parcel) -> tuple[float, str]:
+        centre = plot(world, parcel.col, parcel.row).centre
+        return math.dist((centre.x, centre.y), (town.x, town.y)), parcel.id
+
+    gone = {r.id for r in world.residents if r.left}
+    # A portal whose owner left stays, but can no longer be joined to anything new.
+    others = sorted(
+        (p for p in portals if p.owner_id != resident_id and p.owner_id not in gone),
+        key=from_the_middle,
+    )
+    standing_in = plot_at(world, here).id
+    return TransportView(
+        max_portals=MAX_PORTALS,
+        max_lines_per_portal=MAX_LINKS_PER_PORTAL,
+        min_line_distance=MIN_LINK_DISTANCE,
+        max_toll=MAX_TOLL,
+        here=next((portal_view(p) for p in portals if p.id == standing_in), None)
+        if standing
+        else None,
+        mine=tuple(portal_view(p) for p in portals if p.owner_id == resident_id),
+        others=tuple(portal_view(p) for p in others[:PORTALS_SHOWN]),
+    )
+
+
+def _link_proposals(world: World, events: tuple[Event, ...]) -> tuple[LinkProposalView, ...]:
+    """The line proposals among `events`."""
+    views = []
+    for event in events:
+        proposal = event.payload
+        if not isinstance(proposal, LinkProposal):
+            continue
+        views.append(
+            LinkProposalView(
+                event_id=event.id,
+                from_id=event.sender_id,
+                to_id=event.recipient_id,
+                from_parcel=proposal.parcel_id,
+                to_parcel=proposal.other_parcel_id,
+                from_centre=_centre_of(world, proposal.parcel_id),
+                to_centre=_centre_of(world, proposal.other_parcel_id),
+                toll=proposal.toll,
+            )
+        )
+    return tuple(views)
+
+
+def _centre_of(world: World, parcel_id: str) -> Position:
+    parcel = next(p for p in world.parcels if p.id == parcel_id)
+    return plot(world, parcel.col, parcel.row).centre
 
 
 def _joint_purchases(world: World, events: tuple[Event, ...]) -> tuple[JointPurchaseView, ...]:

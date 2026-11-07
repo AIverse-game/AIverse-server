@@ -15,7 +15,7 @@ NodeKind = Literal["generative", "render"]
 
 NODE_KINDS: tuple[NodeKind, ...] = ("generative", "render")
 
-JobKind = Literal["build_ad", "make_content"]
+JobKind = Literal["build_ad", "build_portal", "make_content"]
 """What a job makes. It needs a node of the matching kind, see `economy/compute.py`."""
 
 JobSource = Literal["self", "on_demand", "subscription"]
@@ -49,7 +49,7 @@ class Job:
     owner_id: str
     kind: JobKind
     parcel_id: str | None
-    """The parcel the work is for, see `core/land.py`; None for work that makes something
+    """The parcel the work builds on, see `core/land.py`; None for work that makes something
     to carry, such as content."""
     source: JobSource
     node_id: int | None
@@ -60,9 +60,9 @@ class Job:
     ends_at: float
 
     def __post_init__(self) -> None:
-        if self.kind not in ("build_ad", "make_content"):
+        if self.kind not in ("build_ad", "build_portal", "make_content"):
             raise ValueError(f"unknown job kind {self.kind!r}")
-        if (self.kind == "build_ad") != (self.parcel_id is not None):
+        if (self.kind != "make_content") != (self.parcel_id is not None):
             raise ValueError(f"job {self.id} of kind {self.kind} has parcel {self.parcel_id!r}")
         if self.source != "subscription" and self.node_id is not None:
             raise ValueError(f"job {self.id} names a node but is not subscribed")

@@ -70,7 +70,7 @@ def place_content(world: World, resident_id: str, parcel_id: str) -> World:
     if parcel is None or parcel.owner_id != resident_id:
         raise AdsError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     facility = parcel.facility
-    if facility is None:
+    if facility is None or facility.kind != "ad":
         raise AdsError("no_ad_slot", f"parcel {parcel_id} has no ad slot")
     fresh = tuple(stale_at for stale_at in facility.contents if stale_at > world.time)
     if len(fresh) >= AD_SLOT_CAPACITY:
@@ -90,7 +90,7 @@ def pay_visitors(world: World) -> World:
     slots = _slots(world)
     for parcel in world.parcels:
         facility = parcel.facility
-        if facility is None or facility.next_pay_at > world.time:
+        if facility is None or facility.kind != "ad" or facility.next_pay_at > world.time:
             continue
         income = slot_income(world, parcel, slots)
         fresh = tuple(stale_at for stale_at in facility.contents if stale_at > world.time)
@@ -107,7 +107,7 @@ def slot_income(world: World, parcel: Parcel, slots: list[Parcel] | None = None)
     before: 0 without a slot or without fresh content. `slots` are the parcels whose slots
     show content now, as `_slots` finds them."""
     facility = parcel.facility
-    if facility is None:
+    if facility is None or facility.kind != "ad":
         return 0
     pieces = shown(facility, world.time)
     if pieces == 0:
@@ -129,7 +129,7 @@ def expected_income(world: World, parcel: Parcel) -> int:
     before: its content that will have gone stale by then does not count, and the visitors are
     those of then. 0 without a slot or without content left by then."""
     facility = parcel.facility
-    if facility is None:
+    if facility is None or facility.kind != "ad":
         return 0
     return slot_income(replace(world, time=max(facility.next_pay_at, world.time)), parcel)
 

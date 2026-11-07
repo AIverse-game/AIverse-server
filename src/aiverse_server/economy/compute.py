@@ -15,8 +15,9 @@ as long as they are still in the game. There are three sources:
   the speed of one's own compute, without using up the resident's own one-job-at-a-time slot.
 
 Nodes have a kind, and a job needs a node of its kind: generative nodes build facilities,
-render nodes make content. There are two jobs. `build_ad` builds an ad slot on a parcel the
-resident owns, wherever the resident is. `make_content` renders one piece of content, an item
+render nodes make content. There are three jobs. `build_ad` builds an ad slot, and
+`build_portal` a portal, see `portals.py`, on a parcel the resident owns, wherever the
+resident is. `make_content` renders one piece of content, an item
 the resident then carries, see `ads.py`. Several content jobs may run at once, each on a source
 of its own.
 
@@ -36,6 +37,7 @@ from ..core.land import Facility, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
 from .ads import CONTENT_ITEM, payday_after
+from .portals import MAX_PORTALS, portal_count
 
 SELF_RATE = 1.0
 """Workload a resident's own compute does per game second."""
@@ -50,10 +52,22 @@ CONTENT_WORKLOAD = 60.0
 """Workload of rendering a piece of content: a minute of one's own compute, 6 seconds of a
 node."""
 
-NODE_FOR_JOB: dict[JobKind, NodeKind] = {"build_ad": "generative", "make_content": "render"}
+PORTAL_WORKLOAD = 180.0
+"""Workload of building a portal: three minutes of one's own compute, 18 seconds of a node.
+Dearer than an ad slot, which earns by itself."""
+
+NODE_FOR_JOB: dict[JobKind, NodeKind] = {
+    "build_ad": "generative",
+    "build_portal": "generative",
+    "make_content": "render",
+}
 """The kind of node a job needs."""
 
-WORKLOADS: dict[JobKind, float] = {"build_ad": AD_WORKLOAD, "make_content": CONTENT_WORKLOAD}
+WORKLOADS: dict[JobKind, float] = {
+    "build_ad": AD_WORKLOAD,
+    "build_portal": PORTAL_WORKLOAD,
+    "make_content": CONTENT_WORKLOAD,
+}
 
 ON_DEMAND_PRICE = 3
 """Coins per unit of workload of a job on a node hired for it alone."""
@@ -82,6 +96,7 @@ ComputeErrorCode = Literal[
     "unknown_node",
     "wrong_node_kind",
     "node_expired",
+    "too_many_portals",
 ]
 
 
@@ -153,6 +168,23 @@ def start_build_ad(
     return _start_job(world, resident_id, "build_ad", parcel.id, source, node_id)
 
 
+def start_build_portal(
+    world: World,
+    resident_id: str,
+    parcel_id: str,
+    source: JobSource,
+    node_id: int | None = None,
+) -> World:
+    """Start building a portal on the bare parcel `parcel_id` of the resident, as
+    `start_build_ad` does for an ad slot. The resident may have at most `MAX_PORTALS`, built
+    or being built."""
+    _find(world, resident_id)
+    parcel = _bare_parcel(world, resident_id, parcel_id)
+    if portal_count(world, resident_id) >= MAX_PORTALS:
+        raise ComputeError("too_many_portals", f"at most {MAX_PORTALS} portals may be held")
+    return _start_job(world, resident_id, "build_portal", parcel.id, source, node_id)
+
+
 def start_make_content(
     world: World, resident_id: str, source: JobSource, node_id: int | None = None
 ) -> World:
@@ -220,8 +252,8 @@ def _start_job(
 
 
 def finish_jobs(world: World) -> World:
-    """Finish every job due by `world.time`, oldest end first: its ad slot appears, or its
-    piece of content joins what its owner carries. The same world when none is due."""
+    """Finish every job due by `world.time`, oldest end first: its ad slot or portal appears,
+    or its piece of content joins what its owner carries. The same world when none is due."""
     due = sorted(
         (job for job in world.compute.jobs if job.ends_at <= world.time),
         key=lambda job: (job.ends_at, job.id),
@@ -232,10 +264,12 @@ def finish_jobs(world: World) -> World:
         if job.kind == "make_content":
             world = store_item(world, job.owner_id, CONTENT_ITEM)
             continue
+        if job.kind == "build_ad":
+            built = Facility("ad", world.time, (), payday_after(world.time))
+        else:
+            built = Facility("portal", world.time)
         parcels = tuple(
-            replace(parcel, facility=Facility("ad", world.time, (), payday_after(world.time)))
-            if parcel.id == job.parcel_id
-            else parcel
+            replace(parcel, facility=built) if parcel.id == job.parcel_id else parcel
             for parcel in world.parcels
         )
         world = replace(world, parcels=parcels)
