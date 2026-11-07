@@ -77,7 +77,7 @@ def test_a_subscription_is_bought_then_used_by_node_id() -> None:
     bought = tools.buy_node(60)
     built = tools.build_ad("L5-5", "subscription", node_id=1)
 
-    assert (bought.ok, bought.message) == (True, "subscribed to node 1 for 60 s")
+    assert (bought.ok, bought.message) == (True, "subscribed to generative node 1 for 60 s")
     assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 12 s")
     assert game.world.residents[0].coins == 5_000 - subscription_cost(60)
     assert tools.calls[0].coins_change == -60 * SUBSCRIPTION_PRICE
@@ -233,7 +233,7 @@ def test_build_ad_is_not_offered_when_every_parcel_is_built_or_busy() -> None:
 
     names = selected_tool_names(look(game, "a"))
 
-    assert "build_ad" not in names and "buy_node" not in names
+    assert "build_ad" not in names
 
 
 def test_buy_node_is_not_offered_to_a_resident_who_cannot_pay_or_holds_the_most() -> None:

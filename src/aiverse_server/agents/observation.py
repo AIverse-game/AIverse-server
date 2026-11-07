@@ -20,10 +20,13 @@ from dataclasses import asdict, dataclass
 
 from ..core.compute import Job
 from ..core.events import Event, pending_for, pending_from
+from ..core.land import AD_SLOT_CAPACITY, Parcel
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
+from ..economy.ads import CONTENT_LIFETIME, PAY_PERIOD, expected_income
 from ..economy.compute import (
     AD_WORKLOAD,
+    CONTENT_WORKLOAD,
     MAX_NODES,
     NODE_SECONDS,
     SUBSCRIPTION_PRICE,
@@ -150,6 +153,8 @@ class ParcelView:
     """The kind of facility built on it, such as `ad`; None when it is bare."""
     building_ends_in: float | None = None
     """Seconds until the resident's own job on it finishes; None without one."""
+    content: int = 0
+    """Pieces of content its ad slot shows now."""
 
 
 @dataclass(frozen=True)
@@ -163,6 +168,11 @@ class MyParcelView:
     """The kind of facility built on it, such as `ad`; None when it is bare."""
     building_ends_in: float | None = None
     """Seconds until the job building on it finishes; None without one."""
+    content_goes_stale_in: tuple[float, ...] = ()
+    """Seconds until each piece of content its ad slot shows goes stale, soonest first."""
+    income_per_payday: int = 0
+    """Coins its ad slot would be paid at the next payday as things stand: its footfall, shared
+    with the neighbouring slots showing content, times the pieces shown."""
 
 
 @dataclass(frozen=True)
@@ -171,7 +181,8 @@ class JobView:
 
     job_id: int
     kind: str
-    parcel: str
+    parcel: str | None
+    """The parcel an ad slot is being built on; None for content."""
     source: str
     """`self`, `on_demand` or `subscription`."""
     node_id: int | None
@@ -194,7 +205,7 @@ class NodeView:
 
 @dataclass(frozen=True)
 class AdOption:
-    """What an ad slot takes on one source of compute."""
+    """What a job takes on one source of compute."""
 
     source: str
     seconds: float
@@ -213,6 +224,8 @@ class ComputeView:
     """Every job of the resident's, on any source, soonest first."""
     ad_slot: tuple[AdOption, ...]
     """Time and coins for an ad slot on each source."""
+    content: tuple[AdOption, ...]
+    """Time and coins for a piece of content on each source."""
     node_coins_per_second: int
     node_seconds: tuple[int, int]
     """Least and most seconds one subscription lasts."""
@@ -226,6 +239,12 @@ class LandView:
     """Parcels along each side; ids are `L<col>-<row>` from the north-west corner."""
     visitors_now: float
     """Visitors at the middle of the map now; they grow as the game goes on."""
+    slot_capacity: int
+    """Pieces of content an ad slot shows at once."""
+    content_lasts: float
+    """Seconds a piece of content is shown for once put in a slot."""
+    pay_period: float
+    """Seconds between paydays, which fall at multiples of it."""
     here: ParcelView | None
     """The parcel the resident stands in; None while walking."""
     mine: tuple[MyParcelView, ...]
@@ -499,8 +518,9 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
     building = {
         job.parcel_id: max(job.ends_at - world.time, 0.0)
         for job in world.compute.jobs
-        if job.owner_id == resident_id
+        if job.owner_id == resident_id and job.parcel_id is not None
     }
+    facilities = {parcel.id: parcel for parcel in world.parcels if parcel.facility}
 
     def view(square: Plot) -> ParcelView:
         return ParcelView(
@@ -513,6 +533,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             walk_seconds(here, square.centre),
             built.get(square.id),
             building.get(square.id),
+            len(_goes_stale_in(world, facilities.get(square.id))),
         )
 
     squares = plots(world)
@@ -529,6 +550,9 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         parcel_size=PARCEL_SIZE,
         grid=grid_size(world),
         visitors_now=visitors(world.time),
+        slot_capacity=AD_SLOT_CAPACITY,
+        content_lasts=CONTENT_LIFETIME,
+        pay_period=PAY_PERIOD,
         here=view(plot_at(world, here)) if standing else None,
         mine=tuple(
             MyParcelView(
@@ -539,10 +563,20 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
                 walk_seconds(here, square.centre),
                 built.get(square.id),
                 building.get(square.id),
+                _goes_stale_in(world, facilities.get(square.id)),
+                expected_income(world, facilities[square.id]) if square.id in facilities else 0,
             )
             for square in mine
         ),
         best_free=tuple(view(square) for square in best),
+    )
+
+
+def _goes_stale_in(world: World, parcel: Parcel | None) -> tuple[float, ...]:
+    if parcel is None or parcel.facility is None:
+        return ()
+    return tuple(
+        stale_at - world.time for stale_at in parcel.facility.contents if stale_at > world.time
     )
 
 
@@ -586,6 +620,15 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
                 "on_demand", job_seconds(AD_WORKLOAD, "on_demand"), on_demand_cost(AD_WORKLOAD)
             ),
             AdOption("subscription", job_seconds(AD_WORKLOAD, "subscription"), 0),
+        ),
+        content=(
+            AdOption("self", job_seconds(CONTENT_WORKLOAD, "self"), 0),
+            AdOption(
+                "on_demand",
+                job_seconds(CONTENT_WORKLOAD, "on_demand"),
+                on_demand_cost(CONTENT_WORKLOAD),
+            ),
+            AdOption("subscription", job_seconds(CONTENT_WORKLOAD, "subscription"), 0),
         ),
         node_coins_per_second=SUBSCRIPTION_PRICE,
         node_seconds=NODE_SECONDS,

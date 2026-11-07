@@ -25,10 +25,13 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
-from ..core.compute import JobSource
+from ..core.compute import JobSource, NodeKind
+from ..core.land import AD_SLOT_CAPACITY
 from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
+from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, PAY_PERIOD
 from ..economy.compute import (
     AD_WORKLOAD,
+    CONTENT_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
@@ -49,10 +52,12 @@ from ..game.actions import (
     CancelContract,
     CancelOrder,
     Deliver,
+    MakeContent,
     MoveTo,
     OfferInformation,
     OfferToBuy,
     OfferToSell,
+    PlaceContent,
     PlaceOrder,
     ProposeContract,
     RespondToEvent,
@@ -90,6 +95,11 @@ class BuyParcelArgs(_Args):
 
 
 class BuyNodeArgs(_Args):
+    kind: Literal["generative", "render"] = Field(
+        default="generative",
+        description="generative: builds facilities (build_ad); render: makes content "
+        "(make_content).",
+    )
     seconds: StrictInt = Field(
         description=f"How long the subscription lasts, {NODE_SECONDS[0]} to {NODE_SECONDS[1]} "
         f"seconds, paid now at {SUBSCRIPTION_PRICE} coins per second."
@@ -107,6 +117,22 @@ class BuildAdArgs(_Args):
         description="id of one of your idle nodes in compute.my_nodes; only with source "
         "subscription.",
     )
+
+
+class MakeContentArgs(_Args):
+    source: Literal["self", "on_demand", "subscription"] = Field(
+        description="self: your own compute, free; on_demand: a node hired for this job, "
+        "paid now; subscription: one of your render nodes, named in node_id."
+    )
+    node_id: StrictInt | None = Field(
+        default=None,
+        description="id of one of your idle render nodes in compute.my_nodes; only with source "
+        "subscription.",
+    )
+
+
+class PlaceContentArgs(_Args):
+    parcel_id: str = Field(description="id of one of your parcels with an ad slot.")
 
 
 class SayArgs(_Args):
@@ -316,8 +342,9 @@ TOOLS = (
     ),
     ToolSpec(
         "buy_node",
-        "Subscribe to a generative compute node for a stretch of time, from anywhere, even "
-        f"while walking. It is yours until it runs out and does one job at a time at "
+        "Subscribe to a compute node for a stretch of time, from anywhere, even while walking. "
+        "A generative node builds ad slots (build_ad), a render node makes content "
+        "(make_content). It is yours until it runs out and does one job at a time at "
         f"{NODE_RATE:g} workload per second, {NODE_RATE / SELF_RATE:g} times your own compute; "
         f"you pay {SUBSCRIPTION_PRICE} coins per second whether it works or not, and nothing is "
         f"paid back. You may hold {MAX_NODES} nodes at once, and each works on its own job.",
@@ -330,10 +357,29 @@ TOOLS = (
         f"{AD_WORKLOAD:g} workload: {job_seconds(AD_WORKLOAD, 'self'):g} s on your own compute "
         f"(free, one job at a time), {job_seconds(AD_WORKLOAD, 'on_demand'):g} s on a node hired "
         f"for it ({ON_DEMAND_PRICE} coins per workload, {on_demand_cost(AD_WORKLOAD)} coins), "
-        "or on one of your subscribed nodes (if the node runs out first, the rest of the job "
-        f"carries on at your own speed, {SELF_RATE:g} workload per second). "
-        "Ad slots earn no coins yet.",
+        "or on one of your subscribed generative nodes (if the node runs out first, the rest of "
+        f"the job carries on at your own speed, {SELF_RATE:g} workload per second). "
+        "An ad slot earns only while it shows content.",
         BuildAdArgs,
+    ),
+    ToolSpec(
+        "make_content",
+        "Render one piece of ad content, from anywhere, even while walking; it joins the items "
+        "you carry when the job ends, and you may sell it or put it in an ad slot. It takes "
+        f"{CONTENT_WORKLOAD:g} workload: {job_seconds(CONTENT_WORKLOAD, 'self'):g} s on your own "
+        f"compute (free, one job at a time), {job_seconds(CONTENT_WORKLOAD, 'on_demand'):g} s on "
+        f"a node hired for it ({on_demand_cost(CONTENT_WORKLOAD)} coins), or on one of your "
+        "subscribed render nodes. Content is the item "
+        f"{CONTENT_ITEM!r}.",
+        MakeContentArgs,
+    ),
+    ToolSpec(
+        "place_content",
+        f"Put one piece of {CONTENT_ITEM!r} you carry into the ad slot on one of your parcels, "
+        f"from anywhere. A slot shows up to {AD_SLOT_CAPACITY} pieces; each is shown for "
+        f"{CONTENT_LIFETIME:g} s from now and then goes stale. Every {PAY_PERIOD:g} s the town "
+        "pays the slot by its footfall and the pieces it shows.",
+        PlaceContentArgs,
     ),
     ToolSpec(
         "say",
@@ -473,14 +519,23 @@ class ResidentTools:
     def buy_parcel(self) -> ToolResult:
         return self.call("buy_parcel", {})
 
-    def buy_node(self, seconds: int) -> ToolResult:
-        return self.call("buy_node", {"seconds": seconds})
+    def buy_node(self, seconds: int, kind: NodeKind = "generative") -> ToolResult:
+        return self.call("buy_node", {"seconds": seconds, "kind": kind})
 
     def build_ad(self, parcel_id: str, source: JobSource, node_id: int | None = None) -> ToolResult:
         arguments: dict[str, Any] = {"parcel_id": parcel_id, "source": source}
         if node_id is not None:
             arguments["node_id"] = node_id
         return self.call("build_ad", arguments)
+
+    def make_content(self, source: JobSource, node_id: int | None = None) -> ToolResult:
+        arguments: dict[str, Any] = {"source": source}
+        if node_id is not None:
+            arguments["node_id"] = node_id
+        return self.call("make_content", arguments)
+
+    def place_content(self, parcel_id: str) -> ToolResult:
+        return self.call("place_content", {"parcel_id": parcel_id})
 
     def place_order(
         self, side: str, item: str, quantity: int, price: int, expires_in: float = DEFAULT_LIFETIME
@@ -554,14 +609,24 @@ class ResidentTools:
                 parcel = self.game.world.parcels[-1]
                 return f"bought parcel {parcel.id}"
             case BuyNodeArgs():
-                act(BuyNode(me, "generative", args.seconds))
+                act(BuyNode(me, args.kind, args.seconds))
                 node = self.game.world.compute.nodes[-1]
-                return f"subscribed to node {node.id} for {args.seconds} s"
+                return f"subscribed to {args.kind} node {node.id} for {args.seconds} s"
             case BuildAdArgs():
                 act(BuildAd(me, args.parcel_id, args.source, args.node_id))
                 job = self.game.world.compute.jobs[-1]
                 seconds = job.ends_at - job.started_at
                 return f"job {job.id}: ad slot on {job.parcel_id} ready in {seconds:g} s"
+            case MakeContentArgs():
+                act(MakeContent(me, args.source, args.node_id))
+                job = self.game.world.compute.jobs[-1]
+                seconds = job.ends_at - job.started_at
+                return f"job {job.id}: a piece of content ready in {seconds:g} s"
+            case PlaceContentArgs():
+                act(PlaceContent(me, args.parcel_id))
+                parcel = next(p for p in self.game.world.parcels if p.id == args.parcel_id)
+                shown = len(parcel.facility.contents) if parcel.facility else 0
+                return f"the ad slot on {args.parcel_id} now shows {shown}"
             case SayArgs():
                 act(Say(me, args.text, args.to))
             case OfferToBuyArgs():

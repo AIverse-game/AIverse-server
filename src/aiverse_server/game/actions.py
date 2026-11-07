@@ -6,7 +6,7 @@ a request against the current world and either returns the next world or raises
 `ActionRejected`, leaving the world untouched. Requests come from untrusted sources, so
 every rule lives here rather than with the caller. Every primitive names the resident who
 acts, and none goes through for a resident who has left or once the game is over, or, except
-leaving, speaking, withdrawing orders and handling compute, for a resident who is busy
+leaving, speaking, withdrawing orders and handling compute and content, for a resident who is busy
 walking. What a primitive
 changes on the map goes into the activity log for others nearby to notice, see
 `perception.py`.
@@ -27,7 +27,14 @@ from ..core.events import (
 from ..core.inventory import InventoryError, InventoryErrorCode
 from ..core.orders import Side
 from ..core.world import Position, World
-from ..economy.compute import ComputeError, ComputeErrorCode, buy_node, start_build_ad
+from ..economy.ads import AdsError, AdsErrorCode, place_content
+from ..economy.compute import (
+    ComputeError,
+    ComputeErrorCode,
+    buy_node,
+    start_build_ad,
+    start_make_content,
+)
 from ..economy.contracts import (
     ContractError,
     ContractErrorCode,
@@ -63,6 +70,7 @@ RejectionCode = (
     | ExchangeErrorCode
     | LandErrorCode
     | ComputeErrorCode
+    | AdsErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -233,6 +241,26 @@ class BuildAd:
 
 
 @dataclass(frozen=True)
+class MakeContent:
+    """Start rendering a piece of content from anywhere, on the same sources as `BuildAd`
+    but a render node, see `compute.py`. The resident need not stay: the piece joins what
+    they carry when the job ends."""
+
+    resident_id: str
+    source: JobSource
+    node_id: int | None = None
+
+
+@dataclass(frozen=True)
+class PlaceContent:
+    """Put one piece of content they carry into the ad slot on the resident's own parcel
+    `parcel_id`, from anywhere, see `ads.py`."""
+
+    resident_id: str
+    parcel_id: str
+
+
+@dataclass(frozen=True)
 class PlaceOrder:
     """Place an order on the exchange from anywhere, see `exchange.py`: it trades at once with
     the best orders on the other side and rests for `lifetime` seconds with whatever is left,
@@ -280,6 +308,8 @@ Action = (
     | BuyParcel
     | BuyNode
     | BuildAd
+    | MakeContent
+    | PlaceContent
     | PlaceOrder
     | CancelOrder
     | Say
@@ -289,7 +319,10 @@ Action = (
 def perform(world: World, action: Action) -> World:
     try:
         check_can_act(world, action.resident_id)
-        if not isinstance(action, LeaveGame | Say | CancelOrder | BuyNode | BuildAd):
+        if not isinstance(
+            action,
+            LeaveGame | Say | CancelOrder | BuyNode | BuildAd | MakeContent | PlaceContent,
+        ):
             check_not_busy(world, action.resident_id)
     except GameError as error:
         raise ActionRejected(error.code, error.message) from error
@@ -348,6 +381,16 @@ def _carry_out(world: World, action: Action) -> World:
                     world, action.resident_id, action.parcel_id, action.source, action.node_id
                 )
             except (ComputeError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case MakeContent():
+            try:
+                return start_make_content(world, action.resident_id, action.source, action.node_id)
+            except (ComputeError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case PlaceContent():
+            try:
+                return place_content(world, action.resident_id, action.parcel_id)
+            except (AdsError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case PlaceOrder():
             try:

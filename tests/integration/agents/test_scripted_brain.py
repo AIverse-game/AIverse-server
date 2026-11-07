@@ -27,7 +27,7 @@ def me(game: Game, resident_id: str) -> Resident:
     return next(r for r in game.world.residents if r.id == resident_id)
 
 
-def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_build_an_ad_slot_on_it() -> None:
+def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_earn_from_an_ad_slot_on_it() -> None:
     """Plays a fast-forwarded game: each round every bot acts, then the clock jumps to the
     next walk that ends."""
 
@@ -49,10 +49,15 @@ def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_build_an_ad_slot_on_it(
         # Every parcel got its ad slot from its owner's own compute, which costs nothing.
         assert all(parcel.facility is not None for parcel in game.world.parcels)
         assert game.world.compute.jobs == ()
-        # Nothing pays coins yet, so the only change is what was paid for land.
-        spent = sum(STARTING_COINS - resident.coins for resident in game.world.residents)
-        assert spent > 0
-        assert all(resident.coins <= STARTING_COINS for resident in game.world.residents)
+        # They keep their slots stocked with content from their own compute, and visitors pay
+        # for it: more than the land cost the owners.
+        assert all(parcel.facility.contents for parcel in game.world.parcels if parcel.facility)
+        paid = sum(t.amount for t in game.world.ledger.transfers if t.channel == "visitors")
+        spent = sum(t.amount for t in game.world.ledger.transfers if t.channel == "land")
+        assert spent > 0 and paid > 0
+        for parcel in game.world.parcels:
+            owner = me(game, parcel.owner_id)
+            assert owner.coins > STARTING_COINS - 3_000
         assert all(resident.position == Position(*TOUR[-1]) for resident in game.world.residents)
 
     asyncio.run(scenario())

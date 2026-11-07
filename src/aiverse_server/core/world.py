@@ -536,7 +536,7 @@ class World:
         for job in self.compute.jobs:
             if job.owner_id not in ids or job.owner_id in left or self.ended:
                 raise ValueError(f"job {job.id} outlives its game or resident")
-            if owners.get(job.parcel_id) != job.owner_id:
+            if job.parcel_id is not None and owners.get(job.parcel_id) != job.owner_id:
                 raise ValueError(f"job {job.id} works on a parcel that is not its owner's")
             if job.started_at > self.time:
                 raise ValueError(f"job {job.id} started after the current time")

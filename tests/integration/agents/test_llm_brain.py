@@ -210,7 +210,7 @@ def test_the_last_request_advertises_optional_actions_instead_of_discovery() -> 
     asyncio.run(scenario())
 
 
-def test_the_last_request_does_not_advertise_actions_while_walking() -> None:
+def test_the_last_request_advertises_only_what_works_while_walking() -> None:
     async def scenario() -> None:
         game, _ = make_game()
         game.act(MoveTo("a", Position(80, 50)))
@@ -226,7 +226,8 @@ def test_the_last_request_does_not_advertise_actions_while_walking() -> None:
         await brain.take_turn(look(game, "a"), ResidentTools(game, "a"))
 
         names = {tool["function"]["name"] for tool in json.loads(requests[0].content)["tools"]}
-        assert names == {"say", "remember"}
+        # Compute and content work from anywhere; everything else waits for the walk to end.
+        assert names == {"say", "remember", "make_content", "buy_node"}
 
     asyncio.run(scenario())
 

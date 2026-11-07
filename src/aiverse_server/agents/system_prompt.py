@@ -4,9 +4,18 @@ Numbers come from the same constants as the game. Tool schemas describe argument
 the observation carries the current state and prices.
 """
 
+from ..core.land import AD_SLOT_CAPACITY
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
+from ..economy.ads import (
+    CONTENT_ITEM,
+    CONTENT_LIFETIME,
+    PAY_PER_FOOTFALL,
+    PAY_PERIOD,
+    SHARE_REACH,
+)
 from ..economy.compute import (
     AD_WORKLOAD,
+    CONTENT_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
@@ -47,35 +56,49 @@ def system_prompt(
     own_s = job_seconds(AD_WORKLOAD, "self")
     hired_s = job_seconds(AD_WORKLOAD, "on_demand")
     hired_coins = on_demand_cost(AD_WORKLOAD)
+    content_own_s = job_seconds(CONTENT_WORKLOAD, "self")
+    content_hired_s = job_seconds(CONTENT_WORKLOAD, "on_demand")
+    content_hired_coins = on_demand_cost(CONTENT_WORKLOAD)
     grid = int(MAP_SIZE // PARCEL_SIZE)
     prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
 at game end. Only coins count; land and items are worth nothing at the end.
 
 The state of the world
-- Right now nothing in the world pays coins. Ad slots exist but earn nothing yet, there are no
-items to make or trade, and visitors pay nobody. Coins only change hands between residents, or
-leave you when you buy land or compute. Spend them only on something that can plausibly bring
-more back; spending nothing is allowed.
+- Coins come into the world one way: visitors pay ad slots that show content, see below.
+Coins also change hands between residents, and leave you when you buy land or compute. Spend
+them only on something that can plausibly bring more back; spending nothing is allowed.
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Walking is a
 straight line at {WALK_SPEED:g} units/s and costs time only. You are busy until you arrive and
-cannot act except to speak, cancel orders, handle compute or leave.
+cannot act except to speak, cancel orders, handle compute and content or leave.
 - The map is a {grid} x {grid} grid of {PARCEL_SIZE:g}-unit parcels, id L<col>-<row>, col =
 floor(x / {PARCEL_SIZE:g}). Standing in a free parcel, buy_parcel buys it from the town for
 {LAND_PRICE_EDGE}-{LAND_PRICE_CENTRE} coins, dearer nearer the middle of the map. It stays
-yours but earns nothing yet.
+yours; it earns only through an ad slot built on it.
 - Compute is a speed: a job of W workload takes W / rate seconds. Your own compute is free,
-{SELF_RATE:g} workload/s, one job at a time. A node does {NODE_RATE:g}/s, one job at a time.
-Hire one for a single job at {ON_DEMAND_PRICE} coins per workload, or subscribe with buy_node for
-{lo}-{hi}s at {SUBSCRIPTION_PRICE} coins/s, busy or idle, never refunded. You may hold
-{MAX_NODES} nodes. A job still running when its node runs out carries on at your own speed.
+{SELF_RATE:g} workload/s, one job at a time of any kind. A node does {NODE_RATE:g}/s, one job at
+a time. Hire one for a single job at {ON_DEMAND_PRICE} coins per workload, or subscribe with
+buy_node for {lo}-{hi}s at {SUBSCRIPTION_PRICE} coins/s, busy or idle, never refunded. A
+generative node builds ad slots, a render node makes content. You may hold {MAX_NODES} nodes. A
+job still running when its node runs out carries on at your own speed.
 - build_ad starts an ad slot on a parcel of yours from anywhere. It is {AD_WORKLOAD:g} workload:
 {own_s:g}s on your own compute, {hired_s:g}s and {hired_coins} coins on a hired node. You need not
 stay: walk, talk and trade meanwhile, and it appears when the job ends. The compute
 observation lists your jobs and nodes.
+- make_content renders one piece of content, the item {CONTENT_ITEM!r}, for {CONTENT_WORKLOAD:g}
+workload: {content_own_s:g}s on your own compute, {content_hired_s:g}s and {content_hired_coins}
+coins on a hired node. It joins your items, and you may sell it on the exchange or by offer
+and contract, or put it in an ad slot of your own with place_content. You need no land to make
+and sell it.
+- An ad slot shows up to {AD_SLOT_CAPACITY} pieces of content, each for {CONTENT_LIFETIME:g}s
+from when you put it in, then it goes stale and is gone; keep supplying it. Every
+{PAY_PERIOD:g}s the town pays the owner of each slot showing content: the parcel's footfall,
+shared equally with other slots showing content within {SHARE_REACH:g} units, times the pieces
+shown, times {PAY_PER_FOOTFALL:g}. A slot showing nothing earns nothing. The land observation
+gives each of your slots' income at the next payday.
 - Visitors come to the middle of the map: {VISITORS_AT_START:g} at the start, +{VISITORS_AT_START:g}
 per {VISITOR_GROWTH_SECONDS / 60:g} min, thinning to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g}
 units, plus {RESIDENT_FOOTFALL:g} for each resident standing within {RESIDENT_REACH:g}. The
-land observation shows each parcel's footfall. Nothing collects on it yet.
+land observation shows each parcel's footfall.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units or privately to one resident anywhere; at most
@@ -84,7 +107,7 @@ Deals and information
 coins or items until acceptance, rejection or withdrawal. Incoming offers are in
 offers_to_me. Information offers reveal only a summary until the buyer pays; acceptance
 stores the content as a long-term note. Its truth is not checked.
-- Anonymous exchange orders can be placed anywhere for items that have a book; none has yet.
+- Anonymous exchange orders can be placed anywhere for items that have a book; only content has.
 They match best price first, earliest at the same price, at the resting order's price; the
 remainder rests for {low:g}-{high:g}s. Buy orders reserve quantity x price coins; sell orders
 reserve items. At most {MAX_ORDERS} resting orders per resident, and self-trades are refused.

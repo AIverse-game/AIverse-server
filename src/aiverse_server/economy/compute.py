@@ -14,9 +14,11 @@ as long as they are still in the game. There are three sources:
   jobs at once. A job still running when the subscription runs out carries on at `SELF_RATE`,
   the speed of one's own compute, without using up the resident's own one-job-at-a-time slot.
 
-Nodes have a kind, and a job needs a node of its kind: generative nodes build facilities. Render
-nodes, for making content, come with the content design. The first job is `build_ad`: an ad slot
-on a parcel the resident owns, wherever the resident is. Ad slots earn nothing yet.
+Nodes have a kind, and a job needs a node of its kind: generative nodes build facilities,
+render nodes make content. There are two jobs. `build_ad` builds an ad slot on a parcel the
+resident owns, wherever the resident is. `make_content` renders one piece of content, an item
+the resident then carries, see `ads.py`. Several content jobs may run at once, each on a source
+of its own.
 
 Compute is bought from the system, so its price leaves the game, and nothing is paid back for
 unused subscriptions, running jobs or facilities when a resident leaves or the game ends.
@@ -28,11 +30,12 @@ untouched; on error nothing changes.
 from dataclasses import replace
 from typing import Literal
 
-from ..core.compute import ComputeBook, Job, JobSource, Node, NodeKind
-from ..core.inventory import take_coins
+from ..core.compute import NODE_KINDS, ComputeBook, Job, JobKind, JobSource, Node, NodeKind
+from ..core.inventory import store_item, take_coins
 from ..core.land import Facility, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
+from .ads import CONTENT_ITEM, payday_after
 
 SELF_RATE = 1.0
 """Workload a resident's own compute does per game second."""
@@ -42,6 +45,15 @@ NODE_RATE = 10.0
 
 AD_WORKLOAD = 120.0
 """Workload of building an ad slot: two minutes of one's own compute, 12 seconds of a node."""
+
+CONTENT_WORKLOAD = 60.0
+"""Workload of rendering a piece of content: a minute of one's own compute, 6 seconds of a
+node."""
+
+NODE_FOR_JOB: dict[JobKind, NodeKind] = {"build_ad": "generative", "make_content": "render"}
+"""The kind of node a job needs."""
+
+WORKLOADS: dict[JobKind, float] = {"build_ad": AD_WORKLOAD, "make_content": CONTENT_WORKLOAD}
 
 ON_DEMAND_PRICE = 3
 """Coins per unit of workload of a job on a node hired for it alone."""
@@ -107,7 +119,7 @@ def subscription_cost(seconds: int) -> int:
 def buy_node(world: World, resident_id: str, kind: NodeKind, seconds: int) -> World:
     """Subscribe to a node of `kind` for `seconds` from now; the coins go to the system."""
     _find(world, resident_id)
-    if kind != "generative":
+    if kind not in NODE_KINDS:
         raise ComputeError("unknown_node_kind", f"no nodes of kind {kind!r}")
     low, high = NODE_SECONDS
     if type(seconds) is not int or not low <= seconds <= high:
@@ -138,8 +150,29 @@ def start_build_ad(
     slot appears when the job ends."""
     _find(world, resident_id)
     parcel = _bare_parcel(world, resident_id, parcel_id)
+    return _start_job(world, resident_id, "build_ad", parcel.id, source, node_id)
+
+
+def start_make_content(
+    world: World, resident_id: str, source: JobSource, node_id: int | None = None
+) -> World:
+    """Start rendering a piece of content for the resident on `source`, as `start_build_ad`
+    does for an ad slot. The piece joins what they carry when the job ends."""
+    _find(world, resident_id)
+    return _start_job(world, resident_id, "make_content", None, source, node_id)
+
+
+def _start_job(
+    world: World,
+    resident_id: str,
+    kind: JobKind,
+    parcel_id: str | None,
+    source: JobSource,
+    node_id: int | None,
+) -> World:
     book = world.compute
-    ends_at = world.time + job_seconds(AD_WORKLOAD, source)
+    workload = WORKLOADS[kind]
+    ends_at = world.time + job_seconds(workload, source)
     cost = 0
     if source == "subscription":
         if type(node_id) is not int:
@@ -147,13 +180,16 @@ def start_build_ad(
         node = next((n for n in book.nodes if n.id == node_id), None)
         if node is None or node.owner_id != resident_id:
             raise ComputeError("unknown_node", f"resident {resident_id!r} has no node {node_id}")
-        if node.kind != "generative":
-            raise ComputeError("wrong_node_kind", f"node {node_id} cannot build facilities")
+        if node.kind != NODE_FOR_JOB[kind]:
+            raise ComputeError(
+                "wrong_node_kind",
+                f"node {node_id} is {node.kind}; {kind} needs a {NODE_FOR_JOB[kind]} node",
+            )
         if any(job.node_id == node_id for job in book.jobs):
             raise ComputeError("source_busy", f"node {node_id} is already at work")
         if node.expires_at <= world.time:
             raise ComputeError("node_expired", f"node {node_id} has run out")
-        ends_at = subscription_job_end(AD_WORKLOAD, world.time, node.expires_at)
+        ends_at = subscription_job_end(workload, world.time, node.expires_at)
     else:
         if node_id is not None:
             raise ComputeError("invalid_source", f"{source!r} compute is not a node")
@@ -161,19 +197,19 @@ def start_build_ad(
             if any(job.owner_id == resident_id and job.source == "self" for job in book.jobs):
                 raise ComputeError("source_busy", "your own compute is already at work")
         elif source == "on_demand":
-            cost = on_demand_cost(AD_WORKLOAD)
+            cost = on_demand_cost(workload)
         else:
             raise ComputeError("invalid_source", f"no compute source {source!r}")
-    if any(job.parcel_id == parcel.id for job in book.jobs):
-        raise ComputeError("parcel_busy", f"parcel {parcel.id} already has a job running")
+    if parcel_id is not None and any(job.parcel_id == parcel_id for job in book.jobs):
+        raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
     if cost:
         world = take_coins(world, resident_id, cost)
         world = record_transfer(world, resident_id, SYSTEM, cost, "compute")
     job = Job(
         book.next_job_id,
         resident_id,
-        "build_ad",
-        parcel.id,
+        kind,
+        parcel_id,
         source,
         node_id,
         world.time,
@@ -184,21 +220,25 @@ def start_build_ad(
 
 
 def finish_jobs(world: World) -> World:
-    """Finish every job due by `world.time`, oldest end first: its ad slot appears. The same
-    world when none is due."""
+    """Finish every job due by `world.time`, oldest end first: its ad slot appears, or its
+    piece of content joins what its owner carries. The same world when none is due."""
     due = sorted(
         (job for job in world.compute.jobs if job.ends_at <= world.time),
         key=lambda job: (job.ends_at, job.id),
     )
     for job in due:
+        book = replace(world.compute, jobs=tuple(j for j in world.compute.jobs if j.id != job.id))
+        world = replace(world, compute=book)
+        if job.kind == "make_content":
+            world = store_item(world, job.owner_id, CONTENT_ITEM)
+            continue
         parcels = tuple(
-            replace(parcel, facility=Facility("ad", world.time))
+            replace(parcel, facility=Facility("ad", world.time, (), payday_after(world.time)))
             if parcel.id == job.parcel_id
             else parcel
             for parcel in world.parcels
         )
-        book = replace(world.compute, jobs=tuple(j for j in world.compute.jobs if j.id != job.id))
-        world = replace(world, parcels=parcels, compute=book)
+        world = replace(world, parcels=parcels)
     return world
 
 
@@ -228,7 +268,7 @@ def next_compute_due(world: World) -> float | None:
 
 def cancel_compute(world: World, resident_id: str | None = None) -> World:
     """Drop the resident's jobs and nodes, or everyone's when `resident_id` is None. Nothing is
-    paid back and no ad slot appears."""
+    paid back and nothing is made."""
     book = world.compute
     keep = ComputeBook(
         tuple(n for n in book.nodes if resident_id is not None and n.owner_id != resident_id),

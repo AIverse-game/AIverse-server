@@ -2,8 +2,8 @@
 
 Visitors are not simulated one by one. Their number grows as the game goes on, `visitors`, and
 they crowd towards the centre of the map, `footfall`, fewer the farther out a spot lies;
-residents standing nearby add to the crowd. Nothing pays for visitors yet: facilities that earn
-from them are built on this model, see the client repository's `docs/design/facilities.md`.
+residents standing nearby add to the crowd. Ad slots showing content are paid by it, see
+`ads.py`.
 """
 
 import math

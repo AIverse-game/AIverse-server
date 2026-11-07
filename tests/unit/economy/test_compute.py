@@ -7,8 +7,10 @@ from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Position, Resident, World, WorldMap
+from aiverse_server.economy.ads import CONTENT_ITEM, payday_after
 from aiverse_server.economy.compute import (
     AD_WORKLOAD,
+    CONTENT_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
@@ -22,6 +24,7 @@ from aiverse_server.game.actions import (
     BuildAd,
     BuyNode,
     LeaveGame,
+    MakeContent,
     MoveTo,
     perform,
 )
@@ -44,7 +47,7 @@ WORLD = World(
 )
 
 
-def run(world: World, *actions: BuyNode | BuildAd | MoveTo | LeaveGame) -> World:
+def run(world: World, *actions: BuyNode | BuildAd | MakeContent | MoveTo | LeaveGame) -> World:
     for action in actions:
         world = perform(world, action)
     return world
@@ -52,6 +55,11 @@ def run(world: World, *actions: BuyNode | BuildAd | MoveTo | LeaveGame) -> World
 
 def facility(world: World, parcel_id: str) -> Facility | None:
     return next(p.facility for p in world.parcels if p.id == parcel_id)
+
+
+def new_ad(built_at: float) -> Facility:
+    """An ad slot that has just been finished at `built_at`, showing nothing."""
+    return Facility("ad", built_at, (), payday_after(built_at))
 
 
 def test_the_resident_s_own_compute_builds_an_ad_slot_slowly_and_for_free() -> None:
@@ -62,7 +70,7 @@ def test_the_resident_s_own_compute_builds_an_ad_slot_slowly_and_for_free() -> N
 
     assert coin_balance(started, "a") == 10_000
     assert facility(before, "L5-3") is None
-    assert facility(after, "L5-3") == Facility("ad", SELF_SECONDS)
+    assert facility(after, "L5-3") == new_ad(SELF_SECONDS)
     assert after.compute.jobs == ()
     assert next_due(started) == SELF_SECONDS
 
@@ -147,7 +155,7 @@ def test_a_job_ending_exactly_when_its_node_runs_out_still_finishes() -> None:
 
     done = settle_due(replace(started, time=30.0))
 
-    assert facility(done, "L5-3") == Facility("ad", 30.0)
+    assert facility(done, "L5-3") == new_ad(30.0)
     assert done.compute == ComputeBook((), (), 2, 2)
 
 
@@ -225,7 +233,7 @@ def test_the_resident_may_walk_while_the_job_runs() -> None:
         (BuildAd("a", "L5-3", "teleport"), "invalid_source"),  # type: ignore[arg-type]
         (BuyNode("a", "generative", NODE_SECONDS[0] - 1), "invalid_seconds"),
         (BuyNode("a", "generative", NODE_SECONDS[1] + 1), "invalid_seconds"),
-        (BuyNode("a", "render", 60), "unknown_node_kind"),  # type: ignore[arg-type]
+        (BuyNode("a", "laser", 60), "unknown_node_kind"),  # type: ignore[arg-type]
         (BuyNode("nobody", "generative", 60), "unknown_resident"),
     ],
 )
@@ -256,6 +264,15 @@ def test_one_job_at_a_time_per_source_and_per_parcel() -> None:
         perform(world, BuildAd("a", "L5-3", "on_demand"))
 
     assert (own.value.code, parcel.value.code) == ("source_busy", "parcel_busy")
+
+
+def test_a_bad_source_is_reported_before_a_busy_parcel() -> None:
+    world = perform(WORLD, BuildAd("a", "L5-3", "self"))
+
+    with pytest.raises(ActionRejected) as rejected:
+        perform(world, BuildAd("a", "L5-3", "subscription", node_id=9))
+
+    assert rejected.value.code == "unknown_node"
 
 
 def test_a_parcel_with_an_ad_slot_is_refused() -> None:
@@ -317,17 +334,104 @@ def test_compute_prices_are_not_part_of_the_ranking_total() -> None:
     assert total_coins(world, "a") == coin_balance(world, "a") == 10_000 - 360
 
 
+CONTENT_SELF_SECONDS = CONTENT_WORKLOAD / SELF_RATE
+CONTENT_NODE_SECONDS = CONTENT_WORKLOAD / NODE_RATE
+
+
+def carried(world: World, resident_id: str) -> int:
+    return next(r for r in world.residents if r.id == resident_id).inventory.count(CONTENT_ITEM)
+
+
+def test_the_residents_own_compute_renders_content_for_free_and_they_carry_it() -> None:
+    started = perform(WORLD, MakeContent("a", "self"))
+
+    before = settle_due(replace(started, time=CONTENT_SELF_SECONDS - 0.1))
+    after = settle_due(replace(started, time=CONTENT_SELF_SECONDS))
+
+    assert coin_balance(started, "a") == 10_000
+    assert (carried(before, "a"), carried(after, "a")) == (0, 1)
+    assert after.compute.jobs == ()
+    assert next_due(started) == CONTENT_SELF_SECONDS
+
+
+def test_a_hired_node_renders_content_by_the_workload() -> None:
+    started = perform(WORLD, MakeContent("a", "on_demand"))
+
+    done = settle_due(replace(started, time=CONTENT_NODE_SECONDS))
+
+    cost = round(CONTENT_WORKLOAD * ON_DEMAND_PRICE)
+    assert coin_balance(done, "a") == 10_000 - cost
+    assert carried(done, "a") == 1
+    assert done.ledger.transfers[-1].channel == "compute"
+    assert done.ledger.transfers[-1].amount == cost
+
+
+def test_a_render_node_renders_content_one_piece_at_a_time_and_a_generative_one_cannot() -> None:
+    world = run(WORLD, BuyNode("a", "render", 60), BuyNode("a", "generative", 60))
+    started = perform(world, MakeContent("a", "subscription", node_id=1))
+
+    with pytest.raises(ActionRejected) as busy:
+        perform(started, MakeContent("a", "subscription", node_id=1))
+    with pytest.raises(ActionRejected) as wrong:
+        perform(world, MakeContent("a", "subscription", node_id=2))
+    with pytest.raises(ActionRejected) as wrong_way:
+        perform(world, BuildAd("a", "L5-3", "subscription", node_id=1))
+    done = settle_due(replace(started, time=CONTENT_NODE_SECONDS))
+
+    assert (busy.value.code, wrong.value.code, wrong_way.value.code) == (
+        "source_busy",
+        "wrong_node_kind",
+        "wrong_node_kind",
+    )
+    assert carried(done, "a") == 1
+    assert coin_balance(world, "a") == 10_000 - 120 * SUBSCRIPTION_PRICE
+
+
+def test_hired_nodes_render_at_once_but_the_own_compute_does_one_job_at_a_time() -> None:
+    world = run(WORLD, MakeContent("a", "on_demand"), MakeContent("a", "on_demand"))
+    world = perform(world, MakeContent("a", "self"))
+
+    with pytest.raises(ActionRejected) as rejected:
+        perform(world, MakeContent("a", "self"))
+    done = settle_due(replace(world, time=CONTENT_SELF_SECONDS))
+
+    assert rejected.value.code == "source_busy"
+    assert carried(done, "a") == 3
+
+
+def test_the_own_compute_does_one_job_at_a_time_whatever_its_kind() -> None:
+    world = perform(WORLD, MakeContent("a", "self"))
+
+    with pytest.raises(ActionRejected) as rejected:
+        perform(world, BuildAd("a", "L5-3", "self"))
+
+    assert rejected.value.code == "source_busy"
+
+
+def test_leaving_drops_content_jobs_and_nothing_is_made() -> None:
+    world = perform(WORLD, MakeContent("a", "on_demand"))
+
+    left = perform(world, LeaveGame("a"))
+    later = settle_due(replace(left, time=500.0))
+
+    assert left.compute.jobs == ()
+    assert carried(later, "a") == 0
+
+
 NODE = Node(1, "a", "generative", 0.0, 60.0)
 JOB = Job(1, "a", "build_ad", "L5-3", "subscription", 1, 0.0, 12.0)
+CONTENT_JOB = Job(2, "a", "make_content", None, "on_demand", None, 0.0, 6.0)
 
 
 @pytest.mark.parametrize(
     ("build", "message"),
     [
         (lambda: Node(1, "a", "generative", 5.0, 5.0), "runs out before it begins"),
-        (lambda: Node(1, "a", "render", 0.0, 5.0), "unknown node kind"),  # type: ignore[arg-type]
+        (lambda: Node(1, "a", "laser", 0.0, 5.0), "unknown node kind"),  # type: ignore[arg-type]
         (lambda: replace(JOB, source="self"), "names a node but is not subscribed"),
         (lambda: replace(JOB, ends_at=0.0), "ends before it starts"),
+        (lambda: replace(JOB, parcel_id=None), "has parcel None"),
+        (lambda: replace(CONTENT_JOB, parcel_id="L5-3"), "has parcel 'L5-3'"),
         (lambda: Facility("ad", -1.0), "built at"),
         (lambda: ComputeBook((NODE,), (JOB, replace(JOB, id=2)), 2, 3), "more than one job"),
         (lambda: ComputeBook((), (JOB,), 1, 2), "not its owner's"),

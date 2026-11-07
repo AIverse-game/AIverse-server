@@ -9,15 +9,18 @@ from aiverse_server.agents import observation as observation_module
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.runner import AgentRunner, Pace, TurnRecord, record_to_json
 from aiverse_server.agents.tools import ResidentTools
-from aiverse_server.core.land import Parcel
+from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy import exchange
+from aiverse_server.economy.ads import CONTENT_ITEM
 from aiverse_server.game.actions import (
     BuildAd,
     CancelContract,
     LeaveGame,
+    MakeContent,
     MoveTo,
     OfferToSell,
+    PlaceContent,
     PlaceOrder,
     ProposeContract,
     RespondToEvent,
@@ -251,6 +254,51 @@ def test_the_loop_wakes_when_a_compute_job_finishes_even_while_walking() -> None
 
         assert game.world.residents[0].walking is not None
         assert brain.seen[1].land.mine[0].facility == "ad"
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_when_a_content_job_finishes_and_not_when_the_content_is_placed() -> None:
+    async def scenario() -> None:
+        world = replace(WORLD, parcels=(Parcel(5, 5, "a", Facility("ad", 0.0, (), 30.0)),))
+        game, clock = make_game(world)
+        game.act(MakeContent("a", "on_demand"))
+        brain = Recorder()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        clock.now = 6.0
+        game.tick()
+        await _until(lambda: len(brain.seen) == 2)
+        game.act(PlaceContent("a", "L5-5"))
+        await asyncio.sleep(0.05)
+
+        assert brain.seen[1].me.items[CONTENT_ITEM] == 1
+        assert len(brain.seen) == 2
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_the_loop_wakes_for_finished_content_even_after_other_content_went_stale() -> None:
+    async def scenario() -> None:
+        # One piece shows until 3 s; the job finishes at 6 s, so the count of content falls and
+        # rises again by the same amount.
+        slot = Facility("ad", 0.0, (3.0,), 30.0)
+        game, clock = make_game(replace(WORLD, parcels=(Parcel(5, 5, "a", slot),)))
+        game.act(MakeContent("a", "on_demand"))
+        game.act(MoveTo("a", Position(90, 90)))
+        brain = Recorder()
+        task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
+        await _until(lambda: len(brain.seen) == 1)
+
+        clock.now = 6.0
+        game.tick()
+        await _until(lambda: len(brain.seen) == 2)
+
+        assert game.world.residents[0].walking is not None
+        assert brain.seen[1].me.items[CONTENT_ITEM] == 1
         task.cancel()
 
     asyncio.run(scenario())

@@ -10,10 +10,12 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-NodeKind = Literal["generative"]
-"""What a node does. Generative nodes build facilities; render nodes will make content."""
+NodeKind = Literal["generative", "render"]
+"""What a node does. Generative nodes build facilities; render nodes make content."""
 
-JobKind = Literal["build_ad"]
+NODE_KINDS: tuple[NodeKind, ...] = ("generative", "render")
+
+JobKind = Literal["build_ad", "make_content"]
 """What a job makes. It needs a node of the matching kind, see `economy/compute.py`."""
 
 JobSource = Literal["self", "on_demand", "subscription"]
@@ -31,7 +33,7 @@ class Node:
     """Game times when the subscription began and when it runs out, see `World.time`."""
 
     def __post_init__(self) -> None:
-        if self.kind != "generative":
+        if self.kind not in NODE_KINDS:
             raise ValueError(f"unknown node kind {self.kind!r}")
         if not (math.isfinite(self.bought_at) and math.isfinite(self.expires_at)):
             raise ValueError(f"node {self.id} has a time that is not finite")
@@ -46,8 +48,9 @@ class Job:
     id: int
     owner_id: str
     kind: JobKind
-    parcel_id: str
-    """The parcel the work is for, see `core/land.py`."""
+    parcel_id: str | None
+    """The parcel the work is for, see `core/land.py`; None for work that makes something
+    to carry, such as content."""
     source: JobSource
     node_id: int | None
     """The subscribed node doing the work; None for the other sources, and for a subscription
@@ -57,8 +60,10 @@ class Job:
     ends_at: float
 
     def __post_init__(self) -> None:
-        if self.kind != "build_ad":
+        if self.kind not in ("build_ad", "make_content"):
             raise ValueError(f"unknown job kind {self.kind!r}")
+        if (self.kind == "build_ad") != (self.parcel_id is not None):
+            raise ValueError(f"job {self.id} of kind {self.kind} has parcel {self.parcel_id!r}")
         if self.source != "subscription" and self.node_id is not None:
             raise ValueError(f"job {self.id} names a node but is not subscribed")
         if not (math.isfinite(self.started_at) and math.isfinite(self.ends_at)):
@@ -96,9 +101,10 @@ class ComputeBook:
         self_workers: set[str] = set()
         parcels: set[str] = set()
         for job in self.jobs:
-            if job.parcel_id in parcels:
-                raise ValueError(f"parcel {job.parcel_id} has more than one job")
-            parcels.add(job.parcel_id)
+            if job.parcel_id is not None:
+                if job.parcel_id in parcels:
+                    raise ValueError(f"parcel {job.parcel_id} has more than one job")
+                parcels.add(job.parcel_id)
             if job.node_id is not None:
                 node = nodes.get(job.node_id)
                 if node is None or node.owner_id != job.owner_id:

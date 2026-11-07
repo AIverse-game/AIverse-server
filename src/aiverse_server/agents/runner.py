@@ -9,8 +9,9 @@ happens, see decision 0003 in the client repository:
   own doing, such as the supplier's last delivery or the contract lapsing, or someone else's
   order fills one of theirs resting on the exchange;
 - someone says something they hear, even while busy, since they can still answer;
-- one of their compute jobs finishes and leaves a facility on their land, even while busy, since
-  compute works from anywhere and a paid-for node should not sit idle;
+- one of their compute jobs finishes and leaves a facility on their land or content in their
+  hands, even while busy, since compute works from anywhere and a paid-for node should not sit
+  idle;
 - while free, `Pace.idle` passes with nothing of the above, so a brain that chose to wait
   is asked again.
 
@@ -193,6 +194,9 @@ class _Attention:
     """Sequence number of the latest fill of one of the resident's resting orders."""
     built: int = 0
     """Facilities standing on the resident's parcels: one more means a job of theirs finished."""
+    jobs: frozenset[int] = field(default_factory=frozenset)
+    """Ids of the resident's running compute jobs: one gone means it finished, which for content
+    leaves nothing countable on the map, since content goes stale and moves about."""
 
 
 class AgentRunner:
@@ -224,7 +228,9 @@ class AgentRunner:
                 # meanwhile included; free or busy as the brain left the resident.
                 before = self._attention()
                 outcome = await self._take_turn()
-                seen = replace(before, free=self._attention().free)
+                after = self._attention()
+                # A job started during the round still counts if it ends before the next look.
+                seen = replace(before, free=after.free, jobs=before.jobs | after.jobs)
                 await self._sleep(changed, started, outcome, seen)
         finally:
             self.game.unsubscribe(changed)
@@ -335,6 +341,7 @@ class AgentRunner:
                     current.heard > seen.heard
                     or current.announced > seen.announced
                     or current.built > seen.built
+                    or seen.jobs - current.jobs
                 ):
                     return
                 if current.free and (
@@ -380,6 +387,7 @@ class AgentRunner:
             built=sum(
                 parcel.owner_id == me.id and parcel.facility is not None for parcel in world.parcels
             ),
+            jobs=frozenset(job.id for job in world.compute.jobs if job.owner_id == me.id),
             filled=max(
                 (
                     fill.seq

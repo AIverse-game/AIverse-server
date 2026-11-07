@@ -1,7 +1,14 @@
 from aiverse_server.agents.system_prompt import system_prompt
 from aiverse_server.agents.tools import TOOLS
+from aiverse_server.core.land import AD_SLOT_CAPACITY
 from aiverse_server.core.world import NOTE_LENGTH_LIMIT
-from aiverse_server.economy.compute import AD_WORKLOAD, ON_DEMAND_PRICE, SUBSCRIPTION_PRICE
+from aiverse_server.economy.ads import CONTENT_LIFETIME, PAY_PERIOD
+from aiverse_server.economy.compute import (
+    AD_WORKLOAD,
+    CONTENT_WORKLOAD,
+    ON_DEMAND_PRICE,
+    SUBSCRIPTION_PRICE,
+)
 
 
 def test_the_base_prompt_stays_compact() -> None:
@@ -34,11 +41,22 @@ def test_the_prompt_says_only_coins_count_at_the_end() -> None:
     assert "Only coins count; land and items are worth nothing at the end." in prompt
 
 
-def test_the_prompt_says_nothing_pays_coins_yet() -> None:
+def test_the_prompt_says_visitors_pay_ad_slots_that_show_content() -> None:
     prompt = system_prompt("甲", "a")
 
-    assert "nothing in the world pays coins" in prompt
+    assert "visitors pay ad slots that show content" in prompt
+    assert "A slot showing nothing earns nothing" in prompt
     assert "buy_parcel" in prompt
+
+
+def test_the_prompt_explains_content_with_the_game_constants() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert f"for {CONTENT_WORKLOAD:g} workload" in prompt
+    assert f"each for {CONTENT_LIFETIME:g}s" in prompt
+    assert f"Every {PAY_PERIOD:g}s the town pays" in prompt
+    assert f"up to {AD_SLOT_CAPACITY} pieces of content" in prompt
+    assert "make_content" in prompt and "place_content" in prompt
 
 
 def test_the_prompt_explains_compute_with_the_game_constants() -> None:
@@ -47,7 +65,6 @@ def test_the_prompt_explains_compute_with_the_game_constants() -> None:
     assert f"{ON_DEMAND_PRICE} coins per workload" in prompt
     assert f"{SUBSCRIPTION_PRICE} coins/s" in prompt
     assert f"{AD_WORKLOAD:g} workload" in prompt
-    assert "Ad slots exist but earn nothing yet" in prompt
     assert "build_ad" in prompt and "buy_node" in prompt
 
 

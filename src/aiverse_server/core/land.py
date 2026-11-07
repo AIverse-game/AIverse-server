@@ -10,17 +10,36 @@ FacilityKind = Literal["ad"]
 need them, see the client repository's docs/design/facilities.md."""
 
 
+AD_SLOT_CAPACITY = 5
+"""Pieces of content an ad slot shows at once."""
+
+
 @dataclass(frozen=True)
 class Facility:
     kind: FacilityKind
     built_at: float
     """Game time it was finished, see `World.time`."""
+    contents: tuple[float, ...] = ()
+    """The content shown in it, as the game times when each piece goes stale, soonest first;
+    pieces that have gone stale may linger until the facility is next paid, see
+    `economy/ads.py`."""
+    next_pay_at: float = 0.0
+    """Game time the town next pays it for the content it shows, see `economy/ads.py`."""
 
     def __post_init__(self) -> None:
         if self.kind != "ad":
             raise ValueError(f"unknown facility kind {self.kind!r}")
         if not math.isfinite(self.built_at) or self.built_at < 0:
             raise ValueError(f"facility built at {self.built_at!r}")
+        if len(self.contents) > AD_SLOT_CAPACITY:
+            raise ValueError(
+                f"facility holds {len(self.contents)} pieces of content, over the limit"
+            )
+        if not (math.isfinite(self.next_pay_at) and self.next_pay_at >= 0):
+            raise ValueError(f"facility is paid at {self.next_pay_at!r}")
+        if not all(math.isfinite(time) for time in self.contents):
+            raise ValueError("content goes stale at a time that is not finite")
+        object.__setattr__(self, "contents", tuple(sorted(self.contents)))
 
 
 @dataclass(frozen=True)

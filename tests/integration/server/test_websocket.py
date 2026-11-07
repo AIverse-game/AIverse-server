@@ -82,7 +82,12 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                     },
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
-                "exchange": {"books": [], "fills": [], "orders": [], "maxOrders": 8},
+                "exchange": {
+                    "books": [{"item": "ad_content", "bids": [], "asks": []}],
+                    "fills": [],
+                    "orders": [],
+                    "maxOrders": 8,
+                },
                 "speech": [],
                 "offers": [],
                 "contractProposals": [],

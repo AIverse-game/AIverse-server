@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..economy.ads import CONTENT_ITEM
 from ..economy.compute import MAX_NODES, NODE_SECONDS, subscription_cost
 from ..economy.land import plot_at
 from .observation import Observation
@@ -17,6 +18,7 @@ from .tools import TOOLS, ResidentTools
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "land": ("buy_parcel",),
     "compute": ("buy_node", "build_ad"),
+    "content": ("make_content", "place_content"),
     "exchange": ("place_order", "cancel_order"),
     "offers": (
         "offer_to_buy",
@@ -35,7 +37,7 @@ DISCOVER_TOOL_SPEC: dict[str, Any] = {
         "name": "discover_tools",
         "description": (
             "Make additional game tools available in this round. Choose a group when the "
-            "current tools cannot carry out your plan: land, compute, exchange, offers, "
+            "current tools cannot carry out your plan: land, compute, content, exchange, offers, "
             "contracts or memory. The group's tools appear in the next request."
         ),
         "parameters": {
@@ -62,18 +64,26 @@ def selected_tool_names(observation: Observation) -> set[str]:
         names.add("forget")
     if observation.exchange.my_orders:
         names.add("cancel_order")
-    # Compute works from anywhere, so these do not wait for the resident to stop walking.
+    # Compute and content work from anywhere, so these do not wait for the resident to stop
+    # walking. Anyone may make content, to sell it as much as to show it.
     compute = observation.compute
+    names.add("make_content")
     if any(
         parcel.facility is None and parcel.building_ends_in is None
         for parcel in observation.land.mine
     ):
         names.add("build_ad")
-        if (
-            len(compute.my_nodes) < compute.max_nodes
-            and me.coins >= compute.node_seconds[0] * compute.node_coins_per_second
-        ):
-            names.add("buy_node")
+    if (
+        len(compute.my_nodes) < compute.max_nodes
+        and me.coins >= compute.node_seconds[0] * compute.node_coins_per_second
+    ):
+        names.add("buy_node")
+    if me.items.get(CONTENT_ITEM) and any(
+        parcel.facility is not None
+        and len(parcel.content_goes_stale_in) < observation.land.slot_capacity
+        for parcel in observation.land.mine
+    ):
+        names.add("place_content")
     if me.walking_to is None:
         names.add("move_to")
         here = observation.land.here
@@ -103,15 +113,20 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         names.add("cancel_order")
     book = world.compute
     working = {job.parcel_id for job in book.jobs}
+    names.add("make_content")
     if any(
         parcel.owner_id == me.id and parcel.facility is None and parcel.id not in working
         for parcel in world.parcels
     ):
         names.add("build_ad")
-        if sum(
-            node.owner_id == me.id for node in book.nodes
-        ) < MAX_NODES and me.coins >= subscription_cost(NODE_SECONDS[0]):
-            names.add("buy_node")
+    if sum(node.owner_id == me.id for node in book.nodes) < MAX_NODES and me.coins >= (
+        subscription_cost(NODE_SECONDS[0])
+    ):
+        names.add("buy_node")
+    if me.inventory.count(CONTENT_ITEM) and any(
+        parcel.owner_id == me.id and parcel.facility is not None for parcel in world.parcels
+    ):
+        names.add("place_content")
     if me.busy:
         return names
 
