@@ -27,15 +27,20 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
 from ..core.inventory import item_count
-from ..core.world import NOTE_LENGTH_LIMIT, Position, World
+from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
 from ..economy.compute import COMPUTE, COMPUTE_PER_UNIT, compute_total
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
+from ..economy.facilities import AD_MATERIALS, FACILITY_SECONDS, ad_income
+from ..economy.land import plot_at
 from ..economy.market import pressure_at
+from ..economy.studio import MATERIAL_RECIPE
 from ..game.actions import (
     Action,
     ActionRejected,
+    BuildAd,
     BuildCollector,
+    BuyParcel,
     BuyProgram,
     CancelContract,
     CancelOrder,
@@ -44,6 +49,7 @@ from ..game.actions import (
     GatherData,
     Harvest,
     InstallProgram,
+    MakeMaterial,
     MoveTo,
     OfferInformation,
     OfferToBuy,
@@ -105,6 +111,18 @@ class WriteProgramArgs(_Args):
     tier: str = Field(description="Program tier to write: v1, v2 or v3.")
 
 
+class MakeMaterialArgs(_Args):
+    pass
+
+
+class BuyParcelArgs(_Args):
+    pass
+
+
+class BuildAdArgs(_Args):
+    pass
+
+
 class SellComputeArgs(_Args):
     quantity: StrictInt = Field(description="Compute to sell; you must stand at the market.")
 
@@ -145,14 +163,14 @@ class SayArgs(_Args):
 
 class OfferToBuyArgs(_Args):
     seller_id: str = Field(description="Resident id you buy from.")
-    kind: str = Field(description='Item kind: "compute", "data" or a program tier like "v1".')
+    kind: str = Field(description='Item: "compute", "data", "material" or a program like "v1".')
     quantity: StrictInt = Field(description="How many items.")
     price: StrictInt = Field(description="Coins for the whole lot, set aside until answered.")
 
 
 class OfferToSellArgs(_Args):
     buyer_id: str = Field(description="Resident id you sell to.")
-    kind: str = Field(description='Item kind: "compute", "data" or a program tier like "v1".')
+    kind: str = Field(description='Item: "compute", "data", "material" or a program like "v1".')
     quantity: StrictInt = Field(description="How many items, set aside until answered.")
     price: StrictInt = Field(description="Coins for the whole lot.")
 
@@ -173,7 +191,7 @@ class OfferInformationArgs(_Args):
 
 class PlaceOrderArgs(_Args):
     side: Literal["buy", "sell"]
-    item: str = Field(description='Item: "compute", "data" or a program tier like "v1".')
+    item: str = Field(description='Item: "compute", "data", "material" or a program like "v1".')
     quantity: StrictInt = Field(description=f"Units, 1 to {MAX_QUANTITY}.")
     price: StrictInt = Field(description=f"Coins per unit, 1 to {MAX_PRICE}.")
     expires_in: float = Field(
@@ -211,7 +229,7 @@ class ProposeContractArgs(_Args):
         "now; buyer: you pay for each delivery, and all your payments are set aside now."
     )
     kind: str = Field(
-        description='Item kind delivered: "compute", "data" or a program tier like "v1".'
+        description='Item kind delivered: "compute", "data", "material" or a program like "v1".'
     )
     quantity: StrictInt = Field(description="Items in each delivery.")
     price: StrictInt = Field(description="Coins the buyer pays for each delivery.")
@@ -381,6 +399,25 @@ TOOLS = (
         WriteProgramArgs,
     ),
     ToolSpec(
+        "make_material",
+        f"Make {MATERIAL_RECIPE.count} materials at the studio you stand at from "
+        f"{MATERIAL_RECIPE.data} data and {MATERIAL_RECIPE.compute} compute, spent at once; they "
+        "arrive when the job ends and you are busy until then. Facilities are built of materials.",
+        MakeMaterialArgs,
+    ),
+    ToolSpec(
+        "buy_parcel",
+        "Buy the parcel of land you stand in from the town at its price; it stays yours for the "
+        "game. Parcels touching a spring, mine, the studio or the market cannot be bought.",
+        BuyParcelArgs,
+    ),
+    ToolSpec(
+        "build_ad",
+        f"Build an ad slot on your own parcel you stand in, using up {AD_MATERIALS} carried "
+        f"materials. Every {FACILITY_SECONDS:g}s it pays you coins for the visitors passing by.",
+        BuildAdArgs,
+    ),
+    ToolSpec(
         "sell_compute",
         "Sell carried compute to the market for coins at the market price, which falls the more "
         f"is sold. Others' sales in the {PRICE_HOLD_SECONDS:g} seconds after your round began do "
@@ -544,6 +581,15 @@ class ResidentTools:
     def write_program(self, tier: str) -> ToolResult:
         return self.call("write_program", {"tier": tier})
 
+    def make_material(self) -> ToolResult:
+        return self.call("make_material", {})
+
+    def buy_parcel(self) -> ToolResult:
+        return self.call("buy_parcel", {})
+
+    def build_ad(self) -> ToolResult:
+        return self.call("build_ad", {})
+
     def place_order(
         self, side: str, item: str, quantity: int, price: int, expires_in: float = DEFAULT_LIFETIME
     ) -> ToolResult:
@@ -648,6 +694,18 @@ class ResidentTools:
                 act(GatherData(me, args.mine_id))
             case WriteProgramArgs():
                 act(WriteProgram(me, args.tier))
+            case MakeMaterialArgs():
+                act(MakeMaterial(me))
+            case BuyParcelArgs():
+                act(BuyParcel(me))
+                parcel = self.game.world.parcels[-1]
+                return f"bought parcel {parcel.id}"
+            case BuildAdArgs():
+                act(BuildAd(me))
+                world = self.game.world
+                square = plot_at(world, _resident(world, me).position)
+                income = ad_income(world, square.col, square.row)
+                return f"built an ad slot on {square.id}; it would earn {income} coins a cycle now"
             case SellComputeArgs():
                 held = (
                     self.seen_pressure
@@ -783,6 +841,10 @@ def _order_outcome(world: World, order_id: int, first_fill: int) -> str:
     if resting is not None:
         parts.append(f"order {order_id}: {resting.quantity} resting at {resting.price} each")
     return "; ".join(parts)
+
+
+def _resident(world: World, resident_id: str) -> Resident:
+    return next(resident for resident in world.residents if resident.id == resident_id)
 
 
 def _compute_in_hand(world: World, resident_id: str) -> int:

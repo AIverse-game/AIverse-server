@@ -15,10 +15,17 @@ from aiverse_server.core.world import (
 from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.economy.gathering import DATA
 from aiverse_server.economy.programs import PROGRAM_TIERS
-from aiverse_server.economy.studio import RECIPES, next_write_end, write_seconds
+from aiverse_server.economy.studio import (
+    MATERIAL,
+    MATERIAL_RECIPE,
+    RECIPES,
+    next_write_end,
+    write_seconds,
+)
 from aiverse_server.game.actions import (
     ActionRejected,
     LeaveGame,
+    MakeMaterial,
     MoveTo,
     OfferToSell,
     WriteProgram,
@@ -182,3 +189,33 @@ def test_the_default_world_places_the_studio_apart_from_everything_else(seed: in
     others = [spring.position for spring in world.springs] + [q.position for q in world.mines]
     assert math.dist((place.x, place.y), (market.x, market.y)) >= MARKET_CLEARANCE
     assert all(math.dist((place.x, place.y), (o.x, o.y)) >= PLACE_SPACING for o in others)
+
+
+def test_making_materials_spends_data_and_compute_and_gives_a_batch_when_done() -> None:
+    started = perform(WORLD, MakeMaterial("a"))
+
+    done = settle_due(replace(started, time=MATERIAL_RECIPE.seconds))
+
+    assert item_count(started, "a", DATA) == 100 - MATERIAL_RECIPE.data
+    assert item_count(started, "a", COMPUTE) == 200 - MATERIAL_RECIPE.compute
+    assert item_count(done, "a", MATERIAL) == MATERIAL_RECIPE.count
+    assert me(done, "a").writing is None
+
+
+def test_making_materials_is_not_practice_at_writing_programs() -> None:
+    world = replace(WORLD, residents=(replace(WORLD.residents[0], programs_written=2),))
+
+    done = settle_due(replace(perform(world, MakeMaterial("a")), time=MATERIAL_RECIPE.seconds))
+
+    assert me(done, "a").programs_written == 2
+
+
+@pytest.mark.parametrize(
+    ("resident_id", "code"),
+    [("b", "not_enough_data"), ("c", "not_at_studio")],
+)
+def test_materials_that_cannot_be_made_are_refused(resident_id: str, code: str) -> None:
+    with pytest.raises(ActionRejected) as rejected:
+        perform(WORLD, MakeMaterial(resident_id))
+
+    assert rejected.value.code == code

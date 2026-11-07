@@ -37,10 +37,19 @@ from ..economy.collectors import (
 from ..economy.compute import COMPUTE, walk_cost
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
+from ..economy.facilities import (
+    AD_MATERIALS,
+    AD_RATE,
+    AD_SHARE_RADIUS,
+    FACILITY_SECONDS,
+    ad_incomes,
+    visitors,
+)
 from ..economy.gathering import DATA
+from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot, plot_at, plots
 from ..economy.market import unit_price
 from ..economy.programs import PROGRAM_TIERS
-from ..economy.studio import RECIPES, write_seconds
+from ..economy.studio import MATERIAL, MATERIAL_RECIPE, RECIPES, write_seconds
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
@@ -85,6 +94,8 @@ class Me:
     """Programs carried, tier to count."""
     data: int
     """Data carried, which writing spends."""
+    materials: int
+    """Materials carried, which building facilities spends."""
     programs_written: int
     """Programs written so far, which makes writing faster."""
     walking_to: Position | None
@@ -96,7 +107,7 @@ class Me:
     gathering_mine: str | None
     gathering_done_in: float | None
     writing_program: str | None
-    """Tier of the program being written."""
+    """Tier of the program being written, or `material` while making materials."""
     writing_done_in: float | None
     at_market: bool
     at_spring: str | None
@@ -216,6 +227,15 @@ class RecipeView:
 
 
 @dataclass(frozen=True)
+class MaterialRecipeView:
+    data: int
+    compute: int
+    count: int
+    """Materials one job makes."""
+    seconds: float
+
+
+@dataclass(frozen=True)
 class StudioView:
     position: Position
     radius: float
@@ -223,6 +243,56 @@ class StudioView:
     walk_cost: int
     walk_seconds: float
     recipes: tuple[RecipeView, ...]
+    materials: MaterialRecipeView
+
+
+@dataclass(frozen=True)
+class ParcelView:
+    """A parcel of land, with its centre to walk to."""
+
+    id: str
+    centre: Position
+    price: int
+    """Coins it costs from the town; what its owner paid if it is owned."""
+    reserved: bool
+    """It touches a spring, mine, the studio or the market and can never be bought."""
+    owner: str | None
+    facility: str | None
+    """What is built on it, such as `ad`; None when nothing is."""
+    ad_income: int | None
+    """Coins per cycle an ad slot here earns now: the working one, or one built now. None
+    where no ad can be built (reserved, or another's)."""
+    distance: float
+    walk_cost: int
+
+
+@dataclass(frozen=True)
+class MyParcelView:
+    id: str
+    centre: Position
+    facility: str | None
+    last_income: int
+    """Coins its latest cycle paid."""
+    earned: int
+    """Coins it has paid so far."""
+    next_payout_in: float | None
+    ad_income: int | None
+    """Coins per cycle it would earn if paid now, or if an ad were built on bare land."""
+
+
+@dataclass(frozen=True)
+class LandView:
+    parcel_size: float
+    grid: int
+    """Parcels along each side; ids are `L<col>-<row>` from the north-west corner."""
+    visitors_now: float
+    """Footfall at the market now; it grows as the game goes on."""
+    rules: dict[str, int | float]
+    here: ParcelView | None
+    """The parcel the resident stands in; None while walking."""
+    mine: tuple[MyParcelView, ...]
+    best_free: tuple[ParcelView, ...]
+    """Free parcels where a new ad slot would earn most per cycle now, best first."""
 
 
 @dataclass(frozen=True)
@@ -400,6 +470,7 @@ class Observation:
     mines: tuple[MineView, ...]
     """Every mine, nearest first."""
     studio: StudioView | None
+    land: LandView
     known_springs: tuple[SpringView, ...]
     """Every spring discovered so far, nearest first."""
     discovered: tuple[str, ...]
@@ -509,6 +580,7 @@ def observe(
                 if kind in program_tiers
             },
             data=me.inventory.count(DATA),
+            materials=me.inventory.count(MATERIAL),
             programs_written=me.programs_written,
             walking_to=walk.target if walk is not None else None,
             arrives_in=max(walk.arrives_at - world.time, 0.0) if walk is not None else None,
@@ -577,7 +649,14 @@ def observe(
                 )
                 for recipe in RECIPES
             ),
+            MaterialRecipeView(
+                MATERIAL_RECIPE.data,
+                MATERIAL_RECIPE.compute,
+                MATERIAL_RECIPE.count,
+                MATERIAL_RECIPE.seconds,
+            ),
         ),
+        land=_land_view(world, resident_id, here, standing=walk is None),
         known_springs=tuple(springs),
         discovered=perception.discovered,
         nearby_residents=tuple(
@@ -644,6 +723,69 @@ def observe(
             )
             for note in perception.short_term
         ),
+    )
+
+
+LAND_SHOWN = 5
+"""Free parcels an observation suggests."""
+
+
+def _land_view(world: World, resident_id: str, here: Position, *, standing: bool) -> LandView:
+    squares = plots(world)
+    incomes = ad_incomes(world, squares)
+    parcels = {(parcel.col, parcel.row): parcel for parcel in world.parcels}
+
+    def view(square: Plot) -> ParcelView:
+        parcel = parcels.get((square.col, square.row))
+        facility = parcel.facility.kind if parcel is not None and parcel.facility else None
+        buildable = not square.reserved and square.owner_id in (None, resident_id)
+        return ParcelView(
+            square.id,
+            square.centre,
+            square.price,
+            square.reserved,
+            square.owner_id,
+            facility,
+            incomes[(square.col, square.row)] if buildable or facility else None,
+            _distance(here, square.centre),
+            walk_cost(here, square.centre),
+        )
+
+    free = [square for square in squares if not square.reserved and square.owner_id is None]
+    best = sorted(
+        free,
+        key=lambda square: (
+            -incomes[(square.col, square.row)],
+            square.price,
+            _distance(here, square.centre),
+        ),
+    )[:LAND_SHOWN]
+    mine = tuple(
+        MyParcelView(
+            parcel.id,
+            plot(world, parcel.col, parcel.row).centre,
+            parcel.facility.kind if parcel.facility else None,
+            parcel.facility.last_income if parcel.facility else 0,
+            parcel.facility.earned if parcel.facility else 0,
+            max(parcel.facility.next_at - world.time, 0.0) if parcel.facility else None,
+            incomes[(parcel.col, parcel.row)],
+        )
+        for parcel in world.parcels
+        if parcel.owner_id == resident_id
+    )
+    return LandView(
+        parcel_size=PARCEL_SIZE,
+        grid=grid_size(world),
+        visitors_now=visitors(world.time),
+        rules={
+            "cycle_seconds": FACILITY_SECONDS,
+            "ad_materials": AD_MATERIALS,
+            "ad_coins_per_footfall": AD_RATE,
+            "ad_share_radius": AD_SHARE_RADIUS,
+        },
+        here=view(plot_at(world, here)) if standing else None,
+        mine=mine,
+        best_free=tuple(view(square) for square in best),
     )
 
 

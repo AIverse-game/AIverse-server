@@ -286,7 +286,7 @@ class GatherView(_Message):
 
 class WriteView(_Message):
     tier: str
-    """Tier of the program the job makes."""
+    """Tier of the program the job makes, or `material` while making materials."""
     remaining_seconds: float
 
 
@@ -333,7 +333,7 @@ class ResidentView(_Message):
     gathering: GatherView | None = None
     """Present while the resident is busy gathering data."""
     writing: WriteView | None = None
-    """Present while the resident is busy writing a program."""
+    """Present while the resident is busy writing a program or making materials."""
     walking: WalkingView | None = None
     """Present while the resident is walking; they head straight for `target` at a steady
     pace and arrive after `remaining_seconds`."""

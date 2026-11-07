@@ -1,4 +1,4 @@
-"""The studio: where residents write programs out of data and compute.
+"""The studio: where residents write programs and make materials out of data and compute.
 
 Each tier has a recipe, `RECIPES`: data, compute and, above the first tier, one program of
 the tier below, all taken from what the resident carries (not what offers set aside) when the
@@ -9,6 +9,11 @@ game or the game ending drops the job, and the materials with it: leaving clears
 anyway, and items count for nothing once the game is over.
 
 The market also sells programs, see `programs.py`, at a price that leaves room for writing.
+
+Materials, `MATERIAL`, are what facilities are built of, see `facilities.py`. A job makes
+`MATERIAL_RECIPE.count` of them out of its data and compute, in the same way but always in
+`MATERIAL_RECIPE.seconds`: practice only speeds up writing programs, and making materials does
+not count as practice. The market neither buys nor sells materials.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -41,6 +46,21 @@ RECIPES = (
     Recipe("v3", data=30, compute=80, consumes="v2", seconds=45.0),
 )
 """One per program tier, worst first."""
+
+MATERIAL = "material"
+"""The item kind of materials."""
+
+
+@dataclass(frozen=True)
+class MaterialRecipe:
+    data: int
+    compute: int
+    count: int
+    """Materials one job makes."""
+    seconds: float
+
+
+MATERIAL_RECIPE = MaterialRecipe(data=6, compute=12, count=3, seconds=12.0)
 
 SPEEDUP_PER_PROGRAM = 0.1
 """Share of a recipe's seconds every program written so far takes off the next job."""
@@ -97,14 +117,38 @@ def start_writing(world: World, resident_id: str, tier: str) -> World:
     return _with_job(world, resident_id, job, resident.programs_written)
 
 
+def start_making_material(world: World, resident_id: str) -> World:
+    """Spend `MATERIAL_RECIPE`'s data and compute and start making materials; the resident
+    must stand at the studio, and the caller checks they are not busy."""
+    resident = _find(world, resident_id)
+    if world.studio is None or not world.studio.reaches(resident.position):
+        raise StudioError("not_at_studio", f"resident {resident_id!r} is not at the studio")
+    recipe = MATERIAL_RECIPE
+    needs: list[tuple[str, int, StudioErrorCode]] = [
+        (DATA, recipe.data, "not_enough_data"),
+        (COMPUTE, recipe.compute, "not_enough_compute"),
+    ]
+    for kind, count, code in needs:
+        held = item_count(world, resident_id, kind)
+        if held < count:
+            raise StudioError(
+                code, f"materials take {count} {kind}, resident {resident_id!r} carries {held}"
+            )
+    for kind, count, _ in needs:
+        world = take_item(world, resident_id, kind, count)
+    job = WriteJob(MATERIAL, world.time + recipe.seconds, recipe.count)
+    return _with_job(world, resident_id, job, resident.programs_written)
+
+
 def finish_writing(world: World) -> World:
-    """Hand out every program whose job has ended by `world.time`; the same world when none
-    has."""
+    """Hand out every program and material whose job has ended by `world.time`; the same
+    world when none has."""
     for resident in world.residents:
         job = resident.writing
         if job is not None and job.ends_at <= world.time:
-            world = store_item(world, resident.id, job.tier)
-            world = _with_job(world, resident.id, None, resident.programs_written + 1)
+            world = store_item(world, resident.id, job.tier, job.count)
+            written = resident.programs_written + (job.tier != MATERIAL)
+            world = _with_job(world, resident.id, None, written)
     return world
 
 

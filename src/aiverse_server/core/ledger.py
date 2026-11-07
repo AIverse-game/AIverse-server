@@ -39,11 +39,14 @@ Channel = Literal[
     "contract_forfeit",
     "information",
     "exchange",
+    "land",
+    "visitors",
 ]
 """What the coins paid for: the market buying compute, the market selling a program, building
 a collector, a collector's upkeep, rent to a collector's owner, an accepted trade offer, a
-delivery under a contract, a supplier's deposit forfeited to the buyer, information sold, or a
-fill on the exchange."""
+delivery under a contract, a supplier's deposit forfeited to the buyer, information sold, a
+fill on the exchange, a parcel of land bought from the town, or visitors paying a facility's
+owner."""
 
 
 @dataclass(frozen=True)

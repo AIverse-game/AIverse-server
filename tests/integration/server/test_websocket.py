@@ -127,7 +127,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                 "exchange": {
                     "books": [
                         {"item": item, "bids": [], "asks": []}
-                        for item in ("compute", "data", "v1", "v2", "v3")
+                        for item in ("compute", "data", "v1", "v2", "v3", "material")
                     ],
                     "fills": [],
                     "orders": [],

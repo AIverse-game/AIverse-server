@@ -16,11 +16,24 @@ from ..economy.collectors import (
 from ..economy.compute import COMPUTE_PER_UNIT
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import EXCHANGE_ITEMS, LIFETIME_RANGE, MAX_ORDERS
+from ..economy.facilities import (
+    AD_MATERIALS,
+    AD_RATE,
+    AD_SHARE_RADIUS,
+    FACILITY_SECONDS,
+    FOOTFALL_FLOOR,
+    FOOTFALL_REACH,
+    RESIDENT_FOOTFALL,
+    RESIDENT_REACH,
+    VISITOR_GROWTH_SECONDS,
+    VISITORS_AT_START,
+)
 from ..economy.gathering import GATHER_SECONDS, GATHER_YIELD
 from ..economy.harvesting import HARVEST_SECONDS
+from ..economy.land import LAND_PRICE_CENTRE, LAND_PRICE_EDGE, PARCEL_SIZE
 from ..economy.market import MARKET_DEPTH, MARKET_HALF_LIFE, MARKET_RADIUS
 from ..economy.programs import PROGRAM_TIERS
-from ..economy.studio import FASTEST_SHARE, RECIPES, SPEEDUP_PER_PROGRAM
+from ..economy.studio import FASTEST_SHARE, MATERIAL_RECIPE, RECIPES, SPEEDUP_PER_PROGRAM
 from ..game.layout import MAP_SIZE, MINE_COUNT, MINE_RADIUS, SPRING_RADIUS, STUDIO_RADIUS
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
@@ -50,9 +63,12 @@ def system_prompt(
     )
     items = ", ".join(EXCHANGE_ITEMS)
     low, high = LIFETIME_RANGE
-    prompt = f"""You are {name} (id {resident_id}) in AIverse. Maximize your coins at game end.
-Only coins count; compute, data and programs left over are worth nothing. Convert production
-to coins during the game. Keep enough carried compute to travel and survive.
+    materials = MATERIAL_RECIPE
+    grid = int(MAP_SIZE // PARCEL_SIZE)
+    prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
+at game end. Only coins count; compute, data, programs, materials, land and facilities are
+worth nothing at the end. Earn coins during the game: build facilities visitors pay for, sell
+compute to the market, or trade. Keep enough carried compute to travel.
 
 World and production
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Distances are
@@ -92,6 +108,19 @@ prorated and rounded up per cycle. An unfunded slot pauses; fund_collector resta
 remove_program remotely returns the program and unused prepayment. Prepayment counts toward
 rank but cannot fund purchases. A depleted spring stops production; leaving the game stops
 your slots. collectors shows nearby collectors and yours.
+
+Land and facilities
+- The map is a {grid} x {grid} grid of {PARCEL_SIZE:g}-unit parcels, id L<col>-<row>, col =
+floor(x / {PARCEL_SIZE:g}). In a free parcel, buy_parcel buys it for
+{LAND_PRICE_EDGE}-{LAND_PRICE_CENTRE} coins, dearer near the market; parcels touching a spring,
+mine, studio or market are reserved.
+- At the studio, make_material turns {materials.data} data + {materials.compute} compute into
+{materials.count} materials ({materials.seconds:g}s). In your own bare parcel, build_ad uses
+{AD_MATERIALS} materials. Every {FACILITY_SECONDS:g}s an ad pays {AD_RATE:g} coins per footfall:
+visitors ({VISITORS_AT_START:g} at the market, +{VISITORS_AT_START:g} per
+{VISITOR_GROWTH_SECONDS / 60:g} min, down to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g} units)
+plus {RESIDENT_FOOTFALL:g} per resident standing within {RESIDENT_REACH:g}; ads within
+{AD_SHARE_RADIUS:g} units split it. land shows incomes now; a late ad may not pay back.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units for {SPEECH_COSTS["aloud"]} compute or privately

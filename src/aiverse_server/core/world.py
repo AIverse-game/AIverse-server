@@ -13,6 +13,7 @@ from typing import Literal
 
 from .collectors import Collector
 from .events import EventQueue
+from .land import Parcel
 from .ledger import Ledger
 from .orders import OrderBook
 
@@ -97,12 +98,14 @@ class GatherJob:
 
 @dataclass(frozen=True)
 class WriteJob:
-    """A resident writing a program at the studio, see `studio.py`; the materials were
-    spent when it started, and they can do nothing else until it ends."""
+    """A resident writing a program or making materials at the studio, see `studio.py`; what
+    it uses up was spent when it started, and they can do nothing else until it ends."""
 
     tier: str
-    """Tier of the program they get when it ends."""
+    """Tier of the program they get when it ends, or the item kind of materials."""
     ends_at: float
+    count: int = 1
+    """How many of `tier` they get."""
 
 
 @dataclass(frozen=True)
@@ -553,6 +556,10 @@ class Resident:
             raise ValueError(f"resident {self.id} has more than one walk or job at once")
         if type(self.programs_written) is not int or self.programs_written < 0:
             raise ValueError(f"resident {self.id} has written {self.programs_written!r} programs")
+        if self.writing is not None and (
+            type(self.writing.count) is not int or self.writing.count < 1
+        ):
+            raise ValueError(f"resident {self.id} is making {self.writing.count!r} items")
         for job in (self.gathering, self.writing):
             if job is not None:
                 if self.left:
@@ -577,7 +584,7 @@ class Resident:
 
 @dataclass(frozen=True)
 class Spring:
-    """An compute spring on the ground, see `harvesting.py`. Springs are placed when the game
+    """A compute spring on the ground, see `harvesting.py`. Springs are placed when the game
     starts and never move or appear later; only their reserve goes down."""
 
     id: str
@@ -719,7 +726,7 @@ class World:
     activity: ActivityLog = ActivityLog()
     """What residents have done where, for others nearby to notice, see `perception.py`."""
     market: Market | None = None
-    """Where compute sell for coins, see `market.py`; None on a map without one."""
+    """Where compute sells for coins, see `market.py`; None on a map without one."""
     speech: SpeechLog = SpeechLog()
     """What residents have said and who heard it, see `speech.py`."""
     notices: NoticeLog = NoticeLog()
@@ -736,6 +743,8 @@ class World:
     """Where programs are written, see `studio.py`; None on a map without one."""
     orders: OrderBook = OrderBook()
     """The exchange's resting orders and recent fills, see `exchange.py`."""
+    parcels: tuple[Parcel, ...] = ()
+    """Land residents bought and what they built on it, see `land.py` and `facilities.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -820,6 +829,14 @@ class World:
             for slot in collector.slots:
                 if self.ended or slot.resident_id not in ids or slot.resident_id in left:
                     raise ValueError("collector slot outlives its game or resident")
+        parcel_ids = [parcel.id for parcel in self.parcels]
+        if len(set(parcel_ids)) != len(parcel_ids):
+            raise ValueError("a parcel is owned twice")
+        for parcel in self.parcels:
+            if parcel.owner_id not in ids:
+                raise ValueError(f"parcel {parcel.id} has an unknown owner")
+            if parcel.facility is not None and parcel.facility.built_at > self.time:
+                raise ValueError(f"parcel {parcel.id} has a facility built in the future")
         for order in self.orders.orders:
             if order.resident_id not in ids or order.resident_id in left or self.ended:
                 raise ValueError(f"order {order.id} outlives its game or resident")

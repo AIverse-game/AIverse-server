@@ -49,11 +49,13 @@ from ..economy.exchange import (
     cancel_order,
     place_order,
 )
+from ..economy.facilities import FacilityError, FacilityErrorCode, build_ad
 from ..economy.gathering import DataError, DataErrorCode, start_gathering
 from ..economy.harvesting import HarvestError, HarvestErrorCode, check_not_busy, start_harvesting
+from ..economy.land import LandError, LandErrorCode, buy_parcel
 from ..economy.market import MarketError, MarketErrorCode, sell_compute
 from ..economy.programs import ProgramError, ProgramErrorCode, buy_program
-from ..economy.studio import StudioError, StudioErrorCode, start_writing
+from ..economy.studio import StudioError, StudioErrorCode, start_making_material, start_writing
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
 from ..residents.memory import NoteError, NoteErrorCode
@@ -79,6 +81,8 @@ RejectionCode = (
     | DataErrorCode
     | ExchangeErrorCode
     | StudioErrorCode
+    | LandErrorCode
+    | FacilityErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -223,7 +227,7 @@ class LeaveGame:
 @dataclass(frozen=True)
 class Harvest:
     """Spend time at a spring the resident stands next to with the best program
-    they carry, see `harvesting.py`: the compute arrive when the job ends, and until then the
+    they carry, see `harvesting.py`: the compute arrives when the job ends, and until then the
     resident stays with the program and can do nothing but leave."""
 
     resident_id: str
@@ -247,6 +251,30 @@ class WriteProgram:
 
     resident_id: str
     tier: str
+
+
+@dataclass(frozen=True)
+class MakeMaterial:
+    """Spend data and compute at the studio the resident stands at to make materials, see
+    `studio.py`: they arrive when the job ends, and until then the resident can do nothing but
+    talk or leave."""
+
+    resident_id: str
+
+
+@dataclass(frozen=True)
+class BuyParcel:
+    """Buy the parcel of land the resident stands in from the town, see `land.py`."""
+
+    resident_id: str
+
+
+@dataclass(frozen=True)
+class BuildAd:
+    """Build an ad slot of carried materials on the resident's own parcel they stand in, see
+    `facilities.py`; from then on it pays them for the visitors passing by."""
+
+    resident_id: str
 
 
 @dataclass(frozen=True)
@@ -348,6 +376,9 @@ Action = (
     | Harvest
     | GatherData
     | WriteProgram
+    | MakeMaterial
+    | BuyParcel
+    | BuildAd
     | PlaceOrder
     | CancelOrder
     | SellCompute
@@ -447,6 +478,21 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return start_writing(world, action.resident_id, action.tier)
             except StudioError as error:
+                raise ActionRejected(error.code, error.message) from error
+        case MakeMaterial():
+            try:
+                return start_making_material(world, action.resident_id)
+            except StudioError as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuyParcel():
+            try:
+                return buy_parcel(world, action.resident_id)
+            except (LandError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuildAd():
+            try:
+                return build_ad(world, action.resident_id)
+            except (FacilityError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case PlaceOrder():
             try:

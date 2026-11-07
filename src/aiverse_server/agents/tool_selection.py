@@ -11,13 +11,24 @@ from typing import Any
 
 from ..economy.collectors import COLLECTOR_PRICE
 from ..economy.compute import COMPUTE
+from ..economy.facilities import AD_MATERIALS
 from ..economy.gathering import DATA
+from ..economy.land import plot_at
 from ..economy.programs import PROGRAM_TIERS
+from ..economy.studio import MATERIAL
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
-    "production": ("buy_program", "sell_compute", "harvest", "gather_data", "write_program"),
+    "production": (
+        "buy_program",
+        "sell_compute",
+        "harvest",
+        "gather_data",
+        "write_program",
+        "make_material",
+    ),
+    "land": ("buy_parcel", "build_ad"),
     "exchange": ("place_order", "cancel_order"),
     "offers": (
         "offer_to_buy",
@@ -37,7 +48,7 @@ DISCOVER_TOOL_SPEC: dict[str, Any] = {
         "name": "discover_tools",
         "description": (
             "Make additional game tools available in this round. Choose a group when the "
-            "current tools cannot carry out your plan: production, exchange, offers, "
+            "current tools cannot carry out your plan: production, land, exchange, offers, "
             "contracts, collectors or memory. The group's tools appear in the next request."
         ),
         "parameters": {
@@ -95,7 +106,17 @@ def selected_tool_names(observation: Observation) -> set[str]:
             if mine is not None and mine.reserve > 0:
                 names.add("gather_data")
         if me.at_studio and me.data > 0:
-            names.add("write_program")
+            names.update(("write_program", "make_material"))
+        here = observation.land.here
+        if here is not None:
+            if here.owner is None and here.ad_income is not None and me.coins >= here.price:
+                names.add("buy_parcel")
+            if (
+                here.owner == me.id
+                and here.facility is None
+                and me.materials >= observation.land.rules["ad_materials"]
+            ):
+                names.add("build_ad")
         if observation.offers_to_me or observation.information_offers_to_me:
             names.add("respond_to_offer")
         if observation.contract_proposals_to_me:
@@ -142,7 +163,18 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         and world.studio.reaches(me.position)
         and me.inventory.count(DATA) > 0
     ):
-        names.add("write_program")
+        names.update(("write_program", "make_material"))
+    square = plot_at(world, me.position)
+    if not square.reserved and square.owner_id is None and me.coins >= square.price:
+        names.add("buy_parcel")
+    parcel = next((p for p in world.parcels if (p.col, p.row) == (square.col, square.row)), None)
+    if (
+        parcel is not None
+        and parcel.owner_id == me.id
+        and parcel.facility is None
+        and me.inventory.count(MATERIAL) >= AD_MATERIALS
+    ):
+        names.add("build_ad")
     if any(resident.id != me.id and not resident.left for resident in world.residents):
         names.update(("offer_to_buy", "offer_to_sell", "offer_information", "propose_contract"))
     if any(event.recipient_id == me.id for event in world.events.pending):

@@ -115,7 +115,7 @@ def test_compute_set_aside_in_an_offer_is_still_owned() -> None:
 
     withdrawn = perform(world, WithdrawEvent("a", 1))
 
-    # Set aside, the compute are still a's: offering them all is not running out.
+    # Set aside, the compute is still a's: offering it all is not running out.
     assert item_count(world, "a", COMPUTE) == 0
     assert compute_total(world, "a") == 10
     assert not world.residents[0].left

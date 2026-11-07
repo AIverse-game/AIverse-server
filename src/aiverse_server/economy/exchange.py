@@ -24,8 +24,9 @@ from ..core.world import Resident, World
 from .compute import COMPUTE
 from .gathering import DATA
 from .programs import PROGRAM_TIERS
+from .studio import MATERIAL
 
-EXCHANGE_ITEMS = (COMPUTE, DATA, *(tier.tier for tier in PROGRAM_TIERS))
+EXCHANGE_ITEMS = (COMPUTE, DATA, *(tier.tier for tier in PROGRAM_TIERS), MATERIAL)
 """Items with an order book."""
 
 MAX_ORDERS = 8

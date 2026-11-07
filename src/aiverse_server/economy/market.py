@@ -117,7 +117,7 @@ def sell_compute(world: World, resident_id: str, quantity: int, seen: float | No
         raise ComputeError(
             "not_enough_compute", f"resident {resident_id!r} carries {held} compute, not {quantity}"
         ) from error
-    # Priced only once the compute are known to be there: an untrusted quantity can be too big
+    # Priced only once the compute is known to be there: an untrusted quantity can be too big
     # to turn into a float, but never more than the resident carries.
     coins = quote(market, world.time, quantity, seen)
     if coins < 1:
