@@ -108,14 +108,86 @@ def test_two_nodes_work_at_once_and_so_do_a_node_and_the_residents_own_compute()
     assert [facility(done, parcel_id) is not None for parcel_id in ("L5-3", "L6-3")] == [True, True]
 
 
-def test_a_job_that_would_outlast_its_node_does_not_start() -> None:
+def test_a_job_that_outlasts_its_node_carries_on_at_the_residents_own_speed() -> None:
     world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
-    short = replace(world, time=NODE_SECONDS[0] - NODE_JOB_SECONDS + 0.5)
+    start = NODE_SECONDS[0] - 6.0
+    late = replace(world, time=start)
+
+    started = perform(late, BuildAd("a", "L5-3", "subscription", node_id=1))
+
+    # 6 s on the node does 60 of the 120 workload; the other 60 take 60 s at the own speed.
+    job = started.compute.jobs[0]
+    assert job.ends_at == NODE_SECONDS[0] + (AD_WORKLOAD - 6.0 * NODE_RATE) / SELF_RATE
+    mid = settle_due(replace(started, time=NODE_SECONDS[0]))
+    assert mid.compute.nodes == ()
+    assert [(j.source, j.node_id) for j in mid.compute.jobs] == [("subscription", None)]
+    assert facility(settle_due(replace(started, time=job.ends_at - 0.1)), "L5-3") is None
+    assert facility(settle_due(replace(started, time=job.ends_at)), "L5-3") is not None
+    assert next_due(mid) == job.ends_at
+
+
+def test_a_job_that_carries_on_does_not_use_up_the_residents_own_compute() -> None:
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
+    started = perform(
+        replace(world, time=NODE_SECONDS[0] - 1.0), BuildAd("a", "L5-3", "subscription", node_id=1)
+    )
+    later = settle_due(replace(started, time=NODE_SECONDS[0]))
+
+    own = perform(later, BuildAd("a", "L6-3", "self"))
+
+    assert {job.parcel_id for job in own.compute.jobs} == {"L5-3", "L6-3"}
+
+
+def test_a_job_ending_exactly_when_its_node_runs_out_still_finishes() -> None:
+    world = perform(WORLD, BuyNode("a", "generative", 30))
+    started = perform(
+        replace(world, time=30.0 - NODE_JOB_SECONDS),
+        BuildAd("a", "L5-3", "subscription", node_id=1),
+    )
+
+    done = settle_due(replace(started, time=30.0))
+
+    assert facility(done, "L5-3") == Facility("ad", 30.0)
+    assert done.compute == ComputeBook((), (), 2, 2)
+
+
+def test_leaving_drops_a_job_that_carries_on_without_its_node() -> None:
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
+    started = perform(
+        replace(world, time=NODE_SECONDS[0] - 1.0), BuildAd("a", "L5-3", "subscription", node_id=1)
+    )
+    tail = settle_due(replace(started, time=NODE_SECONDS[0]))
+
+    left = perform(tail, LeaveGame("a"))
+
+    assert left.compute.jobs == ()
+    assert facility(settle_due(replace(left, time=500.0)), "L5-3") is None
+
+
+def test_a_job_that_is_not_slowed_when_it_fits_in_the_subscription_keeps_its_node() -> None:
+    world = perform(WORLD, BuyNode("a", "generative", 60))
+
+    started = perform(world, BuildAd("a", "L5-3", "subscription", node_id=1))
+
+    assert started.compute.jobs[0].node_id == 1
+
+
+def test_a_job_that_fits_in_the_subscription_is_not_slowed() -> None:
+    world = perform(WORLD, BuyNode("a", "generative", 60))
+
+    started = perform(world, BuildAd("a", "L5-3", "subscription", node_id=1))
+
+    assert started.compute.jobs[0].ends_at == NODE_JOB_SECONDS
+
+
+def test_a_node_that_has_run_out_cannot_start_a_job() -> None:
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
+    over = replace(world, time=NODE_SECONDS[0])
 
     with pytest.raises(ActionRejected) as rejected:
-        perform(short, BuildAd("a", "L5-3", "subscription", node_id=1))
+        perform(over, BuildAd("a", "L5-3", "subscription", node_id=1))
 
-    assert rejected.value.code == "node_too_short"
+    assert rejected.value.code == "node_expired"
 
 
 def test_a_node_runs_out_when_its_time_is_up_after_its_last_job_finished() -> None:
@@ -254,12 +326,10 @@ JOB = Job(1, "a", "build_ad", "L5-3", "subscription", 1, 0.0, 12.0)
     [
         (lambda: Node(1, "a", "generative", 5.0, 5.0), "runs out before it begins"),
         (lambda: Node(1, "a", "render", 0.0, 5.0), "unknown node kind"),  # type: ignore[arg-type]
-        (lambda: replace(JOB, node_id=None), "names a node|must name a node"),
-        (lambda: replace(JOB, source="self"), "must name a node"),
+        (lambda: replace(JOB, source="self"), "names a node but is not subscribed"),
         (lambda: replace(JOB, ends_at=0.0), "ends before it starts"),
         (lambda: Facility("ad", -1.0), "built at"),
         (lambda: ComputeBook((NODE,), (JOB, replace(JOB, id=2)), 2, 3), "more than one job"),
-        (lambda: ComputeBook((NODE,), (replace(JOB, ends_at=61.0),), 2, 2), "outlasts its node"),
         (lambda: ComputeBook((), (JOB,), 1, 2), "not its owner's"),
         (lambda: ComputeBook((NODE,), (JOB,), 2, 1), "must be an integer above"),
         (

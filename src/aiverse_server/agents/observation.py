@@ -188,7 +188,8 @@ class NodeView:
     working_on: int | None
     """The job it is working on; None when idle."""
     free_for: float
-    """Seconds until it is free to take a new job: 0 when idle."""
+    """Seconds until it is free to take a new job: 0 when idle; never more than `expires_in`,
+    since a job that outlasts the node carries on without it."""
 
 
 @dataclass(frozen=True)
@@ -567,7 +568,10 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
             node.kind,
             max(node.expires_at - now, 0.0),
             on_node[node.id].id if node.id in on_node else None,
-            max(on_node[node.id].ends_at - now, 0.0) if node.id in on_node else 0.0,
+            # A node that runs out first is not free for longer than it exists.
+            min(max(on_node[node.id].ends_at - now, 0.0), max(node.expires_at - now, 0.0))
+            if node.id in on_node
+            else 0.0,
         )
         for node in book.nodes
         if node.owner_id == resident_id

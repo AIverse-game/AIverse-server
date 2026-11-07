@@ -11,7 +11,8 @@ as long as they are still in the game. There are three sources:
 - `subscription`: a system node the resident subscribed to for a stretch of time with
   `buy_node`, theirs for that time and doing one job at a time at `NODE_RATE`, paid for by the
   second at `SUBSCRIPTION_PRICE` whether it is busy or not. Having several nodes runs several
-  jobs at once. A job only starts if it ends before the subscription does.
+  jobs at once. A job still running when the subscription runs out carries on at `SELF_RATE`,
+  the speed of one's own compute, without using up the resident's own one-job-at-a-time slot.
 
 Nodes have a kind, and a job needs a node of its kind: generative nodes build facilities. Render
 nodes, for making content, come with the content design. The first job is `build_ad`: an ad slot
@@ -68,7 +69,7 @@ ComputeErrorCode = Literal[
     "source_busy",
     "unknown_node",
     "wrong_node_kind",
-    "node_too_short",
+    "node_expired",
 ]
 
 
@@ -82,6 +83,15 @@ class ComputeError(Exception):
 def job_seconds(workload: float, source: JobSource) -> float:
     """Game seconds a job of `workload` takes on `source`."""
     return workload / (SELF_RATE if source == "self" else NODE_RATE)
+
+
+def subscription_job_end(workload: float, now: float, node_expires_at: float) -> float:
+    """Game time a job of `workload` started at `now` on a node running out at `node_expires_at`
+    ends: at the node's speed until then, and at the resident's own after that."""
+    on_node = node_expires_at - now
+    if workload <= on_node * NODE_RATE:
+        return now + workload / NODE_RATE
+    return node_expires_at + (workload - on_node * NODE_RATE) / SELF_RATE
 
 
 def on_demand_cost(workload: float) -> int:
@@ -128,8 +138,8 @@ def start_build_ad(
     slot appears when the job ends."""
     _find(world, resident_id)
     parcel = _bare_parcel(world, resident_id, parcel_id)
-    seconds = job_seconds(AD_WORKLOAD, source)
     book = world.compute
+    ends_at = world.time + job_seconds(AD_WORKLOAD, source)
     cost = 0
     if source == "subscription":
         if type(node_id) is not int:
@@ -141,11 +151,9 @@ def start_build_ad(
             raise ComputeError("wrong_node_kind", f"node {node_id} cannot build facilities")
         if any(job.node_id == node_id for job in book.jobs):
             raise ComputeError("source_busy", f"node {node_id} is already at work")
-        if world.time + seconds > node.expires_at:
-            left = node.expires_at - world.time
-            raise ComputeError(
-                "node_too_short", f"the job takes {seconds:g} s, node {node_id} has {left:g} s"
-            )
+        if node.expires_at <= world.time:
+            raise ComputeError("node_expired", f"node {node_id} has run out")
+        ends_at = subscription_job_end(AD_WORKLOAD, world.time, node.expires_at)
     else:
         if node_id is not None:
             raise ComputeError("invalid_source", f"{source!r} compute is not a node")
@@ -169,7 +177,7 @@ def start_build_ad(
         source,
         node_id,
         world.time,
-        world.time + seconds,
+        ends_at,
     )
     book = replace(book, jobs=(*book.jobs, job), next_job_id=book.next_job_id + 1)
     return replace(world, compute=book)
@@ -195,12 +203,20 @@ def finish_jobs(world: World) -> World:
 
 
 def expire_nodes(world: World) -> World:
-    """Drop every subscribed node that has run out by `world.time`; finish jobs first, so none
-    is cut off. The same world when none has."""
-    nodes = tuple(node for node in world.compute.nodes if node.expires_at > world.time)
-    if len(nodes) == len(world.compute.nodes):
+    """Drop every subscribed node that has run out by `world.time`; jobs due by then finish
+    first, and any still running carry on without a node, at the speed of the resident's own
+    compute, as `subscription_job_end` worked out when they started. The same world when no
+    node has run out."""
+    book = world.compute
+    nodes = tuple(node for node in book.nodes if node.expires_at > world.time)
+    if len(nodes) == len(book.nodes):
         return world
-    return replace(world, compute=replace(world.compute, nodes=nodes))
+    kept = {node.id for node in nodes}
+    jobs = tuple(
+        replace(job, node_id=None) if job.node_id is not None and job.node_id not in kept else job
+        for job in book.jobs
+    )
+    return replace(world, compute=replace(book, nodes=nodes, jobs=jobs))
 
 
 def next_compute_due(world: World) -> float | None:

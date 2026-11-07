@@ -330,7 +330,8 @@ TOOLS = (
         f"{AD_WORKLOAD:g} workload: {job_seconds(AD_WORKLOAD, 'self'):g} s on your own compute "
         f"(free, one job at a time), {job_seconds(AD_WORKLOAD, 'on_demand'):g} s on a node hired "
         f"for it ({ON_DEMAND_PRICE} coins per workload, {on_demand_cost(AD_WORKLOAD)} coins), "
-        "or on one of your subscribed nodes if the job ends before the node does. "
+        "or on one of your subscribed nodes (if the node runs out first, the rest of the job "
+        f"carries on at your own speed, {SELF_RATE:g} workload per second). "
         "Ad slots earn no coins yet.",
         BuildAdArgs,
     ),

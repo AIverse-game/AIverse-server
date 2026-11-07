@@ -50,15 +50,17 @@ class Job:
     """The parcel the work is for, see `core/land.py`."""
     source: JobSource
     node_id: int | None
-    """The subscribed node doing the work; None for the other sources."""
+    """The subscribed node doing the work; None for the other sources, and for a subscription
+    job whose node has run out and which carries on at the speed of the resident's own
+    compute."""
     started_at: float
     ends_at: float
 
     def __post_init__(self) -> None:
         if self.kind != "build_ad":
             raise ValueError(f"unknown job kind {self.kind!r}")
-        if (self.source == "subscription") != (self.node_id is not None):
-            raise ValueError(f"job {self.id} must name a node exactly when it is subscribed")
+        if self.source != "subscription" and self.node_id is not None:
+            raise ValueError(f"job {self.id} names a node but is not subscribed")
         if not (math.isfinite(self.started_at) and math.isfinite(self.ends_at)):
             raise ValueError(f"job {self.id} has a time that is not finite")
         if not self.started_at < self.ends_at:
@@ -103,8 +105,6 @@ class ComputeBook:
                     raise ValueError(f"job {job.id} runs on a node that is not its owner's")
                 if job.node_id in busy_nodes:
                     raise ValueError(f"node {job.node_id} has more than one job")
-                if job.ends_at > node.expires_at:
-                    raise ValueError(f"job {job.id} outlasts its node")
                 busy_nodes.add(job.node_id)
             if job.source == "self":
                 if job.owner_id in self_workers:

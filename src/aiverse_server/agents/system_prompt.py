@@ -67,7 +67,7 @@ yours but earns nothing yet.
 {SELF_RATE:g} workload/s, one job at a time. A node does {NODE_RATE:g}/s, one job at a time.
 Hire one for a single job at {ON_DEMAND_PRICE} coins per workload, or subscribe with buy_node for
 {lo}-{hi}s at {SUBSCRIPTION_PRICE} coins/s, busy or idle, never refunded. You may hold
-{MAX_NODES} nodes, and a job only starts if it ends before its node does.
+{MAX_NODES} nodes. A job still running when its node runs out carries on at your own speed.
 - build_ad starts an ad slot on a parcel of yours from anywhere. It is {AD_WORKLOAD:g} workload:
 {own_s:g}s on your own compute, {hired_s:g}s and {hired_coins} coins on a hired node. You need not
 stay: walk, talk and trade meanwhile, and it appears when the job ends. The compute
