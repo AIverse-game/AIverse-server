@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass
 
 from ..core.collectors import Collector, CollectorSlot
 from ..core.events import Event, pending_for, pending_from
+from ..core.land import Parcel
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, PricePoint, SpringSighting, World
 from ..economy.collectors import (
@@ -42,7 +43,17 @@ from ..economy.facilities import (
     AD_RATE,
     AD_SHARE_RADIUS,
     FACILITY_SECONDS,
+    HOST_RADIUS,
+    MEETING_COMPUTE,
+    MEETING_MATERIALS,
+    MEETING_RATE,
+    MEETING_SHARE_RADIUS,
+    SERVER_CAPACITY,
+    SERVER_MATERIALS,
     ad_incomes,
+    host_for,
+    hosting_fee,
+    meeting_incomes,
     visitors,
 )
 from ..economy.gathering import DATA
@@ -258,10 +269,19 @@ class ParcelView:
     """It touches a spring, mine, the studio or the market and can never be bought."""
     owner: str | None
     facility: str | None
-    """What is built on it, such as `ad`; None when nothing is."""
+    """What is built on it: `ad`, `server` or `meeting`; None when nothing is."""
     ad_income: int | None
-    """Coins per cycle an ad slot here earns now: the working one, or one built now. None
-    where no ad can be built (reserved, or another's)."""
+    """Coins per cycle an ad slot here earns now: the working one, or one built now on land
+    you could build on. None otherwise."""
+    meeting_income: int | None
+    """Coins per cycle a meeting room here earns now when hosted, before the fee: the working
+    one, or one built now on land you could build on. None otherwise."""
+    host: str | None
+    """Where meeting_income is shown, the server that would host the room now; None if none
+    can."""
+    host_fee: int | None
+    """That server's fee for the room's owner (you, on land you could build on); 0 for their
+    own server."""
     distance: float
     walk_cost: int
 
@@ -272,12 +292,33 @@ class MyParcelView:
     centre: Position
     facility: str | None
     last_income: int
-    """Coins its latest cycle paid."""
+    """Coins its latest cycle paid you, after the hosting fee."""
     earned: int
-    """Coins it has paid so far."""
+    """Coins it has paid you so far; for a server, the hosting fees it collected."""
     next_payout_in: float | None
     ad_income: int | None
-    """Coins per cycle it would earn if paid now, or if an ad were built on bare land."""
+    """Coins per cycle an ad slot earns if paid now: the one here, or one built on bare land."""
+    meeting_income: int | None
+    """Coins per cycle a hosted meeting room earns if paid now, before the fee: the one here,
+    or one built on bare land."""
+    host: str | None
+    """For a meeting room, the server that hosted its latest cycle; None if none could."""
+    compute: int | None
+    """For a server, the compute it holds."""
+    fee: int | None
+    """For a server, what it charges others' meeting rooms per cycle."""
+
+
+@dataclass(frozen=True)
+class ServerView:
+    """A working server and what it charges."""
+
+    id: str
+    owner: str
+    centre: Position
+    compute: int
+    fee: int
+    distance: float
 
 
 @dataclass(frozen=True)
@@ -293,6 +334,8 @@ class LandView:
     mine: tuple[MyParcelView, ...]
     best_free: tuple[ParcelView, ...]
     """Free parcels where a new ad slot would earn most per cycle now, best first."""
+    servers: tuple[ServerView, ...]
+    """Working servers nearest you, nearest first."""
 
 
 @dataclass(frozen=True)
@@ -729,50 +772,95 @@ def observe(
 LAND_SHOWN = 5
 """Free parcels an observation suggests."""
 
+SERVERS_SHOWN = 5
+"""Servers an observation lists, the nearest."""
+
 
 def _land_view(world: World, resident_id: str, here: Position, *, standing: bool) -> LandView:
     squares = plots(world)
-    incomes = ad_incomes(world, squares)
+    ads = ad_incomes(world, squares)
+    meetings = meeting_incomes(world, squares)
     parcels = {(parcel.col, parcel.row): parcel for parcel in world.parcels}
 
-    def view(square: Plot) -> ParcelView:
+    def kind(square: Plot) -> str | None:
         parcel = parcels.get((square.col, square.row))
-        facility = parcel.facility.kind if parcel is not None and parcel.facility else None
-        buildable = not square.reserved and square.owner_id in (None, resident_id)
+        return parcel.facility.kind if parcel is not None and parcel.facility else None
+
+    def shown(square: Plot, facility: str) -> bool:
+        """Whether to show what a facility of this kind earns here."""
+        built = kind(square)
+        bare = built is None and not square.reserved and square.owner_id in (None, resident_id)
+        return bare or built == facility
+
+    def view(square: Plot) -> ParcelView:
+        spot = (square.col, square.row)
+        meeting = shown(square, "meeting")
+        owner = square.owner_id or resident_id
+        host = host_for(world, square.centre, owner) if meeting else None
         return ParcelView(
             square.id,
             square.centre,
             square.price,
             square.reserved,
             square.owner_id,
-            facility,
-            incomes[(square.col, square.row)] if buildable or facility else None,
+            kind(square),
+            ads[spot] if shown(square, "ad") else None,
+            meetings[spot] if meeting else None,
+            None if host is None else host.id,
+            None if host is None else hosting_fee(host, owner),
             _distance(here, square.centre),
             walk_cost(here, square.centre),
+        )
+
+    def my_view(parcel: Parcel) -> MyParcelView:
+        square = plot(world, parcel.col, parcel.row)
+        spot = (parcel.col, parcel.row)
+        facility = parcel.facility
+        server = facility is not None and facility.kind == "server"
+        return MyParcelView(
+            parcel.id,
+            square.centre,
+            None if facility is None else facility.kind,
+            0 if facility is None else facility.last_income,
+            0 if facility is None else facility.earned,
+            None
+            if facility is None or facility.next_at is None
+            else max(facility.next_at - world.time, 0.0),
+            ads[spot] if shown(square, "ad") else None,
+            meetings[spot] if shown(square, "meeting") else None,
+            None if facility is None else facility.host,
+            facility.compute if facility is not None and server else None,
+            facility.fee if facility is not None and server else None,
         )
 
     free = [square for square in squares if not square.reserved and square.owner_id is None]
     best = sorted(
         free,
         key=lambda square: (
-            -incomes[(square.col, square.row)],
+            -ads[(square.col, square.row)],
             square.price,
             _distance(here, square.centre),
         ),
     )[:LAND_SHOWN]
-    mine = tuple(
-        MyParcelView(
-            parcel.id,
-            plot(world, parcel.col, parcel.row).centre,
-            parcel.facility.kind if parcel.facility else None,
-            parcel.facility.last_income if parcel.facility else 0,
-            parcel.facility.earned if parcel.facility else 0,
-            max(parcel.facility.next_at - world.time, 0.0) if parcel.facility else None,
-            incomes[(parcel.col, parcel.row)],
-        )
-        for parcel in world.parcels
-        if parcel.owner_id == resident_id
-    )
+    gone = {resident.id for resident in world.residents if resident.left}
+    servers = sorted(
+        (
+            ServerView(
+                parcel.id,
+                parcel.owner_id,
+                centre,
+                parcel.facility.compute,
+                parcel.facility.fee,
+                _distance(here, centre),
+            )
+            for parcel in world.parcels
+            if parcel.facility is not None
+            and parcel.facility.kind == "server"
+            and parcel.owner_id not in gone
+            for centre in (plot(world, parcel.col, parcel.row).centre,)
+        ),
+        key=lambda server: (server.distance, server.id),
+    )[:SERVERS_SHOWN]
     return LandView(
         parcel_size=PARCEL_SIZE,
         grid=grid_size(world),
@@ -782,10 +870,18 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             "ad_materials": AD_MATERIALS,
             "ad_coins_per_footfall": AD_RATE,
             "ad_share_radius": AD_SHARE_RADIUS,
+            "server_materials": SERVER_MATERIALS,
+            "server_capacity": SERVER_CAPACITY,
+            "host_radius": HOST_RADIUS,
+            "meeting_materials": MEETING_MATERIALS,
+            "meeting_compute_per_cycle": MEETING_COMPUTE,
+            "meeting_coins_per_visitor": MEETING_RATE,
+            "meeting_share_radius": MEETING_SHARE_RADIUS,
         },
         here=view(plot_at(world, here)) if standing else None,
-        mine=mine,
+        mine=tuple(my_view(parcel) for parcel in world.parcels if parcel.owner_id == resident_id),
         best_free=tuple(view(square) for square in best),
+        servers=tuple(servers),
     )
 
 

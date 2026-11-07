@@ -23,8 +23,16 @@ from ..economy.facilities import (
     FACILITY_SECONDS,
     FOOTFALL_FLOOR,
     FOOTFALL_REACH,
+    HOST_RADIUS,
+    MEETING_COMPUTE,
+    MEETING_MATERIALS,
+    MEETING_PROGRAM,
+    MEETING_RATE,
+    MEETING_SHARE_RADIUS,
     RESIDENT_FOOTFALL,
     RESIDENT_REACH,
+    SERVER_CAPACITY,
+    SERVER_MATERIALS,
     VISITOR_GROWTH_SECONDS,
     VISITORS_AT_START,
 )
@@ -120,7 +128,14 @@ mine, studio or market are reserved.
 visitors ({VISITORS_AT_START:g} at the market, +{VISITORS_AT_START:g} per
 {VISITOR_GROWTH_SECONDS / 60:g} min, down to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g} units)
 plus {RESIDENT_FOOTFALL:g} per resident standing within {RESIDENT_REACH:g}; ads within
-{AD_SHARE_RADIUS:g} units split it. land shows incomes now; a late ad may not pay back.
+{AD_SHARE_RADIUS:g} units split it. land shows incomes now; a late facility may not pay back.
+- build_server uses {SERVER_MATERIALS} materials; anyone in its parcel can supply_server carried
+compute (max {SERVER_CAPACITY}). build_meeting_room uses {MEETING_MATERIALS} materials + 1
+{MEETING_PROGRAM}. Each cycle a room needs a server within {HOST_RADIUS:g} units holding
+{MEETING_COMPUTE} compute, its owner's own first, else the lowest fee; that server spends it and
+takes its fee from the room's income. Hosted, a room earns {MEETING_RATE:g} coins per market
+visitor, split with rooms within {MEETING_SHARE_RADIUS:g}; unhosted, nothing. Owners set fees
+with build_server and set_hosting_fee.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units for {SPEECH_COSTS["aloud"]} compute or privately

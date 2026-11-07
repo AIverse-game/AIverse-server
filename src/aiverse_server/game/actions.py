@@ -49,7 +49,15 @@ from ..economy.exchange import (
     cancel_order,
     place_order,
 )
-from ..economy.facilities import FacilityError, FacilityErrorCode, build_ad
+from ..economy.facilities import (
+    FacilityError,
+    FacilityErrorCode,
+    build_ad,
+    build_meeting_room,
+    build_server,
+    set_hosting_fee,
+    supply_server,
+)
 from ..economy.gathering import DataError, DataErrorCode, start_gathering
 from ..economy.harvesting import HarvestError, HarvestErrorCode, check_not_busy, start_harvesting
 from ..economy.land import LandError, LandErrorCode, buy_parcel
@@ -278,6 +286,44 @@ class BuildAd:
 
 
 @dataclass(frozen=True)
+class BuildServer:
+    """Build a server of carried materials on the resident's own parcel they stand in, see
+    `facilities.py`; it hosts meeting rooms around it with the compute supplied to it, charging
+    other owners `fee` coins a cycle."""
+
+    resident_id: str
+    fee: int
+
+
+@dataclass(frozen=True)
+class BuildMeetingRoom:
+    """Build a meeting room of carried materials and a program on the resident's own parcel
+    they stand in, see `facilities.py`; it pays them for visitors in every cycle a server hosts
+    it."""
+
+    resident_id: str
+
+
+@dataclass(frozen=True)
+class SupplyServer:
+    """Put carried compute into the server on the parcel the resident stands in, whoever owns
+    it, see `facilities.py`."""
+
+    resident_id: str
+    amount: int
+
+
+@dataclass(frozen=True)
+class SetHostingFee:
+    """Change the fee the resident's server on parcel `server_id` charges, from anywhere, see
+    `facilities.py`."""
+
+    resident_id: str
+    server_id: str
+    fee: int
+
+
+@dataclass(frozen=True)
 class PlaceOrder:
     """Place an order on the exchange from anywhere, see `exchange.py`: it trades at once with
     the best orders on the other side and rests for `lifetime` seconds with whatever is left,
@@ -379,6 +425,10 @@ Action = (
     | MakeMaterial
     | BuyParcel
     | BuildAd
+    | BuildServer
+    | BuildMeetingRoom
+    | SupplyServer
+    | SetHostingFee
     | PlaceOrder
     | CancelOrder
     | SellCompute
@@ -493,6 +543,26 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return build_ad(world, action.resident_id)
             except (FacilityError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuildServer():
+            try:
+                return build_server(world, action.resident_id, action.fee)
+            except (FacilityError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuildMeetingRoom():
+            try:
+                return build_meeting_room(world, action.resident_id)
+            except (FacilityError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case SupplyServer():
+            try:
+                return supply_server(world, action.resident_id, action.amount)
+            except (FacilityError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case SetHostingFee():
+            try:
+                return set_hosting_fee(world, action.resident_id, action.server_id, action.fee)
+            except FacilityError as error:
                 raise ActionRejected(error.code, error.message) from error
         case PlaceOrder():
             try:

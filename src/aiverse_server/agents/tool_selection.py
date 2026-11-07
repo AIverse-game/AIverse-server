@@ -11,7 +11,13 @@ from typing import Any
 
 from ..economy.collectors import COLLECTOR_PRICE
 from ..economy.compute import COMPUTE
-from ..economy.facilities import AD_MATERIALS
+from ..economy.facilities import (
+    AD_MATERIALS,
+    MEETING_MATERIALS,
+    MEETING_PROGRAM,
+    SERVER_CAPACITY,
+    SERVER_MATERIALS,
+)
 from ..economy.gathering import DATA
 from ..economy.land import plot_at
 from ..economy.programs import PROGRAM_TIERS
@@ -28,7 +34,14 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "write_program",
         "make_material",
     ),
-    "land": ("buy_parcel", "build_ad"),
+    "land": (
+        "buy_parcel",
+        "build_ad",
+        "build_server",
+        "build_meeting_room",
+        "supply_server",
+        "set_hosting_fee",
+    ),
     "exchange": ("place_order", "cancel_order"),
     "offers": (
         "offer_to_buy",
@@ -111,12 +124,13 @@ def selected_tool_names(observation: Observation) -> set[str]:
         if here is not None:
             if here.owner is None and here.ad_income is not None and me.coins >= here.price:
                 names.add("buy_parcel")
-            if (
-                here.owner == me.id
-                and here.facility is None
-                and me.materials >= observation.land.rules["ad_materials"]
-            ):
-                names.add("build_ad")
+            if here.owner == me.id and here.facility is None:
+                names.update(_buildable(me.materials, me.programs.get(MEETING_PROGRAM, 0)))
+            server = next((s for s in observation.land.servers if s.id == here.id), None)
+            if server is not None and server.compute < SERVER_CAPACITY and me.compute > 1:
+                names.add("supply_server")
+        if any(parcel.facility == "server" for parcel in observation.land.mine):
+            names.add("set_hosting_fee")
         if observation.offers_to_me or observation.information_offers_to_me:
             names.add("respond_to_offer")
         if observation.contract_proposals_to_me:
@@ -168,13 +182,22 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     if not square.reserved and square.owner_id is None and me.coins >= square.price:
         names.add("buy_parcel")
     parcel = next((p for p in world.parcels if (p.col, p.row) == (square.col, square.row)), None)
+    if parcel is not None and parcel.owner_id == me.id and parcel.facility is None:
+        names.update(_buildable(me.inventory.count(MATERIAL), me.inventory.count(MEETING_PROGRAM)))
     if (
         parcel is not None
-        and parcel.owner_id == me.id
-        and parcel.facility is None
-        and me.inventory.count(MATERIAL) >= AD_MATERIALS
+        and parcel.facility is not None
+        and parcel.facility.kind == "server"
+        and parcel.facility.compute < SERVER_CAPACITY
+        and not next(r for r in world.residents if r.id == parcel.owner_id).left
+        and me.inventory.count(COMPUTE) > 1
     ):
-        names.add("build_ad")
+        names.add("supply_server")
+    if any(
+        p.owner_id == me.id and p.facility is not None and p.facility.kind == "server"
+        for p in world.parcels
+    ):
+        names.add("set_hosting_fee")
     if any(resident.id != me.id and not resident.left for resident in world.residents):
         names.update(("offer_to_buy", "offer_to_sell", "offer_information", "propose_contract"))
     if any(event.recipient_id == me.id for event in world.events.pending):
@@ -208,3 +231,16 @@ def discover_tools(arguments: str | dict[str, Any], names: set[str]) -> str:
     expanded = TOOL_GROUPS[group]
     names.update(expanded)
     return json.dumps({"ok": True, "group": group, "enabled": expanded}, separators=(",", ":"))
+
+
+def _buildable(materials: int, programs: int) -> set[str]:
+    """The facilities a resident carrying `materials` and `programs` of the meeting room's
+    tier can build on their own bare parcel."""
+    names = set()
+    if materials >= AD_MATERIALS:
+        names.add("build_ad")
+    if materials >= SERVER_MATERIALS:
+        names.add("build_server")
+    if materials >= MEETING_MATERIALS and programs >= 1:
+        names.add("build_meeting_room")
+    return names

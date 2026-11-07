@@ -5,8 +5,9 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-FacilityKind = Literal["ad"]
-"""What a facility is: so far only an ad slot."""
+FacilityKind = Literal["ad", "server", "meeting"]
+"""What a facility is: an ad slot, a server hosting the facilities around it, or a meeting
+room, which needs a server's hosting."""
 
 
 @dataclass(frozen=True)
@@ -14,25 +15,40 @@ class Facility:
     kind: FacilityKind
     built_at: float
     """Game time it was built, see `World.time`."""
-    next_at: float
-    """Game time its next cycle of visitors pays out."""
+    next_at: float | None
+    """Game time its next cycle of visitors pays out; None for a server, which has no cycle of
+    its own."""
     earned: int = 0
-    """Coins it has paid its owner so far."""
+    """Coins it has paid its owner so far, after hosting fees; for a server, the hosting fees
+    it has collected."""
     last_income: int = 0
-    """Coins its latest cycle paid; 0 before the first."""
+    """Coins its latest cycle paid, after the hosting fee; 0 before the first."""
+    compute: int = 0
+    """Compute a server holds for hosting."""
+    fee: int = 0
+    """Coins a server charges a hosted facility of another owner per cycle."""
+    host: str | None = None
+    """Parcel id of the server that hosted a meeting room's latest cycle; None before its first
+    cycle or when no server could."""
 
     def __post_init__(self) -> None:
-        if self.kind != "ad":
+        if self.kind not in ("ad", "server", "meeting"):
             raise ValueError(f"unknown facility kind {self.kind!r}")
-        for amount in (self.earned, self.last_income):
+        for amount in (self.earned, self.last_income, self.compute, self.fee):
             if type(amount) is not int or amount < 0:
-                raise ValueError(f"facility income {amount!r}, must be an integer >= 0")
-        if not (
-            math.isfinite(self.built_at)
-            and math.isfinite(self.next_at)
-            and 0 <= self.built_at < self.next_at
+                raise ValueError(f"facility amount {amount!r}, must be an integer >= 0")
+        if not math.isfinite(self.built_at) or self.built_at < 0:
+            raise ValueError(f"facility built at {self.built_at!r}")
+        if (self.next_at is None) != (self.kind == "server"):
+            raise ValueError("every facility but a server pays out in cycles")
+        if self.next_at is not None and not (
+            math.isfinite(self.next_at) and self.built_at < self.next_at
         ):
             raise ValueError("a facility pays out after it is built")
+        if self.kind != "server" and (self.compute or self.fee):
+            raise ValueError("only a server holds compute and charges a fee")
+        if self.kind != "meeting" and self.host is not None:
+            raise ValueError("only a meeting room is hosted")
 
 
 @dataclass(frozen=True)

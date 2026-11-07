@@ -6,8 +6,9 @@ from aiverse_server.core.world import NOTE_LENGTH_LIMIT
 def test_the_base_prompt_stays_compact() -> None:
     prompt = system_prompt("甲", "a")
 
-    # Raised from 6000 when land and facilities joined the rules.
-    assert len(prompt) < 7000
+    # Raised from 6000 when land and facilities joined the rules, and to 7500 with servers and
+    # meeting rooms.
+    assert len(prompt) < 7500
 
 
 def test_the_prompt_tells_a_model_that_thinking_time_is_game_time() -> None:
@@ -39,6 +40,16 @@ def test_the_prompt_explains_land_materials_and_ads() -> None:
 
     assert all(tool in prompt for tool in ("buy_parcel", "make_material", "build_ad"))
     assert "Every 30s an ad pays 2 coins per footfall" in prompt
+
+
+def test_the_prompt_explains_servers_and_meeting_rooms() -> None:
+    prompt = system_prompt("甲", "a")
+
+    assert all(
+        tool in prompt
+        for tool in ("build_server", "supply_server", "build_meeting_room", "set_hosting_fee")
+    )
+    assert "its owner's own first, else the lowest fee" in prompt
 
 
 def test_the_prompt_encourages_selling_compute_during_the_game() -> None:

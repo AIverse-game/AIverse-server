@@ -31,7 +31,20 @@ from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
 from ..economy.compute import COMPUTE, COMPUTE_PER_UNIT, compute_total
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
-from ..economy.facilities import AD_MATERIALS, FACILITY_SECONDS, ad_income
+from ..economy.facilities import (
+    AD_MATERIALS,
+    FACILITY_SECONDS,
+    HOST_RADIUS,
+    MEETING_COMPUTE,
+    MEETING_MATERIALS,
+    MEETING_PROGRAM,
+    SERVER_CAPACITY,
+    SERVER_MATERIALS,
+    ad_income,
+    host_for,
+    hosting_fee,
+    meeting_income,
+)
 from ..economy.land import plot_at
 from ..economy.market import pressure_at
 from ..economy.studio import MATERIAL_RECIPE
@@ -40,6 +53,8 @@ from ..game.actions import (
     ActionRejected,
     BuildAd,
     BuildCollector,
+    BuildMeetingRoom,
+    BuildServer,
     BuyParcel,
     BuyProgram,
     CancelContract,
@@ -60,6 +75,8 @@ from ..game.actions import (
     RespondToEvent,
     Say,
     SellCompute,
+    SetHostingFee,
+    SupplyServer,
     WithdrawEvent,
     WriteProgram,
     perform,
@@ -121,6 +138,25 @@ class BuyParcelArgs(_Args):
 
 class BuildAdArgs(_Args):
     pass
+
+
+class BuildServerArgs(_Args):
+    fee: StrictInt = Field(
+        description="Coins each hosted meeting room of another owner pays you per cycle; >= 0."
+    )
+
+
+class BuildMeetingRoomArgs(_Args):
+    pass
+
+
+class SupplyServerArgs(_Args):
+    amount: StrictInt = Field(description="Carried compute to put into the server; at least 1.")
+
+
+class SetHostingFeeArgs(_Args):
+    server: str = Field(description="Parcel id of your server, such as L7-3.")
+    fee: StrictInt = Field(description="New fee in coins per hosted cycle; >= 0.")
 
 
 class SellComputeArgs(_Args):
@@ -418,6 +454,34 @@ TOOLS = (
         BuildAdArgs,
     ),
     ToolSpec(
+        "build_server",
+        f"Build a server on your own bare parcel you stand in, using up {SERVER_MATERIALS} "
+        f"carried materials. Supplied with compute, it hosts meeting rooms within "
+        f"{HOST_RADIUS:g} units, spending {MEETING_COMPUTE} compute per room each cycle; other "
+        "owners' rooms pay you the fee out of their income.",
+        BuildServerArgs,
+    ),
+    ToolSpec(
+        "build_meeting_room",
+        f"Build a meeting room on your own bare parcel you stand in, using up "
+        f"{MEETING_MATERIALS} carried materials and a {MEETING_PROGRAM} program. Every "
+        f"{FACILITY_SECONDS:g}s a server in reach hosts it, it pays you for visitors minus the "
+        "server's fee; with no server able to host, it earns nothing that cycle.",
+        BuildMeetingRoomArgs,
+    ),
+    ToolSpec(
+        "supply_server",
+        f"Put carried compute into the server on the parcel you stand in, anyone's, up to "
+        f"{SERVER_CAPACITY} held. It is spent hosting meeting rooms and never comes back.",
+        SupplyServerArgs,
+    ),
+    ToolSpec(
+        "set_hosting_fee",
+        "Change the fee one of your servers charges other owners' meeting rooms, from anywhere. "
+        "A room uses its owner's own server first, then the cheapest in reach.",
+        SetHostingFeeArgs,
+    ),
+    ToolSpec(
         "sell_compute",
         "Sell carried compute to the market for coins at the market price, which falls the more "
         f"is sold. Others' sales in the {PRICE_HOLD_SECONDS:g} seconds after your round began do "
@@ -590,6 +654,18 @@ class ResidentTools:
     def build_ad(self) -> ToolResult:
         return self.call("build_ad", {})
 
+    def build_server(self, fee: int) -> ToolResult:
+        return self.call("build_server", {"fee": fee})
+
+    def build_meeting_room(self) -> ToolResult:
+        return self.call("build_meeting_room", {})
+
+    def supply_server(self, amount: int) -> ToolResult:
+        return self.call("supply_server", {"amount": amount})
+
+    def set_hosting_fee(self, server: str, fee: int) -> ToolResult:
+        return self.call("set_hosting_fee", {"server": server, "fee": fee})
+
     def place_order(
         self, side: str, item: str, quantity: int, price: int, expires_in: float = DEFAULT_LIFETIME
     ) -> ToolResult:
@@ -706,6 +782,38 @@ class ResidentTools:
                 square = plot_at(world, _resident(world, me).position)
                 income = ad_income(world, square.col, square.row)
                 return f"built an ad slot on {square.id}; it would earn {income} coins a cycle now"
+            case BuildServerArgs():
+                act(BuildServer(me, args.fee))
+                square = plot_at(self.game.world, _resident(self.game.world, me).position)
+                return (
+                    f"built a server on {square.id} charging {args.fee} coins a cycle; it holds "
+                    "no compute yet, supply it with supply_server"
+                )
+            case BuildMeetingRoomArgs():
+                act(BuildMeetingRoom(me))
+                world = self.game.world
+                square = plot_at(world, _resident(world, me).position)
+                income = meeting_income(world, square.col, square.row)
+                host = host_for(world, square.centre, me)
+                if host is None:
+                    return (
+                        f"built a meeting room on {square.id}; it would earn {income} coins a "
+                        "cycle now, but no server in reach holds compute to host it"
+                    )
+                return (
+                    f"built a meeting room on {square.id}; it would earn {income} coins a cycle "
+                    f"now, hosted by server {host.id} for {hosting_fee(host, me)}"
+                )
+            case SupplyServerArgs():
+                act(SupplyServer(me, args.amount))
+                world = self.game.world
+                square = plot_at(world, _resident(world, me).position)
+                server = next(p for p in world.parcels if p.id == square.id).facility
+                assert server is not None
+                return f"server {square.id} now holds {server.compute} compute"
+            case SetHostingFeeArgs():
+                act(SetHostingFee(me, args.server, args.fee))
+                return f"server {args.server} now charges {args.fee} coins a cycle"
             case SellComputeArgs():
                 held = (
                     self.seen_pressure
