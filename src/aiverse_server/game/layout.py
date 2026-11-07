@@ -1,12 +1,12 @@
-"""The starting layout: a fixed map, residents and market, with springs, quarries and the
-workshop placed at random.
+"""The starting layout: a fixed map, residents and market, with springs, mines and the
+studio placed at random.
 
 Every match uses the same map, residents and market, which stands in the middle of the map.
-The springs, then the quarries, then the workshop are placed when the world is created, from a
-seed, and stay where they are for the whole game; the quarries and workshop come after, so a
+The springs, then the mines, then the studio are placed when the world is created, from a
+seed, and stay where they are for the whole game; the mines and studio come after, so a
 seed puts the springs where it always did.
 
-Spring and quarry reserves grow with the number of residents, so each resident has the same
+Spring and mine reserves grow with the number of residents, so each resident has the same
 share to draw on however many play. With four residents a seed gives the world it did before
 reserves grew with the count; the default eight residents widen the reserve ranges, which
 changes how the seed's random numbers fall, so a seed lays out a different world than it did
@@ -19,28 +19,28 @@ import random
 from ..core.world import (
     Inventory,
     Market,
+    Mine,
     Position,
     PricePoint,
-    Quarry,
     Resident,
     Spring,
-    Workshop,
+    Studio,
     World,
     WorldMap,
 )
-from ..economy.energy import ENERGY
+from ..economy.compute import COMPUTE
 from ..economy.market import MARKET_BASE_PRICE, MARKET_RADIUS
 
 MAP_SIZE = 150.0
 
 STARTING_COINS = 10_000
 
-STARTING_ENERGY = 200
+STARTING_COMPUTE = 200
 
 SPRING_COUNT = 6
 SPRING_RADIUS = 4.0
 SPRING_RESERVE_PER_RESIDENT = (375, 1_000)
-"""Smallest and largest number of energy a spring starts with, per resident in the game."""
+"""Smallest and largest number of compute a spring starts with, per resident in the game."""
 SPRING_MARGIN = 15.0
 """Least distance from a spring's centre to the map edge."""
 SPRING_SPACING = 30.0
@@ -49,16 +49,16 @@ MARKET_CLEARANCE = 30.0
 """Least distance from a spring's centre to the market's, so selling takes a walk from
 harvesting."""
 
-QUARRY_COUNT = 3
-QUARRY_RADIUS = 4.0
-QUARRY_RESERVE_PER_RESIDENT = (75, 150)
-"""Smallest and largest number of shards a quarry starts with, per resident in the game."""
-WORKSHOP_RADIUS = 5.0
+MINE_COUNT = 3
+MINE_RADIUS = 4.0
+MINE_RESERVE_PER_RESIDENT = (75, 150)
+"""Smallest and largest number of data a mine starts with, per resident in the game."""
+STUDIO_RADIUS = 5.0
 PLACE_SPACING = 20.0
-"""Least distance from a quarry's or the workshop's centre to any spring, quarry or workshop
+"""Least distance from a mine's or the studio's centre to any spring, mine or studio
 placed before it."""
 
-_STARTING_INVENTORY = Inventory(((ENERGY, STARTING_ENERGY),))
+_STARTING_INVENTORY = Inventory(((COMPUTE, STARTING_COMPUTE),))
 
 
 def market_position(size: float = MAP_SIZE) -> Position:
@@ -77,7 +77,7 @@ def _resident(id: str, name: str, color: str, position: Position) -> Resident:
     )
 
 
-# All residents begin at the market so they can buy a crystal before heading to a spring.
+# All residents begin at the market so they can buy a program before heading to a spring.
 DEFAULT_RESIDENTS = (
     _resident("r1", "阿青", "#e4572e", market_position()),
     _resident("r2", "小麦", "#f3a712", market_position()),
@@ -96,9 +96,9 @@ def spring_reserve(residents: int) -> tuple[int, int]:
     return low * residents, high * residents
 
 
-def quarry_reserve(residents: int) -> tuple[int, int]:
-    """Smallest and largest reserve a quarry starts with in a game of `residents`."""
-    low, high = QUARRY_RESERVE_PER_RESIDENT
+def mine_reserve(residents: int) -> tuple[int, int]:
+    """Smallest and largest reserve a mine starts with in a game of `residents`."""
+    low, high = MINE_RESERVE_PER_RESIDENT
     return low * residents, high * residents
 
 
@@ -148,7 +148,7 @@ def _place(rng: random.Random, size: float, taken: list[Position]) -> Position:
             for other in taken
         ):
             return position
-    raise ValueError(f"cannot fit the quarries and workshop on a map of size {size:g}")
+    raise ValueError(f"cannot fit the mines and studio on a map of size {size:g}")
 
 
 def create_default_world(seed: int | None = None) -> World:
@@ -156,12 +156,12 @@ def create_default_world(seed: int | None = None) -> World:
     residents = len(DEFAULT_RESIDENTS)
     springs = _scatter_springs(rng, MAP_SIZE, residents)
     taken = [spring.position for spring in springs]
-    quarries: list[Quarry] = []
-    for number in range(1, QUARRY_COUNT + 1):
+    mines: list[Mine] = []
+    for number in range(1, MINE_COUNT + 1):
         position = _place(rng, MAP_SIZE, taken)
         taken.append(position)
-        reserve = rng.randint(*quarry_reserve(residents))
-        quarries.append(Quarry(f"q{number}", position, QUARRY_RADIUS, reserve))
+        reserve = rng.randint(*mine_reserve(residents))
+        mines.append(Mine(f"m{number}", position, MINE_RADIUS, reserve))
     return World(
         map=WorldMap(size=MAP_SIZE),
         residents=DEFAULT_RESIDENTS,
@@ -169,6 +169,6 @@ def create_default_world(seed: int | None = None) -> World:
         market=Market(
             market_position(), MARKET_RADIUS, history=(PricePoint(0.0, MARKET_BASE_PRICE),)
         ),
-        quarries=tuple(quarries),
-        workshop=Workshop(_place(rng, MAP_SIZE, taken), WORKSHOP_RADIUS),
+        mines=tuple(mines),
+        studio=Studio(_place(rng, MAP_SIZE, taken), STUDIO_RADIUS),
     )

@@ -7,7 +7,7 @@ side, oldest first at the same price, each fill at the resting order's price; a 
 offered more gets the difference back. What is left rests on the book until it fills, is
 cancelled, expires, or its owner leaves or the game ends, all of which hand back what is still
 set aside. Fills reach both sides wherever they are, and are logged without names for others
-to read. The market's own buying of energy, see `market.py`, is separate: the system never
+to read. The market's own buying of compute, see `market.py`, is separate: the system never
 places orders.
 
 Like the rest of the world, every function returns a new world and leaves its argument
@@ -21,11 +21,11 @@ from ..core.inventory import add_coins, store_item, take_coins, take_item
 from ..core.ledger import record_transfer
 from ..core.orders import FILL_LIMIT, Fill, Order, OrderBook, Side
 from ..core.world import Resident, World
-from .crystals import CRYSTAL_TIERS
-from .energy import ENERGY
-from .shards import SHARD
+from .compute import COMPUTE
+from .gathering import DATA
+from .programs import PROGRAM_TIERS
 
-EXCHANGE_ITEMS = (ENERGY, SHARD, *(tier.tier for tier in CRYSTAL_TIERS))
+EXCHANGE_ITEMS = (COMPUTE, DATA, *(tier.tier for tier in PROGRAM_TIERS))
 """Items with an order book."""
 
 MAX_ORDERS = 8
@@ -72,10 +72,10 @@ def place_order(
     if item not in EXCHANGE_ITEMS:
         raise ExchangeError("unknown_item", f"no order book for {item!r}")
     _check_terms(quantity, price, lifetime)
-    mine = [order for order in world.orders.orders if order.resident_id == resident_id]
+    own = [order for order in world.orders.orders if order.resident_id == resident_id]
     if any(
         order.item == item and order.side != side and _crosses(side, price, order.price)
-        for order in mine
+        for order in own
     ):
         raise ExchangeError("self_cross", "the order would trade with your own resting order")
     if side == "buy":
@@ -89,7 +89,7 @@ def place_order(
     world = replace(world, orders=replace(book, next_id=book.next_id + 1))
     world = _match(world, order)
     # Only what is left to rest counts against the limit; refusing undoes the fills too.
-    if len(mine) >= MAX_ORDERS and any(o.id == order.id for o in world.orders.orders):
+    if len(own) >= MAX_ORDERS and any(o.id == order.id for o in world.orders.orders):
         raise ExchangeError("too_many_orders", f"at most {MAX_ORDERS} orders may rest at once")
     return world
 

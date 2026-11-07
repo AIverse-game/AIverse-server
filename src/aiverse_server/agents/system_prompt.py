@@ -5,23 +5,23 @@ the observation carries the current state and prices.
 """
 
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
-from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
-from ..economy.crystals import CRYSTAL_TIERS
-from ..economy.energy import ENERGY_PER_UNIT
-from ..economy.exchange import EXCHANGE_ITEMS, LIFETIME_RANGE, MAX_ORDERS
-from ..economy.harvesting import HARVEST_SECONDS
-from ..economy.market import MARKET_DEPTH, MARKET_HALF_LIFE, MARKET_RADIUS
-from ..economy.shards import DIG_SECONDS, DIG_YIELD
-from ..economy.towers import (
+from ..economy.collectors import (
+    COLLECTOR_CAPACITY,
+    COLLECTOR_PRICE,
+    COLLECTOR_SECONDS,
+    COLLECTOR_YIELD,
     RENT_PER_100,
-    TOWER_CAPACITY,
-    TOWER_PRICE,
-    TOWER_SECONDS,
-    TOWER_YIELD,
     UPKEEP_PER_100,
 )
-from ..economy.workshop import FASTEST_SHARE, RECIPES, SPEEDUP_PER_CRYSTAL
-from ..game.layout import MAP_SIZE, QUARRY_COUNT, QUARRY_RADIUS, SPRING_RADIUS, WORKSHOP_RADIUS
+from ..economy.compute import COMPUTE_PER_UNIT
+from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
+from ..economy.exchange import EXCHANGE_ITEMS, LIFETIME_RANGE, MAX_ORDERS
+from ..economy.gathering import GATHER_SECONDS, GATHER_YIELD
+from ..economy.harvesting import HARVEST_SECONDS
+from ..economy.market import MARKET_DEPTH, MARKET_HALF_LIFE, MARKET_RADIUS
+from ..economy.programs import PROGRAM_TIERS
+from ..economy.studio import FASTEST_SHARE, RECIPES, SPEEDUP_PER_PROGRAM
+from ..game.layout import MAP_SIZE, MINE_COUNT, MINE_RADIUS, SPRING_RADIUS, STUDIO_RADIUS
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.perception import PERCEPTION_RADIUS
@@ -38,12 +38,12 @@ def system_prompt(
     early_notice_seconds: float = EARLY_ENDING_NOTICE_SECONDS,
     final_notice_seconds: float = ENDING_NOTICE_SECONDS,
 ) -> str:
-    crystals = "; ".join(
-        f"{crystal.tier}: {crystal.price} coins, {crystal.energy_per_job} energy/job"
-        for crystal in CRYSTAL_TIERS
+    programs = "; ".join(
+        f"{program.tier}: {program.price} coins, {program.compute_per_job} compute/job"
+        for program in PROGRAM_TIERS
     )
     recipes = "; ".join(
-        f"{recipe.tier}: {recipe.shards} shards + {recipe.energy} energy"
+        f"{recipe.tier}: {recipe.data} data + {recipe.compute} compute"
         + (f" + 1 {recipe.consumes}" if recipe.consumes else "")
         + f", {recipe.seconds:g}s"
         for recipe in RECIPES
@@ -51,50 +51,50 @@ def system_prompt(
     items = ", ".join(EXCHANGE_ITEMS)
     low, high = LIFETIME_RANGE
     prompt = f"""You are {name} (id {resident_id}) in AIverse. Maximize your coins at game end.
-Only coins count; energy, shards and crystals left over are worth nothing. Convert production
-to coins during the game. Keep enough carried energy to travel and survive.
+Only coins count; compute, data and programs left over are worth nothing. Convert production
+to coins during the game. Keep enough carried compute to travel and survive.
 
 World and production
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Distances are
-straight lines. Walking costs {ENERGY_PER_UNIT:g} energy per map unit, rounded up per walk,
+straight lines. Walking costs {COMPUTE_PER_UNIT:g} compute per map unit, rounded up per walk,
 paid on departure; speed {WALK_SPEED:g} units/s. You are busy until arrival. At zero owned
-energy you leave permanently. Tools refuse spending your last carried energy, but energy
+compute you leave permanently. Tools refuse spending your last carried compute, but compute
 reserved in offers or orders is not carried; others buying it can still eliminate you.
-- The central market (radius {MARKET_RADIUS:g}) buys carried energy and sells crystals.
-Its energy price drops with sales ({MARKET_DEPTH:g} recent units halve it) and recovers with
+- The central market (radius {MARKET_RADIUS:g}) buys carried compute and sells programs.
+Its compute price drops with sales ({MARKET_DEPTH:g} recent units halve it) and recovers with
 a {MARKET_HALF_LIFE:g}s half-life. One large sale earns less per unit;
-bring energy to the market several times during the game and sell while the price is good. For
+bring compute to the market several times during the game and sell while the price is good. For
 {PRICE_HOLD_SECONDS:g}s after your round begins, others' sales cannot push your sale below
-the observed energy_price, though your own sales can; later the live price applies.
+the observed compute_price, though your own sales can; later the live price applies.
 market.trend gives price and anonymous sales in 30-second buckets over five minutes. Use it
 to distinguish price recovery from selling pressure. An evicted old price is null.
-Crystal prices and yields: {crystals}. Harvesting requires a carried crystal; the best
+Program prices and yields: {programs}. Harvesting requires a carried program; the best
 carried one is used.
 - Springs (radius {SPRING_RADIUS:g}) have finite reserves and never refill. At one,
-harvest takes {HARVEST_SECONDS:g}s and pays your crystal's yield, limited by the remaining
+harvest takes {HARVEST_SECONDS:g}s and pays your program's yield, limited by the remaining
 reserve. Springs are visible within {PERCEPTION_RADIUS:g} units and along a walk within
 that distance of your route. known_springs keeps the last seen reserve and seen_ago;
-only in_sight reserves are current. tower_draw_per_second and seconds_to_empty count
-running towers, not manual harvesting. Other residents draw from the same reserve.
+only in_sight reserves are current. collector_draw_per_second and seconds_to_empty count
+running collectors, not manual harvesting. Other residents draw from the same reserve.
 known_springs.reserve_history contains only reserves you saw; old sightings may be stale.
-- {QUARRY_COUNT} public quarries (radius {QUARRY_RADIUS:g}) hold finite shards. At one,
-dig_shards takes {DIG_SECONDS:g}s for up to {DIG_YIELD} shards; no crystal is needed.
-The market does not buy shards. At the workshop (radius {WORKSHOP_RADIUS:g}), refine_crystal
-spends carried materials immediately and gives a crystal when the job ends. Recipes:
-{recipes}. Each completed refinement shortens future recipes by {SPEEDUP_PER_CRYSTAL:.0%},
-down to {FASTEST_SHARE:.0%} of their original time; workshop.recipes gives your current times.
-Walking, harvesting, digging and refining keep you busy.
-- At a spring, a tower costs {TOWER_PRICE} coins and has {TOWER_CAPACITY} crystal slots.
-Install a carried crystal there; each slot draws {TOWER_YIELD} times its yield every
-{TOWER_SECONDS:g}s while funded. You can leave while it works. Prepay upkeep
-{UPKEEP_PER_100} and rent {RENT_PER_100} coins per 100 energy (own slots pay no rent),
-prorated and rounded up per cycle. An unfunded slot pauses; fund_tower restarts it remotely.
-remove_crystal remotely returns the crystal and unused prepayment. Prepayment counts toward
+- {MINE_COUNT} public mines (radius {MINE_RADIUS:g}) hold finite data. At one,
+gather_data takes {GATHER_SECONDS:g}s for up to {GATHER_YIELD} data; no program is needed.
+The market does not buy data. At the studio (radius {STUDIO_RADIUS:g}), write_program
+spends carried materials immediately and gives a program when the job ends. Recipes:
+{recipes}. Each program written shortens future recipes by {SPEEDUP_PER_PROGRAM:.0%},
+down to {FASTEST_SHARE:.0%} of their original time; studio.recipes gives your current times.
+Walking, harvesting, gathering and writing keep you busy.
+- At a spring, a collector costs {COLLECTOR_PRICE} coins and has {COLLECTOR_CAPACITY} program slots.
+Install a carried program there; each slot draws {COLLECTOR_YIELD} times its yield every
+{COLLECTOR_SECONDS:g}s while funded. You can leave while it works. Prepay upkeep
+{UPKEEP_PER_100} and rent {RENT_PER_100} coins per 100 compute (own slots pay no rent),
+prorated and rounded up per cycle. An unfunded slot pauses; fund_collector restarts it remotely.
+remove_program remotely returns the program and unused prepayment. Prepayment counts toward
 rank but cannot fund purchases. A depleted spring stops production; leaving the game stops
-your slots. towers shows nearby towers and yours.
+your slots. collectors shows nearby collectors and yours.
 
 Deals and information
-- Speak aloud within {HEARING_RADIUS:g} units for {SPEECH_COSTS["aloud"]} energy or privately
+- Speak aloud within {HEARING_RADIUS:g} units for {SPEECH_COSTS["aloud"]} compute or privately
 to one resident anywhere for {SPEECH_COSTS["to_one"]}; at most {SPEECH_LENGTH_LIMIT} characters.
 Speech is allowed while busy.
 - Direct offers trade a whole lot of {items} for coins. The proposer reserves their

@@ -17,7 +17,7 @@ from aiverse_server.core.world import (
     World,
     WorldMap,
 )
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.game.actions import Harvest, LeaveGame, MoveTo, perform
 from aiverse_server.game.lifecycle import GameError, end_game
 from aiverse_server.residents.memory import SHORT_TERM_SECONDS, NoteError, forget, remember
@@ -31,7 +31,7 @@ def resident(resident_id: str, x: float, y: float) -> Resident:
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((ENERGY, 1000), ("C1", 1))),
+        inventory=Inventory(((COMPUTE, 1000), ("v1", 1))),
     )
 
 
@@ -48,12 +48,12 @@ def at(world: World, time: float) -> World:
 
 
 def test_the_resident_chooses_how_long_each_note_lasts() -> None:
-    world, plan = remember(WORLD, "a", "  sell energy to b above 3 coins  ", "long_term")
+    world, plan = remember(WORLD, "a", "  sell compute to b above 3 coins  ", "long_term")
     world, sight = remember(world, "a", "b is heading north", "short_term")
 
     _, seen = begin_turn(world, "a")
 
-    assert plan == Note(1, "sell energy to b above 3 coins", 5.0, None)
+    assert plan == Note(1, "sell compute to b above 3 coins", 5.0, None)
     assert sight == Note(2, "b is heading north", 5.0, 5.0 + SHORT_TERM_SECONDS)
     assert seen.long_term == (plan,)
     assert seen.short_term == (sight,)

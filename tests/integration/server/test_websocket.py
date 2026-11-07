@@ -17,8 +17,7 @@ from aiverse_server.core.world import (
     World,
     WorldMap,
 )
-from aiverse_server.economy.crystals import CRYSTAL_TIERS
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.economy.harvesting import HARVEST_SECONDS
 from aiverse_server.economy.market import (
     MARKET_BASE_PRICE,
@@ -26,7 +25,8 @@ from aiverse_server.economy.market import (
     MARKET_HALF_LIFE,
     MARKET_RESTING_PRESSURE,
 )
-from aiverse_server.game.layout import SPRING_COUNT, STARTING_ENERGY
+from aiverse_server.economy.programs import PROGRAM_TIERS
+from aiverse_server.game.layout import SPRING_COUNT, STARTING_COMPUTE
 from aiverse_server.game.lifecycle import GAME_DURATION
 from aiverse_server.residents.walking import WALK_SPEED
 from aiverse_server.server.app import CLOSE_POLICY_VIOLATION, create_app
@@ -38,10 +38,10 @@ from aiverse_server.server.protocol import (
 
 HELLO = {"type": "hello", "protocolVersion": PROTOCOL_VERSION}
 
-STOCK = Inventory(((ENERGY, 100), ("C1", 1)))
+STOCK = Inventory(((COMPUTE, 100), ("v1", 1)))
 
-HARVEST_YIELD = CRYSTAL_TIERS[0].energy_per_job
-"""What a job pays with C1, the crystal both residents carry."""
+HARVEST_YIELD = PROGRAM_TIERS[0].compute_per_job
+"""What a job pays with v1, the program both residents carry."""
 
 SMALL_WORLD = World(
     map=WorldMap(size=50),
@@ -96,14 +96,14 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "position": {"x": 0, "y": 50},
                         "coins": 0,
                         "spendableCoins": 0,
-                        "towerBalance": 0,
-                        "carriedCrystals": {"C1": 1},
+                        "collectorBalance": 0,
+                        "carriedPrograms": {"v1": 1},
                         "left": False,
                         "rank": 1,
-                        "energy": 100,
-                        "crystals": {"C1": 1},
-                        "shards": 0,
-                        "crystalsRefined": 0,
+                        "compute": 100,
+                        "programs": {"v1": 1},
+                        "data": 0,
+                        "programsWritten": 0,
                     },
                     {
                         "id": "b",
@@ -112,22 +112,22 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "position": {"x": 12.5, "y": 7},
                         "coins": 0,
                         "spendableCoins": 0,
-                        "towerBalance": 0,
-                        "carriedCrystals": {"C1": 1},
+                        "collectorBalance": 0,
+                        "carriedPrograms": {"v1": 1},
                         "left": False,
                         "rank": 1,
-                        "energy": 100,
-                        "crystals": {"C1": 1},
-                        "shards": 0,
-                        "crystalsRefined": 0,
+                        "compute": 100,
+                        "programs": {"v1": 1},
+                        "data": 0,
+                        "programsWritten": 0,
                     },
                 ],
                 "game": {"ended": False, "remainingSeconds": GAME_DURATION},
-                "quarries": [],
+                "mines": [],
                 "exchange": {
                     "books": [
                         {"item": item, "bids": [], "asks": []}
-                        for item in ("energy", "shard", "C1", "C2", "C3")
+                        for item in ("compute", "data", "v1", "v2", "v3")
                     ],
                     "fills": [],
                     "orders": [],
@@ -137,8 +137,8 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                 "offers": [],
                 "contractProposals": [],
                 "contracts": [],
-                "towers": [],
-                "towerRules": {
+                "collectors": [],
+                "collectorRules": {
                     "price": 9000,
                     "capacity": 4,
                     "cycleSeconds": 20,
@@ -441,7 +441,7 @@ def resident_view(world: dict[str, Any], resident_id: str) -> dict[str, Any]:
     return next(r for r in world["residents"] if r["id"] == resident_id)
 
 
-def test_a_walk_spends_energy_shown_in_the_next_state(client: TestClient) -> None:
+def test_a_walk_spends_compute_shown_in_the_next_state(client: TestClient) -> None:
     with client.websocket_connect("/ws") as ws:
         greet(ws)
 
@@ -450,7 +450,7 @@ def test_a_walk_spends_energy_shown_in_the_next_state(client: TestClient) -> Non
         b = resident_view(ws.receive_json()["world"], "b")
 
     assert reply["ok"] is True
-    assert b["energy"] == 98
+    assert b["compute"] == 98
 
 
 def test_a_harvesting_job_is_shown_and_paid_out_to_every_page(
@@ -478,11 +478,11 @@ def test_a_harvesting_job_is_shown_and_paid_out_to_every_page(
         assert resident_view(world, "b")["harvesting"] == {
             "springId": "p1",
             "amount": HARVEST_YIELD,
-            "crystal": "C1",
+            "program": "v1",
             "remainingSeconds": HARVEST_SECONDS,
         }
     for b in paid:
-        assert b["energy"] == 98 + HARVEST_YIELD
+        assert b["compute"] == 98 + HARVEST_YIELD
         assert "harvesting" not in b
 
 
@@ -493,7 +493,7 @@ def test_a_harvesting_job_is_shown_and_paid_out_to_every_page(
         (harvest("b", "p9"), "unknown_spring"),
     ],
 )
-def test_energy_and_harvesting_rejections_reach_the_sender(
+def test_compute_and_harvesting_rejections_reach_the_sender(
     client: TestClient, frame: str, code: str
 ) -> None:
     with client.websocket_connect("/ws") as ws:
@@ -502,23 +502,23 @@ def test_energy_and_harvesting_rejections_reach_the_sender(
         assert ws.receive_json()["code"] == code
 
 
-def test_a_walk_beyond_the_energy_left_is_refused(client: TestClient, clock: FakeClock) -> None:
+def test_a_walk_beyond_the_compute_left_is_refused(client: TestClient, clock: FakeClock) -> None:
     with client.websocket_connect("/ws") as ws:
         greet(ws)
         ws.send_text(move("a", 50, 0))
         assert ws.receive_json()["ok"] is True
-        assert resident_view(ws.receive_json()["world"], "a")["energy"] == 64
+        assert resident_view(ws.receive_json()["world"], "a")["compute"] == 64
 
         clock.now = 100
         ws.send_text(move("a", 0, 50))
         assert ws.receive_json()["ok"] is True
-        assert resident_view(ws.receive_json()["world"], "a")["energy"] == 28
+        assert resident_view(ws.receive_json()["world"], "a")["compute"] == 28
 
         clock.now = 200
         ws.send_text(move("a", 50, 0))
         reply = ws.receive_json()
 
-    assert reply["code"] == "not_enough_energy"
+    assert reply["code"] == "not_enough_compute"
 
 
 @pytest.mark.parametrize(
@@ -539,14 +539,14 @@ def test_malformed_harvest_actions_get_a_bounded_error(
 
 
 def test_the_timer_pays_out_harvesting_without_any_action() -> None:
-    job = HarvestJob("p1", ends_at=0.2, amount=5, crystal="C1")
+    job = HarvestJob("p1", ends_at=0.2, amount=5, program="v1")
     harvester = replace(SMALL_WORLD.residents[1], position=Position(10, 10), harvesting=job)
     world = replace(SMALL_WORLD, residents=(SMALL_WORLD.residents[0], harvester))
     with TestClient(create_app(world)) as client, client.websocket_connect("/ws") as ws:
         b = resident_view(greet(ws), "b")
         if "harvesting" in b:
             b = resident_view(ws.receive_json()["world"], "b")
-    assert b["energy"] == 105
+    assert b["compute"] == 105
     assert "harvesting" not in b
 
 
@@ -569,10 +569,10 @@ def test_the_timer_brings_a_walker_in_without_any_action() -> None:
     assert "walking" not in b
 
 
-def test_default_world_gives_everyone_energy_and_scatters_springs() -> None:
+def test_default_world_gives_everyone_compute_and_scatters_springs() -> None:
     with TestClient(create_app()).websocket_connect("/ws") as ws:
         world = greet(ws)
-    assert {r["energy"] for r in world["residents"]} == {STARTING_ENERGY}
+    assert {r["compute"] for r in world["residents"]} == {STARTING_COMPUTE}
     assert len(world["springs"]) == SPRING_COUNT
 
 
@@ -580,10 +580,10 @@ def test_a_frame_after_the_deadline_pays_jobs_due_before_it_and_voids_the_rest(
     clock: FakeClock,
 ) -> None:
     early = replace(
-        SMALL_WORLD.residents[0], harvesting=HarvestJob("p1", GAME_DURATION - 1, 5, "C1")
+        SMALL_WORLD.residents[0], harvesting=HarvestJob("p1", GAME_DURATION - 1, 5, "v1")
     )
     late = replace(
-        SMALL_WORLD.residents[1], harvesting=HarvestJob("p1", GAME_DURATION + 5, 7, "C1")
+        SMALL_WORLD.residents[1], harvesting=HarvestJob("p1", GAME_DURATION + 5, 7, "v1")
     )
     world = replace(SMALL_WORLD, residents=(early, late))
     client = TestClient(create_app(world, clock=clock))
@@ -594,8 +594,8 @@ def test_a_frame_after_the_deadline_pays_jobs_due_before_it_and_voids_the_rest(
         assert ws.receive_json()["code"] == "game_over"
         final = ws.receive_json()["world"]
     assert final["game"]["ended"] is True
-    assert resident_view(final, "a")["energy"] == 105
-    assert resident_view(final, "b")["energy"] == 100
+    assert resident_view(final, "a")["compute"] == 105
+    assert resident_view(final, "b")["compute"] == 100
     assert final["springs"][0]["reserve"] == 47
 
 
@@ -617,12 +617,12 @@ def test_the_timer_wakes_for_a_job_started_while_it_waits(
         paid = ws.receive_json()["world"]
     assert paid["game"]["ended"] is False
     b = resident_view(paid, "b")
-    assert b["energy"] == 100 + HARVEST_YIELD
+    assert b["compute"] == 100 + HARVEST_YIELD
     assert "harvesting" not in b
 
 
 def sell(resident_id: str, quantity: object) -> str:
-    action = {"type": "sell_energy", "residentId": resident_id, "quantity": quantity}
+    action = {"type": "sell_compute", "residentId": resident_id, "quantity": quantity}
     return json.dumps({"type": "action", "action": action})
 
 
@@ -641,10 +641,10 @@ def test_states_show_the_market_and_its_prices(clock: FakeClock) -> None:
         "halfLifeSeconds": MARKET_HALF_LIFE,
         "restingPressure": MARKET_RESTING_PRESSURE,
         "pressure": 0,
-        "crystals": [
-            {"tier": "C1", "price": 600, "energyPerJob": 30},
-            {"tier": "C2", "price": 2400, "energyPerJob": 60},
-            {"tier": "C3", "price": 6000, "energyPerJob": 100},
+        "programs": [
+            {"tier": "v1", "price": 600, "computePerJob": 30},
+            {"tier": "v2", "price": 2400, "computePerJob": 60},
+            {"tier": "v3", "price": 6000, "computePerJob": 100},
         ],
         "priceHistory": [],
     }
@@ -671,7 +671,7 @@ def test_states_show_the_price_noted_through_a_quiet_stretch_and_a_sale(clock: F
     assert prices[4] < prices[3]
 
 
-def test_selling_energy_pays_coins_and_lowers_the_price_for_everyone(clock: FakeClock) -> None:
+def test_selling_compute_pays_coins_and_lowers_the_price_for_everyone(clock: FakeClock) -> None:
     client = TestClient(create_app(MARKET_WORLD, clock=clock))
     with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
         greet(ws)
@@ -684,8 +684,8 @@ def test_selling_energy_pays_coins_and_lowers_the_price_for_everyone(clock: Fake
     assert reply["ok"] is True
     for world in seen:
         b = resident_view(world, "b")
-        # 30 energy into an untouched market, as in the market's unit tests.
-        assert (b["coins"], b["energy"], b["rank"]) == (578, 70, 1)
+        # 30 compute into an untouched market, as in the market's unit tests.
+        assert (b["coins"], b["compute"], b["rank"]) == (578, 70, 1)
         assert resident_view(world, "a")["rank"] == 2
         assert world["market"]["pressure"] == 30
 
@@ -702,7 +702,7 @@ def test_a_later_state_shows_the_pressure_faded_since_the_sale(clock: FakeClock)
         assert ws.receive_json()["ok"] is True
         world = ws.receive_json()["world"]
 
-    # Halfway from 30 to the resting -200, plus the energy just sold.
+    # Halfway from 30 to the resting -200, plus the compute just sold.
     assert world["market"]["pressure"] == pytest.approx(-84)
 
 
@@ -710,7 +710,7 @@ def test_a_later_state_shows_the_pressure_faded_since_the_sale(clock: FakeClock)
     ("frame", "code"),
     [
         (sell("b", 0), "invalid_quantity"),
-        (sell("b", 101), "not_enough_energy"),
+        (sell("b", 101), "not_enough_compute"),
         (sell("a", 1), "not_at_market"),
     ],
 )
@@ -725,11 +725,11 @@ def test_market_rejections_reach_the_sender(clock: FakeClock, frame: str, code: 
 @pytest.mark.parametrize(
     "action",
     [
-        {"type": "sell_energy", "residentId": "b"},
-        {"type": "sell_energy", "quantity": 1},
-        {"type": "sell_energy", "residentId": "b", "quantity": 1.5},
-        {"type": "sell_energy", "residentId": "b", "quantity": "1"},
-        {"type": "sell_energy", "residentId": "b", "quantity": True},
+        {"type": "sell_compute", "residentId": "b"},
+        {"type": "sell_compute", "quantity": 1},
+        {"type": "sell_compute", "residentId": "b", "quantity": 1.5},
+        {"type": "sell_compute", "residentId": "b", "quantity": "1"},
+        {"type": "sell_compute", "residentId": "b", "quantity": True},
     ],
 )
 def test_malformed_sell_actions_get_a_bounded_error(
@@ -747,9 +747,9 @@ def test_a_quantity_too_big_for_a_float_is_refused_and_the_socket_stays_usable(
     client = TestClient(create_app(MARKET_WORLD, clock=clock))
     with client.websocket_connect("/ws") as ws:
         greet(ws)
-        action = '{"type": "sell_energy", "residentId": "b", "quantity": 1' + "0" * 400 + "}"
+        action = '{"type": "sell_compute", "residentId": "b", "quantity": 1' + "0" * 400 + "}"
         ws.send_text('{"type": "action", "action": ' + action + "}")
-        assert ws.receive_json()["code"] == "not_enough_energy"
+        assert ws.receive_json()["code"] == "not_enough_compute"
         ws.send_text(sell("b", 1))
         assert ws.receive_json()["ok"] is True
 
@@ -758,46 +758,46 @@ def test_default_world_has_a_market_in_the_middle() -> None:
     with TestClient(create_app()).websocket_connect("/ws") as ws:
         world = greet(ws)
     assert world["market"]["position"] == {"x": 75, "y": 75}
-    # The real clock has barely moved the pressure since the world was made: about 2.3 energy
+    # The real clock has barely moved the pressure since the world was made: about 2.3 compute
     # a second at first, so a few seconds of slack.
     assert world["market"]["pressure"] == pytest.approx(0, abs=10)
 
 
 def buy(resident_id: str, tier: object) -> str:
-    action = {"type": "buy_crystal", "residentId": resident_id, "tier": tier}
+    action = {"type": "buy_program", "residentId": resident_id, "tier": tier}
     return json.dumps({"type": "action", "action": action})
 
 
-# b stands at both the market and the spring, with coins for C1 but not C2, and no crystal.
+# b stands at both the market and the spring, with coins for v1 but not v2, and no program.
 SHOP_WORLD = replace(
     MARKET_WORLD,
     residents=(
         MARKET_WORLD.residents[0],
-        replace(MARKET_WORLD.residents[1], coins=1_000, inventory=Inventory(((ENERGY, 100),))),
+        replace(MARKET_WORLD.residents[1], coins=1_000, inventory=Inventory(((COMPUTE, 100),))),
     ),
 )
 
 
-def test_a_crystal_bought_shows_on_every_page(clock: FakeClock) -> None:
+def test_a_program_bought_shows_on_every_page(clock: FakeClock) -> None:
     client = TestClient(create_app(SHOP_WORLD, clock=clock))
     with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
         before = resident_view(greet(ws), "b")
         greet(watcher)
 
-        ws.send_text(buy("b", "C1"))
+        ws.send_text(buy("b", "v1"))
         reply = ws.receive_json()
         after = [resident_view(c.receive_json()["world"], "b") for c in (ws, watcher)]
 
-    assert before["crystals"] == {}
+    assert before["programs"] == {}
     assert reply["ok"] is True
-    assert [(b["coins"], b["crystals"]) for b in after] == [(400, {"C1": 1})] * 2
+    assert [(b["coins"], b["programs"]) for b in after] == [(400, {"v1": 1})] * 2
 
 
-def test_a_crystal_bought_harvests(clock: FakeClock) -> None:
+def test_a_program_bought_harvests(clock: FakeClock) -> None:
     client = TestClient(create_app(SHOP_WORLD, clock=clock))
     with client.websocket_connect("/ws") as ws:
         greet(ws)
-        ws.send_text(buy("b", "C1"))
+        ws.send_text(buy("b", "v1"))
         assert ws.receive_json()["ok"] is True
         ws.receive_json()
 
@@ -806,17 +806,17 @@ def test_a_crystal_bought_harvests(clock: FakeClock) -> None:
         b = resident_view(ws.receive_json()["world"], "b")
 
     assert reply["ok"] is True
-    assert b["harvesting"]["crystal"] == "C1"
+    assert b["harvesting"]["program"] == "v1"
     assert b["harvesting"]["amount"] == 30
 
 
 @pytest.mark.parametrize(
     ("frame", "code"),
     [
-        (buy("b", "C9"), "unknown_crystal"),
-        (buy("a", "C1"), "not_at_market"),
-        (buy("b", "C2"), "not_enough_coins"),
-        (harvest("b", "p1"), "no_crystal"),
+        (buy("b", "C9"), "unknown_program"),
+        (buy("a", "v1"), "not_at_market"),
+        (buy("b", "v2"), "not_enough_coins"),
+        (harvest("b", "p1"), "no_program"),
     ],
 )
 def test_purchase_rejections_reach_the_sender(clock: FakeClock, frame: str, code: str) -> None:
@@ -830,9 +830,9 @@ def test_purchase_rejections_reach_the_sender(clock: FakeClock, frame: str, code
 @pytest.mark.parametrize(
     "action",
     [
-        {"type": "buy_crystal", "residentId": "b"},
-        {"type": "buy_crystal", "tier": "C1"},
-        {"type": "buy_crystal", "residentId": "b", "tier": 1},
+        {"type": "buy_program", "residentId": "b"},
+        {"type": "buy_program", "tier": "v1"},
+        {"type": "buy_program", "residentId": "b", "tier": 1},
     ],
 )
 def test_malformed_buy_actions_get_a_bounded_error(
@@ -870,7 +870,7 @@ WHISPER = {
     "seq": 1,
     "time": 0.0,
     "speakerId": "a",
-    "text": "卖你能量",
+    "text": "卖你算力",
     "to": "b",
     "listeners": ["b"],
 }
@@ -907,7 +907,7 @@ def test_whispers_reach_only_pages_viewing_as_a_party(clock: FakeClock) -> None:
             connection.send_text(view_as(viewer))
             assert connection.receive_json()["type"] == "state"
 
-        ws.send_text(say("a", "卖你能量", to="b"))
+        ws.send_text(say("a", "卖你算力", to="b"))
         assert ws.receive_json()["ok"] is True
         to_b, to_c, to_sender = (c.receive_json()["world"]["speech"] for c in (as_b, as_c, ws))
 
@@ -921,7 +921,7 @@ def test_changing_whom_a_page_views_as_resends_the_speech_it_may_see(clock: Fake
     client = TestClient(create_app(SPEECH_WORLD, clock=clock))
     with client.websocket_connect("/ws") as ws:
         greet(ws)
-        ws.send_text(say("a", "卖你能量", to="b"))
+        ws.send_text(say("a", "卖你算力", to="b"))
         assert ws.receive_json()["ok"] is True
         ws.receive_json()
 
@@ -975,7 +975,7 @@ def test_states_carry_only_the_latest_speech(client: TestClient) -> None:
         greet(ws)
         ws.send_text(view_as("a"))
         ws.receive_json()
-        # Whispers, at an energy each, so a's 100 energy last.
+        # Whispers, at one compute each, so a's 100 compute last.
         for i in range(SPEECH_VIEW_LIMIT + 3):
             ws.send_text(say("a", str(i), to="b"))
             assert ws.receive_json()["ok"] is True

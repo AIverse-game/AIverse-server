@@ -11,16 +11,16 @@ from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import (
     Inventory,
     Market,
+    Mine,
     Position,
-    Quarry,
     Resident,
     Spring,
     World,
     WorldMap,
 )
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
+from aiverse_server.economy.gathering import GATHER_SECONDS, GATHER_YIELD
 from aiverse_server.economy.market import quote
-from aiverse_server.economy.shards import DIG_SECONDS, DIG_YIELD
 from aiverse_server.game.actions import (
     CancelContract,
     LeaveGame,
@@ -30,15 +30,15 @@ from aiverse_server.game.actions import (
     ProposeContract,
     RespondToEvent,
     Say,
-    SellEnergy,
+    SellCompute,
 )
 from aiverse_server.server.app import Game
 
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((ENERGY, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((ENERGY, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((COMPUTE, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((COMPUTE, 100),)), coins=5000),
     ),
     springs=(Spring("p1", Position(80, 50), 4, 300),),
     market=Market(Position(50, 50), 5),
@@ -114,20 +114,20 @@ def test_the_loop_wakes_when_a_walk_ends() -> None:
     asyncio.run(scenario())
 
 
-def test_the_loop_wakes_when_a_dig_ends() -> None:
-    world = replace(WORLD, quarries=(Quarry("q1", Position(50, 50), 4, 300),))
+def test_the_loop_wakes_when_a_gather_ends() -> None:
+    world = replace(WORLD, mines=(Mine("m1", Position(50, 50), 4, 300),))
 
     async def scenario() -> None:
         game, clock = make_game(world)
-        brain = Recorder(lambda seen, tools: None if seen.time else tools.dig_shards("q1"))
+        brain = Recorder(lambda seen, tools: None if seen.time else tools.gather_data("m1"))
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
 
-        clock.now = DIG_SECONDS
+        clock.now = GATHER_SECONDS
         game.tick()
         await _until(lambda: len(brain.seen) == 2)
 
-        assert brain.seen[1].me.shards == DIG_YIELD
+        assert brain.seen[1].me.data == GATHER_YIELD
         task.cancel()
 
     asyncio.run(scenario())
@@ -140,12 +140,12 @@ def test_the_loop_wakes_when_someone_fills_a_resting_order() -> None:
     async def scenario() -> None:
         game, _ = make_game(world)
         brain = Recorder(
-            lambda seen, tools: None if seen.time else tools.place_order("sell", ENERGY, 10, 20)
+            lambda seen, tools: None if seen.time else tools.place_order("sell", COMPUTE, 10, 20)
         )
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
 
-        game.act(PlaceOrder("b", "buy", ENERGY, 10, 20))
+        game.act(PlaceOrder("b", "buy", COMPUTE, 10, 20))
         await _until(lambda: len(brain.seen) == 2)
 
         assert brain.seen[1].exchange.my_fills[0].quantity == 10
@@ -160,8 +160,8 @@ def test_the_loop_does_not_wake_a_resident_for_a_fill_they_took() -> None:
 
     async def scenario() -> None:
         game, _ = make_game(world)
-        game.act(PlaceOrder("b", "sell", ENERGY, 10, 20))
-        brain = Recorder(lambda seen, tools: tools.place_order("buy", ENERGY, 10, 20))
+        game.act(PlaceOrder("b", "sell", COMPUTE, 10, 20))
+        brain = Recorder(lambda seen, tools: tools.place_order("buy", COMPUTE, 10, 20))
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
         await asyncio.sleep(0.05)
@@ -249,7 +249,7 @@ def test_the_loop_wakes_for_an_offer_when_free() -> None:
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
 
-        game.act(OfferToSell("b", "a", ENERGY, 5, 80))
+        game.act(OfferToSell("b", "a", COMPUTE, 5, 80))
         await _until(lambda: len(brain.seen) == 2)
 
         assert len(brain.seen[1].offers_to_me) == 1
@@ -261,7 +261,7 @@ def test_the_loop_wakes_for_an_offer_when_free() -> None:
 def test_the_loop_wakes_a_party_when_a_contract_ends_not_by_their_doing() -> None:
     async def scenario() -> None:
         game, _ = make_game()
-        game.act(ProposeContract("a", "b", False, ENERGY, 10, 100, 2, 60, deposit=10))
+        game.act(ProposeContract("a", "b", False, COMPUTE, 10, 100, 2, 60, deposit=10))
         game.act(RespondToEvent("b", 1, True))
         buyer, supplier = Recorder(), Recorder()
         tasks = [
@@ -341,13 +341,13 @@ def test_an_agent_sells_at_the_price_it_saw_though_another_sold_meanwhile(
         clock.now = begins_at
         market = game.world.market
         assert market is not None
-        # What 30 energy fetch at the round's start; it holds whenever in the game that is.
+        # What 30 compute fetch at the round's start; it holds whenever in the game that is.
         seen_price = quote(market, begins_at, 30)
         results = []
 
         def sell(seen: Observation, tools: ResidentTools) -> None:
-            game.act(SellEnergy("b", 100))
-            results.append(tools.sell_energy(30))
+            game.act(SellCompute("b", 100))
+            results.append(tools.sell_compute(30))
 
         brain = Recorder(lambda seen, tools: None if results else sell(seen, tools))
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())

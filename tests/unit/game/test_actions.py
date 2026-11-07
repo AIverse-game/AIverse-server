@@ -6,7 +6,7 @@ import pytest
 from aiverse_server.core.events import Event, EventPayload, send_event
 from aiverse_server.core.inventory import item_count, store_item, take_item
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.game.actions import (
     ActionRejected,
     MoveTo,
@@ -17,7 +17,7 @@ from aiverse_server.game.actions import (
 from aiverse_server.game.clock import settle_due
 from aiverse_server.residents.walking import next_arrival
 
-STOCK = Inventory(((ENERGY, 100),))
+STOCK = Inventory(((COMPUTE, 100),))
 
 WORLD = World(
     map=WorldMap(size=10),

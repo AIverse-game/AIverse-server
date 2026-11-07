@@ -53,7 +53,7 @@ WORLD = World(
     map=WorldMap(size=10),
     residents=(
         resident("a", 100, (("bread", 4),)),
-        resident("b", 50, (("energy", 20), ("wood", 3))),
+        resident("b", 50, (("compute", 20), ("wood", 3))),
         resident("c", 50),
     ),
 )
@@ -163,8 +163,8 @@ def test_ranks_count_reserved_coins_and_share_places_on_ties() -> None:
     assert ranks(world) == {"a": 1, "b": 2, "c": 2}
 
 
-def test_ranks_count_no_energy_or_crystals() -> None:
-    hoarder = resident("c", 49, (("energy", 5_000), ("C3", 4)))
+def test_ranks_count_no_compute_or_programs() -> None:
+    hoarder = resident("c", 49, (("compute", 5_000), ("v3", 4)))
     world = replace(
         WORLD, residents=(*WORLD.residents[:2], hoarder), market=Market(Position(1, 1), 5)
     )

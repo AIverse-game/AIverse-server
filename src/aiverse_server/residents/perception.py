@@ -23,8 +23,8 @@ client repository). Range is measured from where the perceiver stands now, not w
 stood when something happened; a move is in range when either end is.
 
 The market is in sight wherever the resident stands: its place and price are public, like a
-price board in town, see `market.py`, and so are the crystals on sale there, see
-`crystals.py`.
+price board in town, see `market.py`, and so are the programs on sale there, see
+`programs.py`.
 
 Each look also hands back the notes the resident chose to keep, long and short term, with
 the expired ones cleared first, see `memory.py`, and what was said in their hearing since
@@ -56,8 +56,8 @@ from ..core.world import (
     SpringSighting,
     World,
 )
-from ..economy.crystals import CRYSTAL_TIERS, CrystalTier
 from ..economy.market import unit_price
+from ..economy.programs import PROGRAM_TIERS, ProgramTier
 from ..game.lifecycle import check_can_act
 from .memory import forget_expired
 from .walking import position_at
@@ -89,10 +89,10 @@ class MarketSighting:
     position: Position
     radius: float
     price: float
-    """Coins one more energy fetches right now, before rounding; it falls as energy is sold
+    """Coins one more compute fetches right now, before rounding; it falls as compute is sold
     and recovers with time."""
-    crystals: tuple[CrystalTier, ...]
-    """Crystals on sale here at fixed prices, worst first."""
+    programs: tuple[ProgramTier, ...]
+    """Programs on sale here at fixed prices, worst first."""
 
 
 @dataclass(frozen=True)
@@ -219,7 +219,7 @@ def begin_turn(world: World, resident_id: str) -> tuple[World, Perception]:
             world.market.position,
             world.market.radius,
             unit_price(world.market, world.time),
-            CRYSTAL_TIERS,
+            PROGRAM_TIERS,
         ),
         speech=speech,
         notices=notices,

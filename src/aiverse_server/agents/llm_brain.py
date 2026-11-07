@@ -60,7 +60,7 @@ ENDGAME_MAX_TOKENS = 8192
 
 ENDGAME_INSTRUCTION = (
     "Keep reasoning brief and call the next useful tool promptly. Only coins count at the end: "
-    "allow time to reach the market and sell carried energy before the clock runs out, and "
+    "allow time to reach the market and sell carried compute before the clock runs out, and "
     "keep selling while the price is good rather than waiting for the last moment."
 )
 
@@ -361,7 +361,7 @@ def _detail(details: object, key: str) -> object:
 
 def _busy(status: dict[str, Any]) -> bool:
     """Whether a tool's status shows the resident walking or in a job."""
-    busy = ("walking_to", "harvesting_spring", "digging_quarry", "refining_crystal")
+    busy = ("walking_to", "harvesting_spring", "gathering_mine", "writing_program")
     return any(key in status for key in busy)
 
 

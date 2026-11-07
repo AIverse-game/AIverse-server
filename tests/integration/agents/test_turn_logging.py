@@ -38,10 +38,10 @@ async def wait_for_log(path: Path) -> None:
 def test_the_runner_logs_actions_memory_and_timestamps(tmp_path: Path) -> None:
     class PlanningBrain:
         async def take_turn(self, observation: Observation, tools: ResidentTools) -> str:
-            tools.call("remember", {"text": "保留返程能量", "term": "long_term"})
+            tools.call("remember", {"text": "保留返程算力", "term": "long_term"})
             tools.call("remember", {"text": "观察市场", "term": "short_term"})
-            tools.buy_crystal("C1")
-            return "准备汲取"
+            tools.buy_program("v1")
+            return "准备采集"
 
     async def scenario() -> dict[str, Any]:
         game = game_at_market()
@@ -60,9 +60,9 @@ def test_the_runner_logs_actions_memory_and_timestamps(tmp_path: Path) -> None:
     assert row["round"] == 1 and row["resident_name"] == "阿青"
     assert row["before"]["coins"] == 10000 and row["after"]["coins"] == 9400
     assert row["observation"]["long_term_notes"] == []
-    assert row["memory_after"]["long_term"][0]["text"] == "保留返程能量"
+    assert row["memory_after"]["long_term"][0]["text"] == "保留返程算力"
     assert row["memory_after"]["short_term"][0]["text"] == "观察市场"
-    assert row["outputs"] == ["准备汲取"]
+    assert row["outputs"] == ["准备采集"]
     assert row["calls"][-1]["coins_change"] == -600
     assert datetime.fromisoformat(row["started_at"]) <= datetime.fromisoformat(row["finished_at"])
     assert datetime.fromisoformat(row["calls"][0]["timestamp"]).tzinfo is not None

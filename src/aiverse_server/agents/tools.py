@@ -7,8 +7,8 @@ through `Game.remember` and `Game.forget`, so agents and pages go through the sa
 broadcasts.
 
 Leaving the game is not a tool: it gains a resident nothing, and a model could only do it by
-mistake. For the same reason no tool spends a resident's last energy, which would take them
-out as well: a call that would leave them none in hand is refused with `last_energy`.
+mistake. For the same reason no tool spends a resident's last compute, which would take them
+out as well: a call that would leave them none in hand is refused with `last_compute`.
 
 A tool's arguments come from a pydantic model, which both checks what a model sends and
 gives the JSON Schema a model is shown (`tool_specs`). `call` never raises for anything a
@@ -28,34 +28,34 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 
 from ..core.inventory import item_count
 from ..core.world import NOTE_LENGTH_LIMIT, Position, World
+from ..economy.compute import COMPUTE, COMPUTE_PER_UNIT, compute_total
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
-from ..economy.energy import ENERGY, ENERGY_PER_UNIT, energy_total
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
 from ..economy.market import pressure_at
 from ..game.actions import (
     Action,
     ActionRejected,
-    BuildTower,
-    BuyCrystal,
+    BuildCollector,
+    BuyProgram,
     CancelContract,
     CancelOrder,
     Deliver,
-    DigShards,
-    FundTower,
+    FundCollector,
+    GatherData,
     Harvest,
-    InstallCrystal,
+    InstallProgram,
     MoveTo,
     OfferInformation,
     OfferToBuy,
     OfferToSell,
     PlaceOrder,
     ProposeContract,
-    RefineCrystal,
-    RemoveCrystal,
+    RemoveProgram,
     RespondToEvent,
     Say,
-    SellEnergy,
+    SellCompute,
     WithdrawEvent,
+    WriteProgram,
     perform,
 )
 from ..game.lifecycle import GameError, total_coins
@@ -73,11 +73,11 @@ sales in that time do not lower it; later ones do, so a long round cannot sell a
 market left long ago."""
 
 # What a failed call reports: a rejection code from the game, or one of these.
-CALL_ERRORS = ("unknown_tool", "invalid_arguments", "last_energy")
+CALL_ERRORS = ("unknown_tool", "invalid_arguments", "last_compute")
 
 
-class _LastEnergy(Exception):
-    """A primitive would have left the resident no energy, taking them out of the game."""
+class _LastCompute(Exception):
+    """A primitive would have left the resident no compute, taking them out of the game."""
 
 
 class _Args(BaseModel):
@@ -97,40 +97,40 @@ class HarvestArgs(_Args):
     spring_id: str = Field(description="Id of the spring you stand at, such as s1.")
 
 
-class DigShardsArgs(_Args):
-    quarry_id: str = Field(description="Id of the quarry you stand at, such as q1.")
+class GatherDataArgs(_Args):
+    mine_id: str = Field(description="Id of the mine you stand at, such as m1.")
 
 
-class RefineCrystalArgs(_Args):
-    tier: str = Field(description="Crystal tier to refine: C1, C2 or C3.")
+class WriteProgramArgs(_Args):
+    tier: str = Field(description="Program tier to write: v1, v2 or v3.")
 
 
-class SellEnergyArgs(_Args):
-    quantity: StrictInt = Field(description="Energy to sell; you must stand at the market.")
+class SellComputeArgs(_Args):
+    quantity: StrictInt = Field(description="Compute to sell; you must stand at the market.")
 
 
-class BuyCrystalArgs(_Args):
-    tier: str = Field(description="Crystal tier: C1, C2 or C3.")
+class BuyProgramArgs(_Args):
+    tier: str = Field(description="Program tier: v1, v2 or v3.")
 
 
-class BuildTowerArgs(_Args):
-    spring_id: str = Field(description="Spring you stand at; build an automatic tower here.")
+class BuildCollectorArgs(_Args):
+    spring_id: str = Field(description="Spring you stand at; build an automatic collector here.")
 
 
-class InstallCrystalArgs(_Args):
-    tower_id: StrictInt
-    crystal: str = Field(description="Carried crystal tier to install: C1, C2 or C3.")
+class InstallProgramArgs(_Args):
+    collector_id: StrictInt
+    program: str = Field(description="Carried program tier to install: v1, v2 or v3.")
     deposit: StrictInt = Field(description="Coins to prepay for rent and upkeep; at least 1.")
 
 
-class FundTowerArgs(_Args):
-    tower_id: StrictInt
+class FundCollectorArgs(_Args):
+    collector_id: StrictInt
     slot_id: StrictInt
     amount: StrictInt = Field(description="Additional prepaid coins for your slot; at least 1.")
 
 
-class RemoveCrystalArgs(_Args):
-    tower_id: StrictInt
+class RemoveProgramArgs(_Args):
+    collector_id: StrictInt
     slot_id: StrictInt
 
 
@@ -145,14 +145,14 @@ class SayArgs(_Args):
 
 class OfferToBuyArgs(_Args):
     seller_id: str = Field(description="Resident id you buy from.")
-    kind: str = Field(description='Item kind: "energy", "shard" or a crystal tier like "C1".')
+    kind: str = Field(description='Item kind: "compute", "data" or a program tier like "v1".')
     quantity: StrictInt = Field(description="How many items.")
     price: StrictInt = Field(description="Coins for the whole lot, set aside until answered.")
 
 
 class OfferToSellArgs(_Args):
     buyer_id: str = Field(description="Resident id you sell to.")
-    kind: str = Field(description='Item kind: "energy", "shard" or a crystal tier like "C1".')
+    kind: str = Field(description='Item kind: "compute", "data" or a program tier like "v1".')
     quantity: StrictInt = Field(description="How many items, set aside until answered.")
     price: StrictInt = Field(description="Coins for the whole lot.")
 
@@ -173,7 +173,7 @@ class OfferInformationArgs(_Args):
 
 class PlaceOrderArgs(_Args):
     side: Literal["buy", "sell"]
-    item: str = Field(description='Item: "energy", "shard" or a crystal tier like "C1".')
+    item: str = Field(description='Item: "compute", "data" or a program tier like "v1".')
     quantity: StrictInt = Field(description=f"Units, 1 to {MAX_QUANTITY}.")
     price: StrictInt = Field(description=f"Coins per unit, 1 to {MAX_PRICE}.")
     expires_in: float = Field(
@@ -211,7 +211,7 @@ class ProposeContractArgs(_Args):
         "now; buyer: you pay for each delivery, and all your payments are set aside now."
     )
     kind: str = Field(
-        description='Item kind delivered: "energy", "shard" or a crystal tier like "C1".'
+        description='Item kind delivered: "compute", "data" or a program tier like "v1".'
     )
     quantity: StrictInt = Field(description="Items in each delivery.")
     price: StrictInt = Field(description="Coins the buyer pays for each delivery.")
@@ -277,13 +277,13 @@ class ToolResult:
 @dataclass(frozen=True)
 class ResourceBalance:
     coins: int
-    energy: int
+    compute: int
 
 
 def resource_balance(game: Game, resident_id: str) -> ResourceBalance:
     """Owned resources, including escrow; reserving coins is not a loss."""
     return ResourceBalance(
-        total_coins(game.world, resident_id), energy_total(game.world, resident_id)
+        total_coins(game.world, resident_id), compute_total(game.world, resident_id)
     )
 
 
@@ -296,7 +296,7 @@ class ToolCall:
     result: ToolResult
     time: float = 0.0
     coins_change: int = 0
-    energy_change: int = 0
+    compute_change: int = 0
     timestamp: str | None = None
 
 
@@ -334,65 +334,66 @@ def _without_titles(schema: Any) -> Any:
 
 TOOLS = (
     ToolSpec(
-        "build_tower",
-        "Build a tower at your spring for coins; it needs installed crystals.",
-        BuildTowerArgs,
+        "build_collector",
+        "Build a collector at your spring for coins; it needs installed programs.",
+        BuildCollectorArgs,
     ),
     ToolSpec(
-        "install_crystal",
-        "Install your crystal at a tower you stand at; prepay rent and upkeep, then move freely.",
-        InstallCrystalArgs,
+        "install_program",
+        "Install your program at a collector you stand at; prepay rent and upkeep, then move "
+        "freely.",
+        InstallProgramArgs,
     ),
     ToolSpec(
-        "fund_tower",
+        "fund_collector",
         "Remotely top up your slot. An unfunded slot pauses without debt or catch-up.",
-        FundTowerArgs,
+        FundCollectorArgs,
     ),
     ToolSpec(
-        "remove_crystal",
-        "Remotely remove your crystal and refund unused prepayment.",
-        RemoveCrystalArgs,
+        "remove_program",
+        "Remotely remove your program and refund unused prepayment.",
+        RemoveProgramArgs,
     ),
     ToolSpec(
         "move_to",
         "Walk in a straight line to a point. Costs "
-        f"{ENERGY_PER_UNIT:g} energy per map unit, rounded up per walk, paid on setting off; "
+        f"{COMPUTE_PER_UNIT:g} compute per map unit, rounded up per walk, paid on setting off; "
         "you are busy until you arrive.",
         MoveToArgs,
     ),
     ToolSpec(
         "harvest",
-        "Harvest the spring you stand at with the best crystal you carry; the energy arrives "
+        "Harvest the spring you stand at with the best program you carry; the compute arrives "
         "when the job ends and you are busy until then.",
         HarvestArgs,
     ),
     ToolSpec(
-        "dig_shards",
-        "Dig shards at the quarry you stand at; no crystal needed. The shards arrive when the "
+        "gather_data",
+        "Gather data at the mine you stand at; no program needed. The data arrives when the "
         "job ends and you are busy until then.",
-        DigShardsArgs,
+        GatherDataArgs,
     ),
     ToolSpec(
-        "refine_crystal",
-        "Refine one crystal at the workshop you stand at: its recipe's shards, energy and, above "
-        "C1, one crystal of the tier below are spent at once; the crystal arrives when the job "
+        "write_program",
+        "Write one program at the studio you stand at: its recipe's data, compute and, above "
+        "v1, one program of the tier below are spent at once; the program arrives when the job "
         "ends and you are busy until then.",
-        RefineCrystalArgs,
+        WriteProgramArgs,
     ),
     ToolSpec(
-        "sell_energy",
-        "Sell carried energy to the market for coins at the market price, which falls the more "
+        "sell_compute",
+        "Sell carried compute to the market for coins at the market price, which falls the more "
         f"is sold. Others' sales in the {PRICE_HOLD_SECONDS:g} seconds after your round began do "
-        "not lower it. Keep at least 1 energy: selling your last is refused.",
-        SellEnergyArgs,
+        "not lower it. Keep at least 1 compute: selling your last is refused.",
+        SellComputeArgs,
     ),
     ToolSpec(
-        "buy_crystal", "Buy one crystal at the market for its fixed price in coins.", BuyCrystalArgs
+        "buy_program", "Buy one program at the market for its fixed price in coins.", BuyProgramArgs
     ),
     ToolSpec(
         "say",
         "Say something aloud to residents nearby, or whisper to one resident anywhere. Costs "
-        "energy.",
+        "compute.",
         SayArgs,
     ),
     ToolSpec(
@@ -522,7 +523,7 @@ class ResidentTools:
                 result,
                 time,
                 after.coins - before.coins,
-                after.energy - before.energy,
+                after.compute - before.compute,
                 timestamp,
             )
         )
@@ -534,14 +535,14 @@ class ResidentTools:
     def harvest(self, spring_id: str) -> ToolResult:
         return self.call("harvest", {"spring_id": spring_id})
 
-    def sell_energy(self, quantity: int) -> ToolResult:
-        return self.call("sell_energy", {"quantity": quantity})
+    def sell_compute(self, quantity: int) -> ToolResult:
+        return self.call("sell_compute", {"quantity": quantity})
 
-    def dig_shards(self, quarry_id: str) -> ToolResult:
-        return self.call("dig_shards", {"quarry_id": quarry_id})
+    def gather_data(self, mine_id: str) -> ToolResult:
+        return self.call("gather_data", {"mine_id": mine_id})
 
-    def refine_crystal(self, tier: str) -> ToolResult:
-        return self.call("refine_crystal", {"tier": tier})
+    def write_program(self, tier: str) -> ToolResult:
+        return self.call("write_program", {"tier": tier})
 
     def place_order(
         self, side: str, item: str, quantity: int, price: int, expires_in: float = DEFAULT_LIFETIME
@@ -552,8 +553,8 @@ class ResidentTools:
     def cancel_order(self, order_id: int) -> ToolResult:
         return self.call("cancel_order", {"order_id": order_id})
 
-    def buy_crystal(self, tier: str) -> ToolResult:
-        return self.call("buy_crystal", {"tier": tier})
+    def buy_program(self, tier: str) -> ToolResult:
+        return self.call("buy_program", {"tier": tier})
 
     def say(self, text: str, to: str | None = None) -> ToolResult:
         return self.call("say", {"text": text} if to is None else {"text": text, "to": to})
@@ -602,13 +603,13 @@ class ResidentTools:
             message = self._run(args)
         except ActionRejected as rejection:
             return ToolResult(False, rejection.code, rejection.message, self.status())
-        except _LastEnergy:
+        except _LastCompute:
             return ToolResult(
                 False,
-                "last_energy",
-                "that would leave you no energy in hand (energy set aside in offers or sell "
+                "last_compute",
+                "that would leave you no compute in hand (compute set aside in offers or sell "
                 "orders does not count) and could take you out of the game; keep at least 1 "
-                "energy",
+                "compute",
                 self.status(),
             )
         except (GameError, NoteError) as error:
@@ -620,37 +621,40 @@ class ResidentTools:
         me = self.resident_id
         act = self._act
         match args:
-            case BuildTowerArgs():
+            case BuildCollectorArgs():
                 self._require_known_spring(args.spring_id)
-                act(BuildTower(me, args.spring_id))
-                # Towers are numbered as they are built; the model needs the number to install.
-                tower_id = self.game.world.next_tower_id - 1
-                return f"built tower {tower_id}; install crystals into it with tower_id {tower_id}"
-            case InstallCrystalArgs():
-                self._require_known_tower(args.tower_id)
-                act(InstallCrystal(me, args.tower_id, args.crystal, args.deposit))
-            case FundTowerArgs():
-                self._require_known_tower(args.tower_id)
-                act(FundTower(me, args.tower_id, args.slot_id, args.amount))
-            case RemoveCrystalArgs():
-                self._require_known_tower(args.tower_id)
-                act(RemoveCrystal(me, args.tower_id, args.slot_id))
+                act(BuildCollector(me, args.spring_id))
+                # Collectors are numbered as they are built; the model needs the number to install.
+                collector_id = self.game.world.next_collector_id - 1
+                return (
+                    f"built collector {collector_id}; install programs into it with "
+                    f"collector_id {collector_id}"
+                )
+            case InstallProgramArgs():
+                self._require_known_collector(args.collector_id)
+                act(InstallProgram(me, args.collector_id, args.program, args.deposit))
+            case FundCollectorArgs():
+                self._require_known_collector(args.collector_id)
+                act(FundCollector(me, args.collector_id, args.slot_id, args.amount))
+            case RemoveProgramArgs():
+                self._require_known_collector(args.collector_id)
+                act(RemoveProgram(me, args.collector_id, args.slot_id))
             case MoveToArgs():
                 act(MoveTo(me, Position(args.x, args.y)))
             case HarvestArgs():
                 self._require_known_spring(args.spring_id)
                 act(Harvest(me, args.spring_id))
-            case DigShardsArgs():
-                act(DigShards(me, args.quarry_id))
-            case RefineCrystalArgs():
-                act(RefineCrystal(me, args.tier))
-            case SellEnergyArgs():
+            case GatherDataArgs():
+                act(GatherData(me, args.mine_id))
+            case WriteProgramArgs():
+                act(WriteProgram(me, args.tier))
+            case SellComputeArgs():
                 held = (
                     self.seen_pressure
                     if self.game.world.time - self.seen_at <= PRICE_HOLD_SECONDS
                     else None
                 )
-                act(SellEnergy(me, args.quantity, held))
+                act(SellCompute(me, args.quantity, held))
                 market = self.game.world.market
                 if held is not None and market is not None:
                     # The resident's own sale weighs on their next one, as it does on others'.
@@ -658,8 +662,8 @@ class ResidentTools:
                         pressure_at(market, self.game.world.time),
                         held + args.quantity,
                     )
-            case BuyCrystalArgs():
-                act(BuyCrystal(me, args.tier))
+            case BuyProgramArgs():
+                act(BuyProgram(me, args.tier))
             case SayArgs():
                 act(Say(me, args.text, args.to))
             case OfferToBuyArgs():
@@ -717,25 +721,27 @@ class ResidentTools:
         if spring_id not in known | springs_in_sight(world, self.resident_id):
             raise ActionRejected("unknown_spring", "unknown spring")
 
-    def _require_known_tower(self, tower_id: int) -> None:
-        """Refuse a tower the resident cannot know of, see `observation.known_slots`, as if it
-        did not exist, so that asking for ids does not turn up towers or the springs they stand
+    def _require_known_collector(self, collector_id: int) -> None:
+        """Refuse a collector the resident cannot know of, see `observation.known_slots`, as if it
+        did not exist, so that asking for ids does not turn up collectors or the springs they stand
         on."""
         world = self.game.world
         in_sight = springs_in_sight(world, self.resident_id)
-        tower = next((tower for tower in world.towers if tower.id == tower_id), None)
-        if tower is None or known_slots(tower, self.resident_id, in_sight) is None:
-            raise ActionRejected("unknown_tower", "unknown tower")
+        collector = next(
+            (collector for collector in world.collectors if collector.id == collector_id), None
+        )
+        if collector is None or known_slots(collector, self.resident_id, in_sight) is None:
+            raise ActionRejected("unknown_collector", "unknown collector")
 
     def _act(self, action: Action) -> None:
         """Carry out a primitive as `Game.act` does, unless it would spend the resident's last
-        energy. Raises `ActionRejected` or `_LastEnergy`, leaving the world as it was."""
+        compute. Raises `ActionRejected` or `_LastCompute`, leaving the world as it was."""
         self.game.tick()
         before = self.game.world
         after = perform(before, action)
         me = self.resident_id
-        if _energy_in_hand(before, me) > 0 and _energy_in_hand(after, me) == 0:
-            raise _LastEnergy
+        if _compute_in_hand(before, me) > 0 and _compute_in_hand(after, me) == 0:
+            raise _LastCompute
         self.game.commit(after)
 
     def status(self) -> dict[str, Any]:
@@ -743,8 +749,8 @@ class ResidentTools:
         world = self.game.world
         me = next(resident for resident in world.residents if resident.id == self.resident_id)
         items = me.inventory.counts()
-        energy = items.pop(ENERGY, 0)
-        shown: dict[str, Any] = {"coins": me.coins, "energy": energy, "items": items}
+        compute = items.pop(COMPUTE, 0)
+        shown: dict[str, Any] = {"coins": me.coins, "compute": compute, "items": items}
         if me.walking is not None:
             target = me.walking.target
             shown["walking_to"] = {"x": round(target.x, 1), "y": round(target.y, 1)}
@@ -752,12 +758,12 @@ class ResidentTools:
         if me.harvesting is not None:
             shown["harvesting_spring"] = me.harvesting.spring_id
             shown["harvesting_done_in"] = round(max(me.harvesting.ends_at - world.time, 0.0), 1)
-        if me.digging is not None:
-            shown["digging_quarry"] = me.digging.quarry_id
-            shown["digging_done_in"] = round(max(me.digging.ends_at - world.time, 0.0), 1)
-        if me.refining is not None:
-            shown["refining_crystal"] = me.refining.tier
-            shown["refining_done_in"] = round(max(me.refining.ends_at - world.time, 0.0), 1)
+        if me.gathering is not None:
+            shown["gathering_mine"] = me.gathering.mine_id
+            shown["gathering_done_in"] = round(max(me.gathering.ends_at - world.time, 0.0), 1)
+        if me.writing is not None:
+            shown["writing_program"] = me.writing.tier
+            shown["writing_done_in"] = round(max(me.writing.ends_at - world.time, 0.0), 1)
         if me.left:
             shown["left_game"] = True
         if world.ended:
@@ -779,9 +785,9 @@ def _order_outcome(world: World, order_id: int, first_fill: int) -> str:
     return "; ".join(parts)
 
 
-def _energy_in_hand(world: World, resident_id: str) -> int:
-    """Energy the resident carries or is drawing, so can still spend; energy set aside in
+def _compute_in_hand(world: World, resident_id: str) -> int:
+    """Compute the resident carries or is drawing, so can still spend; compute set aside in
     a sale offer is not, since the buyer may take it."""
     resident = next(resident for resident in world.residents if resident.id == resident_id)
     harvested = resident.harvesting.amount if resident.harvesting is not None else 0
-    return item_count(world, resident_id, ENERGY) + harvested
+    return item_count(world, resident_id, COMPUTE) + harvested

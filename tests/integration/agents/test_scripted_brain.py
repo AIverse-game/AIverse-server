@@ -4,7 +4,7 @@ from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.scripted_brain import ScriptedBrain
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.world import Resident
-from aiverse_server.economy.crystals import CRYSTAL_TIERS
+from aiverse_server.economy.programs import PROGRAM_TIERS
 from aiverse_server.game.clock import next_due
 from aiverse_server.game.layout import STARTING_COINS, create_default_world
 from aiverse_server.server.app import Game
@@ -43,11 +43,11 @@ def test_the_scripted_bot_earns_coins_on_the_default_map() -> None:
             due = next_due(game.world)
             clock.now = min(due if due is not None else clock.now + 5, 600)
             game.tick()
-        # Every bot bought a crystal, harvested and sold; whether crystals pay off is a matter of
+        # Every bot bought a program, harvested and sold; whether programs pay off is a matter of
         # tuning, see docs/status.md in the client repository.
         assert all(not resident.left for resident in game.world.residents)
         assert all(
-            any(resident.inventory.count(crystal.tier) for crystal in CRYSTAL_TIERS)
+            any(resident.inventory.count(program.tier) for program in PROGRAM_TIERS)
             for resident in game.world.residents
         )
         assert sum(spring.reserve for spring in game.world.springs) < sum(

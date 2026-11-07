@@ -1,4 +1,4 @@
-"""Digging shards and refining crystals sent by a page over the socket."""
+"""Gathering data and writing programs sent by a page over the socket."""
 
 from typing import Any
 
@@ -7,27 +7,27 @@ from fastapi.testclient import TestClient
 
 from aiverse_server.core.world import (
     Inventory,
+    Mine,
     Position,
-    Quarry,
     Resident,
-    Workshop,
+    Studio,
     World,
     WorldMap,
 )
-from aiverse_server.economy.energy import ENERGY
-from aiverse_server.economy.shards import SHARD
+from aiverse_server.economy.compute import COMPUTE
+from aiverse_server.economy.gathering import DATA
 from aiverse_server.server.app import create_app
 from aiverse_server.server.protocol import PROTOCOL_VERSION
 
-# a stands at the quarry, b at the workshop with the shards and energy for a C1.
+# a stands at the mine, b at the studio with the data and compute for a v1.
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(20, 20), Inventory(((ENERGY, 100),))),
-        Resident("b", "乙", "#445566", Position(70, 70), Inventory(((ENERGY, 100), (SHARD, 5)))),
+        Resident("a", "甲", "#112233", Position(20, 20), Inventory(((COMPUTE, 100),))),
+        Resident("b", "乙", "#445566", Position(70, 70), Inventory(((COMPUTE, 100), (DATA, 5)))),
     ),
-    quarries=(Quarry("q1", Position(20, 20), 4, 300),),
-    workshop=Workshop(Position(70, 70), 5),
+    mines=(Mine("m1", Position(20, 20), 4, 300),),
+    studio=Studio(Position(70, 70), 5),
 )
 
 
@@ -40,7 +40,7 @@ def resident(world: dict[str, Any], resident_id: str) -> dict[str, Any]:
     return next(r for r in world["residents"] if r["id"] == resident_id)
 
 
-def test_a_page_digs_shards_and_refines_a_crystal() -> None:
+def test_a_page_gathers_data_and_writes_a_program() -> None:
     now = [0.0]
     with (
         TestClient(create_app(WORLD, clock=lambda: now[0])) as client,
@@ -49,31 +49,31 @@ def test_a_page_digs_shards_and_refines_a_crystal() -> None:
         ws.send_json({"type": "hello", "protocolVersion": PROTOCOL_VERSION})
         ws.receive_json()
         ws.receive_json()
-        dug = send(ws, {"type": "dig_shards", "residentId": "a", "quarryId": "q1"})
-        digging = resident(ws.receive_json()["world"], "a")
-        refined = send(ws, {"type": "refine_crystal", "residentId": "b", "tier": "C1"})
-        refining = resident(ws.receive_json()["world"], "b")
+        gathered = send(ws, {"type": "gather_data", "residentId": "a", "mineId": "m1"})
+        gathering = resident(ws.receive_json()["world"], "a")
+        written = send(ws, {"type": "write_program", "residentId": "b", "tier": "v1"})
+        writing = resident(ws.receive_json()["world"], "b")
         now[0] = 15
         ws.send_json({"type": "view_as", "residentId": None})
         done = ws.receive_json()["world"]
 
-    assert (dug["ok"], refined["ok"]) == (True, True)
-    assert digging["digging"]["quarryId"] == "q1"
-    assert refining["refining"]["tier"] == "C1"
-    assert (resident(done, "a")["shards"], resident(done, "b")["crystals"]) == (6, {"C1": 1})
-    assert resident(done, "b")["crystalsRefined"] == 1
+    assert (gathered["ok"], written["ok"]) == (True, True)
+    assert gathering["gathering"]["mineId"] == "m1"
+    assert writing["writing"]["tier"] == "v1"
+    assert (resident(done, "a")["data"], resident(done, "b")["programs"]) == (6, {"v1": 1})
+    assert resident(done, "b")["programsWritten"] == 1
 
 
 @pytest.mark.parametrize(
     ("action", "code"),
     [
-        ({"type": "dig_shards", "residentId": "b", "quarryId": "q1"}, "not_at_quarry"),
-        ({"type": "refine_crystal", "residentId": "a", "tier": "C1"}, "not_at_workshop"),
-        ({"type": "refine_crystal", "residentId": "b", "tier": "C2"}, "not_enough_shards"),
+        ({"type": "gather_data", "residentId": "b", "mineId": "m1"}, "not_at_mine"),
+        ({"type": "write_program", "residentId": "a", "tier": "v1"}, "not_at_studio"),
+        ({"type": "write_program", "residentId": "b", "tier": "v2"}, "not_enough_data"),
     ],
-    ids=["dig_away", "refine_away", "refine_short"],
+    ids=["gather_away", "write_away", "write_short"],
 )
-def test_dig_and_refine_rejections_reach_the_sender(action: dict[str, Any], code: str) -> None:
+def test_gather_and_write_rejections_reach_the_sender(action: dict[str, Any], code: str) -> None:
     with (
         TestClient(create_app(WORLD, clock=lambda: 0.0)) as client,
         client.websocket_connect("/ws") as ws,
@@ -87,7 +87,7 @@ def test_dig_and_refine_rejections_reach_the_sender(action: dict[str, Any], code
     assert (reply["ok"], reply["code"]) == (False, code)
 
 
-def test_a_dig_without_a_quarry_id_gets_a_bounded_error() -> None:
+def test_a_gather_without_a_mine_id_gets_a_bounded_error() -> None:
     with (
         TestClient(create_app(WORLD, clock=lambda: 0.0)) as client,
         client.websocket_connect("/ws") as ws,
@@ -96,6 +96,6 @@ def test_a_dig_without_a_quarry_id_gets_a_bounded_error() -> None:
         ws.receive_json()
         ws.receive_json()
 
-        reply = send(ws, {"type": "dig_shards", "residentId": "a"})
+        reply = send(ws, {"type": "gather_data", "residentId": "a"})
 
     assert (reply["type"], reply["code"]) == ("error", "bad_message")

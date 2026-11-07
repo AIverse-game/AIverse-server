@@ -4,7 +4,7 @@ Each round the runner calls `Game.begin_turn`, turns the perception into an obse
 hands it, with tools bound to the resident, to the brain. Then it sleeps until one of these
 happens, see decision 0003 in the client repository:
 
-- the resident stops being busy: a walk or a harvesting, digging or refining job has ended;
+- the resident stops being busy: a walk or a harvesting, gathering or writing job has ended;
 - while free, an offer arrives for them, a contract of theirs ends other than by their
   own doing, such as the supplier's last delivery or the contract lapsing, or someone else's
   order fills one of theirs resting on the exchange;

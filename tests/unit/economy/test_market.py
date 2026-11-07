@@ -16,7 +16,7 @@ from aiverse_server.core.world import (
     World,
     WorldMap,
 )
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.economy.market import (
     MARKET_BASE_PRICE,
     MARKET_DEPTH,
@@ -36,7 +36,7 @@ from aiverse_server.game.actions import (
     ActionRejected,
     LeaveGame,
     OfferToSell,
-    SellEnergy,
+    SellCompute,
     perform,
 )
 from aiverse_server.game.clock import settle_due
@@ -45,13 +45,13 @@ from aiverse_server.game.lifecycle import end_game
 from aiverse_server.residents.perception import begin_turn
 
 
-def resident(resident_id: str, x: float, y: float, energy: int = 500) -> Resident:
+def resident(resident_id: str, x: float, y: float, compute: int = 500) -> Resident:
     return Resident(
         id=resident_id,
         name=resident_id,
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((ENERGY, energy),)),
+        inventory=Inventory(((COMPUTE, compute),)),
         coins=100,
     )
 
@@ -72,11 +72,11 @@ def coins(world: World, resident_id: str) -> int:
 
 
 def test_selling_pays_the_price_summed_over_the_sale() -> None:
-    world = perform(WORLD, SellEnergy("a", 30))
+    world = perform(WORLD, SellCompute("a", 30))
     expected = math.floor(MARKET_BASE_PRICE * MARKET_DEPTH * math.log(430 / 400))
     assert expected == 578
     assert coins(world, "a") == 100 + expected
-    assert item_count(world, "a", ENERGY) == 470
+    assert item_count(world, "a", COMPUTE) == 470
     assert world.market is not None
     assert (world.market.pressure, world.market.pressure_at) == (30, 7.0)
 
@@ -84,7 +84,7 @@ def test_selling_pays_the_price_summed_over_the_sale() -> None:
 def test_the_price_falls_with_sales_and_recovers_with_time() -> None:
     assert unit_price(WORLD.market, 7.0) == MARKET_BASE_PRICE  # type: ignore[arg-type]
 
-    world = perform(WORLD, SellEnergy("a", 400))
+    world = perform(WORLD, SellCompute("a", 400))
 
     market = world.market
     assert market is not None
@@ -109,9 +109,9 @@ def test_a_market_nobody_sells_to_pays_more_than_the_base_price_up_to_its_top() 
 
 
 def test_a_later_sale_starts_from_the_faded_pressure() -> None:
-    world = perform(WORLD, SellEnergy("a", 400))
+    world = perform(WORLD, SellCompute("a", 400))
 
-    later = perform(replace(world, time=7.0 + MARKET_HALF_LIFE), SellEnergy("b", 10))
+    later = perform(replace(world, time=7.0 + MARKET_HALF_LIFE), SellCompute("b", 10))
 
     assert later.market is not None
     assert later.market.pressure == pytest.approx(110)
@@ -119,15 +119,15 @@ def test_a_later_sale_starts_from_the_faded_pressure() -> None:
 
 
 def test_one_seller_lowers_the_price_for_everyone() -> None:
-    alone = perform(WORLD, SellEnergy("b", 50))
-    after = perform(perform(WORLD, SellEnergy("a", 100)), SellEnergy("b", 50))
+    alone = perform(WORLD, SellCompute("b", 50))
+    after = perform(perform(WORLD, SellCompute("a", 100)), SellCompute("b", 50))
     assert coins(after, "b") < coins(alone, "b")
 
 
 def test_a_seller_is_paid_the_price_they_saw_whatever_others_sold_since() -> None:
-    after_others = perform(WORLD, SellEnergy("b", 100))
+    after_others = perform(WORLD, SellCompute("b", 100))
 
-    world = perform(after_others, SellEnergy("a", 30, seen_pressure=0.0))
+    world = perform(after_others, SellCompute("a", 30, seen_pressure=0.0))
 
     assert coins(world, "a") == 100 + 578
     assert world.market is not None
@@ -135,17 +135,17 @@ def test_a_seller_is_paid_the_price_they_saw_whatever_others_sold_since() -> Non
 
 
 def test_a_price_that_recovered_since_the_seller_looked_is_paid_in_full() -> None:
-    world = perform(WORLD, SellEnergy("a", 30, seen_pressure=100.0))
+    world = perform(WORLD, SellCompute("a", 30, seen_pressure=100.0))
 
     assert coins(world, "a") == 100 + 578
 
 
 @pytest.mark.parametrize("parts", [[1] * 40, [10, 10, 10, 10], [7, 33], [39, 1]])
 def test_splitting_a_sale_earns_no_more_than_selling_at_once(parts: list[int]) -> None:
-    at_once = coins(perform(WORLD, SellEnergy("a", sum(parts))), "a")
+    at_once = coins(perform(WORLD, SellCompute("a", sum(parts))), "a")
     world = WORLD
     for part in parts:
-        world = perform(world, SellEnergy("a", part))
+        world = perform(world, SellCompute("a", part))
     split = coins(world, "a")
     assert split <= at_once
     # Only rounding each part down separates the two.
@@ -153,35 +153,35 @@ def test_splitting_a_sale_earns_no_more_than_selling_at_once(parts: list[int]) -
 
 
 def test_waiting_for_the_price_to_recover_pays_more() -> None:
-    hasty = perform(perform(WORLD, SellEnergy("a", 100)), SellEnergy("a", 100))
-    world = perform(WORLD, SellEnergy("a", 100))
-    patient = perform(replace(world, time=7.0 + 3 * MARKET_HALF_LIFE), SellEnergy("a", 100))
+    hasty = perform(perform(WORLD, SellCompute("a", 100)), SellCompute("a", 100))
+    world = perform(WORLD, SellCompute("a", 100))
+    patient = perform(replace(world, time=7.0 + 3 * MARKET_HALF_LIFE), SellCompute("a", 100))
     assert coins(patient, "a") > coins(hasty, "a")
 
 
 def test_the_edge_of_the_radius_is_within_reach() -> None:
     world = replace(WORLD, residents=(resident("a", 55, 50),))
-    assert coins(perform(world, SellEnergy("a", 1)), "a") > 100
+    assert coins(perform(world, SellCompute("a", 1)), "a") > 100
 
 
 @pytest.mark.parametrize(
     ("world", "action", "code"),
     [
-        (WORLD, SellEnergy("c", 1), "not_at_market"),
-        (replace(WORLD, market=None), SellEnergy("a", 1), "not_at_market"),
-        (WORLD, SellEnergy("a", 0), "invalid_quantity"),
-        (WORLD, SellEnergy("a", -3), "invalid_quantity"),
-        (WORLD, SellEnergy("a", True), "invalid_quantity"),
-        (WORLD, SellEnergy("a", 1.0), "invalid_quantity"),  # type: ignore[arg-type]
-        (WORLD, SellEnergy("a", 501), "not_enough_energy"),
-        (WORLD, SellEnergy("a", 10**400), "not_enough_energy"),
-        (WORLD, SellEnergy("nobody", 1), "unknown_resident"),
-        (end_game(WORLD), SellEnergy("a", 1), "game_over"),
-        (perform(WORLD, LeaveGame("a")), SellEnergy("a", 1), "resident_left"),
+        (WORLD, SellCompute("c", 1), "not_at_market"),
+        (replace(WORLD, market=None), SellCompute("a", 1), "not_at_market"),
+        (WORLD, SellCompute("a", 0), "invalid_quantity"),
+        (WORLD, SellCompute("a", -3), "invalid_quantity"),
+        (WORLD, SellCompute("a", True), "invalid_quantity"),
+        (WORLD, SellCompute("a", 1.0), "invalid_quantity"),  # type: ignore[arg-type]
+        (WORLD, SellCompute("a", 501), "not_enough_compute"),
+        (WORLD, SellCompute("a", 10**400), "not_enough_compute"),
+        (WORLD, SellCompute("nobody", 1), "unknown_resident"),
+        (end_game(WORLD), SellCompute("a", 1), "game_over"),
+        (perform(WORLD, LeaveGame("a")), SellCompute("a", 1), "resident_left"),
     ],
 )
 def test_sales_that_cannot_go_through_change_nothing(
-    world: World, action: SellEnergy, code: str
+    world: World, action: SellCompute, code: str
 ) -> None:
     with pytest.raises(ActionRejected) as raised:
         perform(world, action)
@@ -192,23 +192,23 @@ def test_a_sale_worth_less_than_a_coin_is_refused() -> None:
     crowded = replace(WORLD, market=Market(Position(50, 50), 5, pressure=10**6, pressure_at=7.0))
     assert quote(crowded.market, 7.0, 1) == 0  # type: ignore[arg-type]
     with pytest.raises(ActionRejected) as raised:
-        perform(crowded, SellEnergy("a", 1))
+        perform(crowded, SellCompute("a", 1))
     assert raised.value.code == "price_too_low"
 
 
-def test_energy_set_aside_in_an_offer_cannot_be_sold() -> None:
-    world = perform(WORLD, OfferToSell("a", "b", ENERGY, 450, 1))
+def test_compute_set_aside_in_an_offer_cannot_be_sold() -> None:
+    world = perform(WORLD, OfferToSell("a", "b", COMPUTE, 450, 1))
 
     with pytest.raises(ActionRejected) as raised:
-        perform(world, SellEnergy("a", 51))
+        perform(world, SellCompute("a", 51))
 
-    assert raised.value.code == "not_enough_energy"
+    assert raised.value.code == "not_enough_compute"
 
 
-def test_selling_all_energy_carried_keeps_a_seller_with_energy_in_an_offer_in_the_game() -> None:
-    world = perform(WORLD, OfferToSell("a", "b", ENERGY, 450, 1))
+def test_selling_all_compute_carried_keeps_a_seller_with_compute_in_an_offer_in_the_game() -> None:
+    world = perform(WORLD, OfferToSell("a", "b", COMPUTE, 450, 1))
 
-    sold = perform(world, SellEnergy("a", 50))
+    sold = perform(world, SellCompute("a", 50))
 
     assert not sold.residents[0].left
 
@@ -219,26 +219,26 @@ def test_a_busy_resident_cannot_sell() -> None:
         residents=(
             replace(
                 WORLD.residents[0],
-                harvesting=HarvestJob("p1", 20, 5, "C1"),
-                inventory=Inventory(((ENERGY, 500), ("C1", 1))),
+                harvesting=HarvestJob("p1", 20, 5, "v1"),
+                inventory=Inventory(((COMPUTE, 500), ("v1", 1))),
             ),
         ),
     )
     with pytest.raises(ActionRejected) as raised:
-        perform(world, SellEnergy("a", 1))
+        perform(world, SellCompute("a", 1))
     assert raised.value.code == "busy"
 
 
-def test_selling_all_energy_owned_takes_the_seller_out_with_the_coins() -> None:
-    world = perform(WORLD, SellEnergy("a", 500))
+def test_selling_all_compute_owned_takes_the_seller_out_with_the_coins() -> None:
+    world = perform(WORLD, SellCompute("a", 500))
     a = world.residents[0]
     assert a.left
     assert a.coins == 100 + quote(WORLD.market, 7.0, 500)  # type: ignore[arg-type]
-    assert item_count(world, "a", ENERGY) == 0
+    assert item_count(world, "a", COMPUTE) == 0
 
 
 def test_perception_shows_the_market_and_its_price_from_anywhere() -> None:
-    world = perform(WORLD, SellEnergy("a", 100))
+    world = perform(WORLD, SellCompute("a", 100))
 
     _, seen = begin_turn(replace(world, time=7.0 + MARKET_HALF_LIFE), "c")
 
@@ -335,7 +335,7 @@ def history(world: World) -> list[tuple[float, float]]:
 def test_a_sale_notes_the_price_before_and_after_it_as_a_step() -> None:
     later = replace(NOTED, time=8.0)
 
-    sold = perform(later, SellEnergy("a", 400))
+    sold = perform(later, SellCompute("a", 400))
 
     # The pressure has drifted a little below zero by 8 s, so the price before the sale is a
     # touch above the base price; the sale of the depth then halves it.
@@ -349,9 +349,9 @@ def test_a_sale_notes_the_price_before_and_after_it_as_a_step() -> None:
 
 
 def test_sales_at_the_same_instant_share_one_step() -> None:
-    first = perform(NOTED, SellEnergy("a", 100))
+    first = perform(NOTED, SellCompute("a", 100))
 
-    second = perform(first, SellEnergy("b", 100))
+    second = perform(first, SellCompute("b", 100))
 
     # The price before the first sale (at 7 s) is the same as the one already noted.
     assert history(second) == [
@@ -368,7 +368,7 @@ def test_a_market_without_history_is_not_sampled() -> None:
 
 
 def test_a_market_without_history_keeps_none_through_a_sale() -> None:
-    sold = perform(WORLD, SellEnergy("a", 100))
+    sold = perform(WORLD, SellCompute("a", 100))
 
     assert history(sold) == []
     assert next_sample(sold) is None

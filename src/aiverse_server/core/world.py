@@ -11,10 +11,10 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .collectors import Collector
 from .events import EventQueue
 from .ledger import Ledger
 from .orders import OrderBook
-from .towers import Tower
 
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 
@@ -64,11 +64,11 @@ class HarvestJob:
 
     spring_id: str
     ends_at: float
-    """Game time when the energy is paid out, see `World.time`."""
+    """Game time when the compute is paid out, see `World.time`."""
     amount: int
-    """Energy taken out of the spring when the job started, paid to the harvester when it ends."""
-    crystal: str
-    """Tier of the crystal doing the work, see `crystals.py`; the harvester holds it until the job
+    """Compute taken out of the spring when the job started, paid to the harvester when it ends."""
+    program: str
+    """Tier of the program doing the work, see `programs.py`; the harvester holds it until the job
     ends."""
 
 
@@ -84,24 +84,24 @@ class WalkJob:
 
 
 @dataclass(frozen=True)
-class DigJob:
-    """A resident digging shards at a quarry, see `shards.py`; they can do nothing else until
+class GatherJob:
+    """A resident gathering data at a mine, see `gathering.py`; they can do nothing else until
     it ends."""
 
-    quarry_id: str
+    mine_id: str
     ends_at: float
-    """Game time when the shards are paid out, see `World.time`."""
+    """Game time when the data are paid out, see `World.time`."""
     amount: int
-    """Shards taken out of the quarry when the job started, paid to the digger when it ends."""
+    """Data taken out of the mine when the job started, paid to the gatherer when it ends."""
 
 
 @dataclass(frozen=True)
-class RefineJob:
-    """A resident refining a crystal at the workshop, see `workshop.py`; the materials were
+class WriteJob:
+    """A resident writing a program at the studio, see `studio.py`; the materials were
     spent when it started, and they can do nothing else until it ends."""
 
     tier: str
-    """Tier of the crystal they get when it ends."""
+    """Tier of the program they get when it ends."""
     ends_at: float
 
 
@@ -113,7 +113,7 @@ class SpringSighting:
     position: Position
     radius: float
     reserve: int
-    """Energy left when it was seen; the spring may hold fewer by now."""
+    """Compute left when it was seen; the spring may hold fewer by now."""
     seen_at: float
     """Game time of the sighting, see `World.time`."""
 
@@ -516,17 +516,17 @@ class Resident:
     harvesting: HarvestJob | None = None
     walking: WalkJob | None = None
     """On the way somewhere: `position` is where they set off, see `walking.position_at`."""
-    digging: DigJob | None = None
-    refining: RefineJob | None = None
-    crystals_refined: int = 0
-    """Crystals they have refined this game, which makes them refine faster and is public, see
-    `workshop.py`."""
+    gathering: GatherJob | None = None
+    writing: WriteJob | None = None
+    programs_written: int = 0
+    """Programs they have written this game, which makes them write faster and is public, see
+    `studio.py`."""
     memory: Memory = Memory()
 
     @property
     def busy(self) -> bool:
         """In the middle of a walk or a job: they can do nothing but talk or leave."""
-        jobs = (self.harvesting, self.walking, self.digging, self.refining)
+        jobs = (self.harvesting, self.walking, self.gathering, self.writing)
         return any(job is not None for job in jobs)
 
     def __post_init__(self) -> None:
@@ -542,27 +542,27 @@ class Resident:
                 raise ValueError(f"resident {self.id} left the game but is still harvesting")
             if type(self.harvesting.amount) is not int or self.harvesting.amount < 1:
                 raise ValueError(
-                    f"resident {self.id} is harvesting {self.harvesting.amount!r} energy"
+                    f"resident {self.id} is harvesting {self.harvesting.amount!r} compute"
                 )
             if not math.isfinite(self.harvesting.ends_at):
                 raise ValueError(f"resident {self.id} has a harvesting job that never ends")
-            if self.inventory.count(self.harvesting.crystal) < 1:
-                raise ValueError(f"resident {self.id} is harvesting without carrying its crystal")
-        jobs = (self.harvesting, self.walking, self.digging, self.refining)
+            if self.inventory.count(self.harvesting.program) < 1:
+                raise ValueError(f"resident {self.id} is harvesting without carrying its program")
+        jobs = (self.harvesting, self.walking, self.gathering, self.writing)
         if sum(job is not None for job in jobs) > 1:
             raise ValueError(f"resident {self.id} has more than one walk or job at once")
-        if type(self.crystals_refined) is not int or self.crystals_refined < 0:
-            raise ValueError(f"resident {self.id} refined {self.crystals_refined!r} crystals")
-        for job in (self.digging, self.refining):
+        if type(self.programs_written) is not int or self.programs_written < 0:
+            raise ValueError(f"resident {self.id} has written {self.programs_written!r} programs")
+        for job in (self.gathering, self.writing):
             if job is not None:
                 if self.left:
                     raise ValueError(f"resident {self.id} left the game but still has a job")
                 if not math.isfinite(job.ends_at):
                     raise ValueError(f"resident {self.id} has a job that never ends")
-        if self.digging is not None and (
-            type(self.digging.amount) is not int or self.digging.amount < 1
+        if self.gathering is not None and (
+            type(self.gathering.amount) is not int or self.gathering.amount < 1
         ):
-            raise ValueError(f"resident {self.id} is digging {self.digging.amount!r} shards")
+            raise ValueError(f"resident {self.id} is gathering {self.gathering.amount!r} data")
         if self.walking is not None:
             if self.left:
                 raise ValueError(f"resident {self.id} left the game but is still walking")
@@ -577,7 +577,7 @@ class Resident:
 
 @dataclass(frozen=True)
 class Spring:
-    """An energy spring on the ground, see `harvesting.py`. Springs are placed when the game
+    """An compute spring on the ground, see `harvesting.py`. Springs are placed when the game
     starts and never move or appear later; only their reserve goes down."""
 
     id: str
@@ -585,13 +585,13 @@ class Spring:
     radius: float
     """Residents within this distance of `position` can harvest here."""
     reserve: int
-    """Energy still in the ground, not counting what harvesters are drawing right now."""
+    """Compute still in the ground, not counting what harvesters are drawing right now."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.radius) and self.radius > 0):
             raise ValueError(f"spring {self.id} has radius {self.radius}, must be positive")
         if type(self.reserve) is not int or self.reserve < 0:
-            raise ValueError(f"spring {self.id} holds {self.reserve!r} energy, must be >= 0")
+            raise ValueError(f"spring {self.id} holds {self.reserve!r} compute, must be >= 0")
 
     def reaches(self, position: Position) -> bool:
         return (
@@ -600,22 +600,22 @@ class Spring:
 
 
 @dataclass(frozen=True)
-class Quarry:
-    """A shard quarry on the ground, see `shards.py`. Quarries are placed when the game starts
+class Mine:
+    """A data mine on the ground, see `gathering.py`. Mines are placed when the game starts
     and never move or appear later; only their reserve goes down."""
 
     id: str
     position: Position
     radius: float
-    """Residents within this distance of `position` can dig here."""
+    """Residents within this distance of `position` can gather here."""
     reserve: int
-    """Shards still in the ground, not counting what diggers are taking out right now."""
+    """Data still in the ground, not counting what gatherers are taking out right now."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.radius) and self.radius > 0):
-            raise ValueError(f"quarry {self.id} has radius {self.radius}, must be positive")
+            raise ValueError(f"mine {self.id} has radius {self.radius}, must be positive")
         if type(self.reserve) is not int or self.reserve < 0:
-            raise ValueError(f"quarry {self.id} holds {self.reserve!r} shards, must be >= 0")
+            raise ValueError(f"mine {self.id} holds {self.reserve!r} data, must be >= 0")
 
     def reaches(self, position: Position) -> bool:
         return (
@@ -624,16 +624,16 @@ class Quarry:
 
 
 @dataclass(frozen=True)
-class Workshop:
-    """Where residents refine crystals, see `workshop.py`. It never moves."""
+class Studio:
+    """Where residents write programs, see `studio.py`. It never moves."""
 
     position: Position
     radius: float
-    """Residents within this distance of `position` can refine here."""
+    """Residents within this distance of `position` can write here."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.radius) and self.radius > 0):
-            raise ValueError(f"workshop has radius {self.radius}, must be positive")
+            raise ValueError(f"studio has radius {self.radius}, must be positive")
 
     def reaches(self, position: Position) -> bool:
         return (
@@ -643,7 +643,7 @@ class Workshop:
 
 @dataclass(frozen=True)
 class PricePoint:
-    """What one more energy fetched at the market at a game time, before rounding."""
+    """What one more compute fetched at the market at a game time, before rounding."""
 
     time: float
     price: float
@@ -657,14 +657,14 @@ class PricePoint:
 
 @dataclass(frozen=True)
 class Market:
-    """Where residents sell energy for coins, see `market.py`. It never moves; only the
+    """Where residents sell compute for coins, see `market.py`. It never moves; only the
     pressure of recent sales, which sets the price, changes."""
 
     position: Position
     radius: float
     """Residents within this distance of `position` can sell here."""
     pressure: float = 0.0
-    """Energy sold recently, as measured at `pressure_at`; it drifts as time passes, below
+    """Compute sold recently, as measured at `pressure_at`; it drifts as time passes, below
     zero once nobody has sold for a while, see `market.py`."""
     pressure_at: float = 0.0
     """Game time of the last sale, see `World.time`."""
@@ -713,27 +713,27 @@ class World:
     ended: bool = False
     """The game is over: nothing changes any more, see `lifecycle.py`."""
     springs: tuple[Spring, ...] = ()
-    """Energy springs, fixed for the whole game."""
+    """Compute springs, fixed for the whole game."""
     time: float = 0.0
     """Seconds since the game started, as of the latest change; the server moves it on."""
     activity: ActivityLog = ActivityLog()
     """What residents have done where, for others nearby to notice, see `perception.py`."""
     market: Market | None = None
-    """Where energy sell for coins, see `market.py`; None on a map without one."""
+    """Where compute sell for coins, see `market.py`; None on a map without one."""
     speech: SpeechLog = SpeechLog()
     """What residents have said and who heard it, see `speech.py`."""
     notices: NoticeLog = NoticeLog()
     """What the server has announced to every resident, see `lifecycle.announce`."""
     contracts: ContractBook = ContractBook()
     """Standing deals between residents, see `contracts.py`."""
-    towers: tuple[Tower, ...] = ()
-    next_tower_id: int = 1
+    collectors: tuple[Collector, ...] = ()
+    next_collector_id: int = 1
     ledger: Ledger = Ledger()
     """Every coin that changed hands, see `ledger.py`."""
-    quarries: tuple[Quarry, ...] = ()
-    """Shard quarries, fixed for the whole game, see `shards.py`."""
-    workshop: Workshop | None = None
-    """Where crystals are refined, see `workshop.py`; None on a map without one."""
+    mines: tuple[Mine, ...] = ()
+    """Data mines, fixed for the whole game, see `gathering.py`."""
+    studio: Studio | None = None
+    """Where programs are written, see `studio.py`; None on a map without one."""
     orders: OrderBook = OrderBook()
     """The exchange's resting orders and recent fills, see `exchange.py`."""
 
@@ -753,10 +753,10 @@ class World:
         for spring in self.springs:
             if not self.map.contains(spring.position):
                 raise ValueError(f"spring {spring.id} is outside the map: {spring.position}")
-        quarry_ids = [quarry.id for quarry in self.quarries]
-        if len(set(quarry_ids)) != len(quarry_ids):
-            raise ValueError("quarry ids must be unique")
-        for place in (*self.quarries, self.workshop):
+        mine_ids = [mine.id for mine in self.mines]
+        if len(set(mine_ids)) != len(mine_ids):
+            raise ValueError("mine ids must be unique")
+        for place in (*self.mines, self.studio):
             if place is not None and not self.map.contains(place.position):
                 raise ValueError(f"{place} is outside the map")
         ids = [resident.id for resident in self.residents]
@@ -770,9 +770,9 @@ class World:
                     raise ValueError(f"resident {resident.id} harvests unknown spring")
                 if self.ended:
                     raise ValueError(f"resident {resident.id} is harvesting after the game ended")
-            if resident.digging is not None and resident.digging.quarry_id not in quarry_ids:
-                raise ValueError(f"resident {resident.id} digs unknown quarry")
-            if (resident.digging or resident.refining) is not None and self.ended:
+            if resident.gathering is not None and resident.gathering.mine_id not in mine_ids:
+                raise ValueError(f"resident {resident.id} gathers unknown mine")
+            if (resident.gathering or resident.writing) is not None and self.ended:
                 raise ValueError(f"resident {resident.id} has a job after the game ended")
             if resident.walking is not None:
                 if not self.map.contains(resident.walking.target):
@@ -804,19 +804,22 @@ class World:
                 raise ValueError(f"event {event.id} is addressed to its own sender")
         # Leaving and ending both settle every pending event first.
         left = {resident.id for resident in self.residents if resident.left}
-        tower_ids = [tower.id for tower in self.towers]
-        if type(self.next_tower_id) is not int or self.next_tower_id < 1:
-            raise ValueError("invalid next tower id")
-        if len(set(tower_ids)) != len(tower_ids):
-            raise ValueError("duplicate tower id")
-        for tower in self.towers:
-            if not 1 <= tower.id < self.next_tower_id or tower.spring_id not in spring_ids:
-                raise ValueError("unknown tower or spring")
-            if tower.owner_id not in ids or tower.owner_id in left:
-                raise ValueError("tower owner must still be in the game")
-            for slot in tower.slots:
+        collector_ids = [collector.id for collector in self.collectors]
+        if type(self.next_collector_id) is not int or self.next_collector_id < 1:
+            raise ValueError("invalid next collector id")
+        if len(set(collector_ids)) != len(collector_ids):
+            raise ValueError("duplicate collector id")
+        for collector in self.collectors:
+            if (
+                not 1 <= collector.id < self.next_collector_id
+                or collector.spring_id not in spring_ids
+            ):
+                raise ValueError("unknown collector or spring")
+            if collector.owner_id not in ids or collector.owner_id in left:
+                raise ValueError("collector owner must still be in the game")
+            for slot in collector.slots:
                 if self.ended or slot.resident_id not in ids or slot.resident_id in left:
-                    raise ValueError("tower slot outlives its game or resident")
+                    raise ValueError("collector slot outlives its game or resident")
         for order in self.orders.orders:
             if order.resident_id not in ids or order.resident_id in left or self.ended:
                 raise ValueError(f"order {order.id} outlives its game or resident")

@@ -6,15 +6,15 @@ import pytest
 
 from aiverse_server.core.events import Event, EventPayload, EventQueue
 from aiverse_server.core.world import (
-    DigJob,
+    GatherJob,
+    Mine,
     Position,
-    Quarry,
-    RefineJob,
     Resident,
+    Studio,
     WalkJob,
-    Workshop,
     World,
     WorldMap,
+    WriteJob,
 )
 from aiverse_server.game.layout import MAP_SIZE, STARTING_COINS, create_default_world
 
@@ -100,32 +100,32 @@ def test_world_keeps_pending_events_between_residents_still_playing() -> None:
 @pytest.mark.parametrize(
     ("make", "match"),
     [
-        (lambda: Quarry("q", Position(5, 5), 0, 10), "radius"),
-        (lambda: Quarry("q", Position(5, 5), 4, -1), "shards"),
-        (lambda: Workshop(Position(5, 5), math.nan), "radius"),
+        (lambda: Mine("q", Position(5, 5), 0, 10), "radius"),
+        (lambda: Mine("q", Position(5, 5), 4, -1), "data"),
+        (lambda: Studio(Position(5, 5), math.nan), "radius"),
         (
             lambda: replace(
                 resident("a", 5, 5),
-                digging=DigJob("q", 10, 6),
+                gathering=GatherJob("q", 10, 6),
                 walking=WalkJob(Position(1, 1), 0, 2),
             ),
             "more than one",
         ),
-        (lambda: replace(resident("a", 5, 5), refining=RefineJob("C1", 9), left=True), "left"),
-        (lambda: replace(resident("a", 5, 5), digging=DigJob("q", 10, 0)), "digging 0"),
-        (lambda: replace(resident("a", 5, 5), crystals_refined=-1), "refined"),
+        (lambda: replace(resident("a", 5, 5), writing=WriteJob("v1", 9), left=True), "left"),
+        (lambda: replace(resident("a", 5, 5), gathering=GatherJob("q", 10, 0)), "gathering 0"),
+        (lambda: replace(resident("a", 5, 5), programs_written=-1), "written"),
     ],
     ids=[
-        "quarry_radius",
-        "quarry_reserve",
-        "workshop_radius",
+        "mine_radius",
+        "mine_reserve",
+        "studio_radius",
         "two_jobs",
         "job_after_leaving",
-        "empty_dig",
-        "negative_refined",
+        "empty_gather",
+        "negative_written",
     ],
 )
-def test_impossible_quarries_workshops_and_jobs_are_rejected(
+def test_impossible_mines_studios_and_jobs_are_rejected(
     make: Callable[[], object], match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
@@ -133,21 +133,21 @@ def test_impossible_quarries_workshops_and_jobs_are_rejected(
 
 
 @pytest.mark.parametrize(
-    ("busy", "quarries", "ended", "match"),
+    ("busy", "mines", "ended", "match"),
     [
-        (replace(resident("a", 5, 5), digging=DigJob("nowhere", 10, 6)), (), False, "unknown"),
+        (replace(resident("a", 5, 5), gathering=GatherJob("nowhere", 10, 6)), (), False, "unknown"),
         (
-            replace(resident("a", 5, 5), digging=DigJob("q1", 10, 6)),
-            (Quarry("q1", Position(5, 5), 4, 10),),
+            replace(resident("a", 5, 5), gathering=GatherJob("m1", 10, 6)),
+            (Mine("m1", Position(5, 5), 4, 10),),
             True,
             "after the game",
         ),
-        (replace(resident("a", 5, 5), refining=RefineJob("C1", 9)), (), True, "after the game"),
+        (replace(resident("a", 5, 5), writing=WriteJob("v1", 9)), (), True, "after the game"),
     ],
-    ids=["unknown_quarry", "dig_after_end", "refine_after_end"],
+    ids=["unknown_mine", "gather_after_end", "write_after_end"],
 )
 def test_the_world_rejects_jobs_it_cannot_hold(
-    busy: Resident, quarries: tuple[Quarry, ...], ended: bool, match: str
+    busy: Resident, mines: tuple[Mine, ...], ended: bool, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
-        World(WorldMap(size=10), (busy,), quarries=quarries, ended=ended)
+        World(WorldMap(size=10), (busy,), mines=mines, ended=ended)

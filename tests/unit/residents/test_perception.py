@@ -17,9 +17,9 @@ from aiverse_server.core.world import (
     World,
     WorldMap,
 )
-from aiverse_server.economy.crystals import CRYSTAL_TIERS
-from aiverse_server.economy.energy import ENERGY, walk_cost
+from aiverse_server.economy.compute import COMPUTE, walk_cost
 from aiverse_server.economy.harvesting import HARVEST_SECONDS
+from aiverse_server.economy.programs import PROGRAM_TIERS
 from aiverse_server.game.actions import (
     Harvest,
     LeaveGame,
@@ -35,17 +35,17 @@ from aiverse_server.residents.perception import PERCEPTION_RADIUS, begin_turn, r
 from aiverse_server.residents.walking import WALK_SPEED, next_arrival
 from aiverse_server.server.app import Game
 
-HARVEST_YIELD = CRYSTAL_TIERS[0].energy_per_job
-"""What a job pays with C1, the crystal every resident here carries."""
+HARVEST_YIELD = PROGRAM_TIERS[0].compute_per_job
+"""What a job pays with v1, the program every resident here carries."""
 
 
-def resident(resident_id: str, x: float, y: float, energy: int = 1000) -> Resident:
+def resident(resident_id: str, x: float, y: float, compute: int = 1000) -> Resident:
     return Resident(
         id=resident_id,
         name=resident_id.upper(),
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((ENERGY, energy), ("C1", 1))),
+        inventory=Inventory(((COMPUTE, compute), ("v1", 1))),
         coins=100,
     )
 
@@ -95,7 +95,7 @@ def test_seeing_a_spring_for_the_first_time_discovers_it() -> None:
 
 
 def seen_then_left() -> World:
-    """a sees the near spring, then walks out of sight while b digs some energy out of it."""
+    """a sees the near spring, then walks out of sight while b gathers some compute out of it."""
     world, _ = begin_turn(WORLD, "a")
     world = perform(world, Harvest("b", "near"))
     return arrive(perform(world, MoveTo("a", Position(10, 40))))
@@ -239,8 +239,8 @@ def test_a_harvester_who_leaves_is_logged_as_leaving_only() -> None:
     assert [entry.kind for entry in world.activity.entries] == ["started_harvesting", "left_game"]
 
 
-def test_a_walk_that_spends_the_last_energy_logs_the_move_and_the_exit() -> None:
-    world = replace(WORLD, residents=(*WORLD.residents[:3], resident("d", 10, 30, energy=3)))
+def test_a_walk_that_spends_the_last_compute_logs_the_move_and_the_exit() -> None:
+    world = replace(WORLD, residents=(*WORLD.residents[:3], resident("d", 10, 30, compute=3)))
 
     world = arrive(perform(world, MoveTo("d", Position(10, 25))))
 
@@ -253,9 +253,9 @@ def test_a_walk_that_spends_the_last_energy_logs_the_move_and_the_exit() -> None
     assert seen.residents[-1].left
 
 
-def test_selling_the_last_energy_logs_the_exit() -> None:
-    world = replace(WORLD, residents=(WORLD.residents[0], resident("b", 22, 10, energy=5)))
-    world = perform(world, OfferToBuy("a", "b", ENERGY, 5, 10))
+def test_selling_the_last_compute_logs_the_exit() -> None:
+    world = replace(WORLD, residents=(WORLD.residents[0], resident("b", 22, 10, compute=5)))
+    world = perform(world, OfferToBuy("a", "b", COMPUTE, 5, 10))
     world = perform(world, RespondToEvent("b", 1, accept=True))
     assert [(entry.resident_id, entry.kind) for entry in world.activity.entries] == [
         ("b", "left_game")
@@ -263,7 +263,7 @@ def test_selling_the_last_energy_logs_the_exit() -> None:
 
 
 def test_primitives_that_change_nothing_on_the_map_log_nothing() -> None:
-    world = perform(WORLD, OfferToBuy("a", "b", ENERGY, 1, 10))
+    world = perform(WORLD, OfferToBuy("a", "b", COMPUTE, 1, 10))
     assert world.activity == ActivityLog()
     assert record_activity(world, world) is world
 
@@ -426,9 +426,9 @@ def test_springs_found_on_walks_are_all_reported_by_the_next_look_and_only_once(
     assert again.discovered == ()
 
 
-def test_a_walker_who_runs_out_of_energy_on_arrival_discovers_nothing() -> None:
+def test_a_walker_who_runs_out_of_compute_on_arrival_discovers_nothing() -> None:
     cost = walk_cost(Position(10, 10), ROAD_END)
-    broke = replace(ROAD, residents=(resident("a", 10, 10, energy=cost),))
+    broke = replace(ROAD, residents=(resident("a", 10, 10, compute=cost),))
 
     world = arrive(perform(broke, MoveTo("a", ROAD_END)))
 

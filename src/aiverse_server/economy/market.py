@@ -1,15 +1,15 @@
-"""The market: a buyer from outside the town who pays coins for energy.
+"""The market: a buyer from outside the town who pays coins for compute.
 
 Apart from the coins residents start with, this is where new coins come from: trades
 between residents only move coins around. A resident standing within the market's radius
-sells energy they carry with `sell_energy` and is paid at the market price.
+sells compute they carry with `sell_compute` and is paid at the market price.
 
-The price falls as energy is sold and rises as time passes. The market keeps a pressure,
-the energy sold recently, whose distance from `MARKET_RESTING_PRESSURE` halves every
-`MARKET_HALF_LIFE` seconds of game time. The price of one more energy at pressure S is
+The price falls as compute is sold and rises as time passes. The market keeps a pressure,
+the compute sold recently, whose distance from `MARKET_RESTING_PRESSURE` halves every
+`MARKET_HALF_LIFE` seconds of game time. The price of one more compute at pressure S is
 `MARKET_BASE_PRICE * MARKET_DEPTH / (MARKET_DEPTH + S)`, so a pressure of `MARKET_DEPTH`
 halves it. The resting pressure is below zero, so a market nobody sells to for a long while
-pays more than the base price, up to `MARKET_TOP_PRICE`. Selling q energy pays that
+pays more than the base price, up to `MARKET_TOP_PRICE`. Selling q compute pays that
 price summed over the sale, from S to S + q, rounded down to whole coins; splitting a sale
 into smaller ones therefore earns no more than selling at once, while waiting for the price
 to recover does.
@@ -34,19 +34,19 @@ from typing import Literal
 from ..core.inventory import InventoryError, add_coins, take_item
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import Market, PricePoint, Resident, World
-from .energy import ENERGY, EnergyError
+from .compute import COMPUTE, ComputeError
 
 MARKET_BASE_PRICE = 20.0
-"""Coins the market pays for a unit of energy at zero pressure, as when the game begins."""
+"""Coins the market pays for a unit of compute at zero pressure, as when the game begins."""
 
 MARKET_DEPTH = 400.0
-"""Recent sales, in energy, that halve the price."""
+"""Recent sales, in compute, that halve the price."""
 
 MARKET_TOP_PRICE = 40.0
-"""Coins the market pays for a unit of energy after nobody has sold for a very long while."""
+"""Coins the market pays for a unit of compute after nobody has sold for a very long while."""
 
 MARKET_RESTING_PRESSURE = -MARKET_DEPTH * (1 - MARKET_BASE_PRICE / MARKET_TOP_PRICE)
-"""Pressure the market drifts to with no sales, where a unit of energy fetches
+"""Pressure the market drifts to with no sales, where a unit of compute fetches
 `MARKET_TOP_PRICE`."""
 
 MARKET_HALF_LIFE = 60.0
@@ -71,7 +71,7 @@ class MarketError(Exception):
 
 
 def pressure_at(market: Market, time: float) -> float:
-    """Recent sales in energy at game time `time`, drifted towards the resting pressure since
+    """Recent sales in compute at game time `time`, drifted towards the resting pressure since
     the last sale; below zero once the market has gone without sales for a while."""
     elapsed = max(time - market.pressure_at, 0.0)
     drift = math.exp2(-elapsed / MARKET_HALF_LIFE)
@@ -79,12 +79,12 @@ def pressure_at(market: Market, time: float) -> float:
 
 
 def unit_price(market: Market, time: float) -> float:
-    """Coins one more energy would fetch at game time `time`, before rounding."""
+    """Coins one more compute would fetch at game time `time`, before rounding."""
     return MARKET_BASE_PRICE * MARKET_DEPTH / (MARKET_DEPTH + pressure_at(market, time))
 
 
 def quote(market: Market, time: float, quantity: int, seen: float | None = None) -> int:
-    """Whole coins selling `quantity` energy at game time `time` pays. `seen` is the pressure
+    """Whole coins selling `quantity` compute at game time `time` pays. `seen` is the pressure
     the seller saw earlier, if any: sales by others since then do not lower the price."""
     pressure = pressure_at(market, time)
     if seen is not None:
@@ -95,37 +95,37 @@ def quote(market: Market, time: float, quantity: int, seen: float | None = None)
     return math.floor(earned + 1e-9)
 
 
-def sell_energy(world: World, resident_id: str, quantity: int, seen: float | None = None) -> World:
-    """Sell `quantity` energy the resident carries to the market they stand at, for coins,
+def sell_compute(world: World, resident_id: str, quantity: int, seen: float | None = None) -> World:
+    """Sell `quantity` compute the resident carries to the market they stand at, for coins,
     priced from the pressure `seen` earlier if the market has fallen since, see `quote`. The
     market is left with its real pressure plus this sale either way."""
     resident = _find(world, resident_id)
     market = world.market
     if market is None or not market.reaches(resident.position):
         raise MarketError("not_at_market", f"resident {resident_id!r} is not at the market")
-    # Exactly int: True is a mistake rather than one energy.
+    # Exactly int: True is a mistake rather than one compute.
     if type(quantity) is not int or quantity < 1:
         raise MarketError(
             "invalid_quantity", f"quantity must be a positive integer, got {quantity!r}"
         )
     try:
-        world = take_item(world, resident_id, ENERGY, quantity)
+        world = take_item(world, resident_id, COMPUTE, quantity)
     except InventoryError as error:
         if error.code != "not_enough_items":
             raise
-        held = resident.inventory.count(ENERGY)
-        raise EnergyError(
-            "not_enough_energy", f"resident {resident_id!r} carries {held} energy, not {quantity}"
+        held = resident.inventory.count(COMPUTE)
+        raise ComputeError(
+            "not_enough_compute", f"resident {resident_id!r} carries {held} compute, not {quantity}"
         ) from error
-    # Priced only once the energy are known to be there: an untrusted quantity can be too big
+    # Priced only once the compute are known to be there: an untrusted quantity can be too big
     # to turn into a float, but never more than the resident carries.
     coins = quote(market, world.time, quantity, seen)
     if coins < 1:
         raise MarketError(
-            "price_too_low", f"{quantity} energy would fetch less than a coin right now"
+            "price_too_low", f"{quantity} compute would fetch less than a coin right now"
         )
     world = add_coins(world, resident_id, coins)
-    world = record_transfer(world, SYSTEM, resident_id, coins, "market", ENERGY, quantity)
+    world = record_transfer(world, SYSTEM, resident_id, coins, "market", COMPUTE, quantity)
     before = unit_price(market, world.time)
     pressure = pressure_at(market, world.time) + quantity
     market = replace(market, pressure=pressure, pressure_at=world.time)

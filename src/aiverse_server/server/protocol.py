@@ -25,10 +25,22 @@ from ..agents.runner import TurnRecord
 from ..core.events import Event
 from ..core.orders import Fill, order_items
 from ..core.world import COLOR_PATTERN, Position, World
+from ..economy.collectors import (
+    COLLECTOR_CAPACITY,
+    COLLECTOR_PRICE,
+    COLLECTOR_SECONDS,
+    COLLECTOR_YIELD,
+    RENT_PER_100,
+    UPKEEP_PER_100,
+    collector_coins,
+    cycle_amount,
+    cycle_cost,
+    slot_status,
+)
+from ..economy.compute import compute_total
 from ..economy.contracts import ContractProposal, contracts_of
-from ..economy.crystals import CRYSTAL_TIERS
-from ..economy.energy import energy_total
 from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
+from ..economy.gathering import DATA
 from ..economy.market import (
     MARKET_BASE_PRICE,
     MARKET_DEPTH,
@@ -36,42 +48,30 @@ from ..economy.market import (
     MARKET_RESTING_PRESSURE,
     pressure_at,
 )
-from ..economy.shards import SHARD
-from ..economy.towers import (
-    RENT_PER_100,
-    TOWER_CAPACITY,
-    TOWER_PRICE,
-    TOWER_SECONDS,
-    TOWER_YIELD,
-    UPKEEP_PER_100,
-    cycle_amount,
-    cycle_cost,
-    slot_status,
-    tower_coins,
-)
+from ..economy.programs import PROGRAM_TIERS
+from ..economy.studio import FASTEST_SHARE, RECIPES, SPEEDUP_PER_PROGRAM
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_items
-from ..economy.workshop import FASTEST_SHARE, RECIPES, SPEEDUP_PER_CRYSTAL
 from ..game.actions import (
     Action,
     ActionRejected,
-    BuildTower,
-    BuyCrystal,
-    DigShards,
-    FundTower,
+    BuildCollector,
+    BuyProgram,
+    FundCollector,
+    GatherData,
     Harvest,
-    InstallCrystal,
+    InstallProgram,
     LeaveGame,
     MoveTo,
-    RefineCrystal,
     RejectionCode,
-    RemoveCrystal,
+    RemoveProgram,
     Say,
-    SellEnergy,
+    SellCompute,
+    WriteProgram,
 )
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 21
+PROTOCOL_VERSION = 22
 
 ERROR_MAX_LENGTH = 200
 
@@ -118,26 +118,26 @@ class HarvestInput(_Message):
     spring_id: str
 
 
-class SellEnergyInput(_Message):
-    type: Literal["sell_energy"]
+class SellComputeInput(_Message):
+    type: Literal["sell_compute"]
     resident_id: str
     quantity: StrictInt
 
 
-class BuyCrystalInput(_Message):
-    type: Literal["buy_crystal"]
+class BuyProgramInput(_Message):
+    type: Literal["buy_program"]
     resident_id: str
     tier: str
 
 
-class DigShardsInput(_Message):
-    type: Literal["dig_shards"]
+class GatherDataInput(_Message):
+    type: Literal["gather_data"]
     resident_id: str
-    quarry_id: str
+    mine_id: str
 
 
-class RefineCrystalInput(_Message):
-    type: Literal["refine_crystal"]
+class WriteProgramInput(_Message):
+    type: Literal["write_program"]
     resident_id: str
     tier: str
 
@@ -150,32 +150,32 @@ class SayInput(_Message):
     """The one resident spoken to; left out to speak aloud to everyone within earshot."""
 
 
-class BuildTowerInput(_Message):
-    type: Literal["build_tower"]
+class BuildCollectorInput(_Message):
+    type: Literal["build_collector"]
     resident_id: str
     spring_id: str
 
 
-class InstallCrystalInput(_Message):
-    type: Literal["install_crystal"]
+class InstallProgramInput(_Message):
+    type: Literal["install_program"]
     resident_id: str
-    tower_id: StrictInt
-    crystal: str
+    collector_id: StrictInt
+    program: str
     deposit: StrictInt
 
 
-class FundTowerInput(_Message):
-    type: Literal["fund_tower"]
+class FundCollectorInput(_Message):
+    type: Literal["fund_collector"]
     resident_id: str
-    tower_id: StrictInt
+    collector_id: StrictInt
     slot_id: StrictInt
     amount: StrictInt
 
 
-class RemoveCrystalInput(_Message):
-    type: Literal["remove_crystal"]
+class RemoveProgramInput(_Message):
+    type: Literal["remove_program"]
     resident_id: str
-    tower_id: StrictInt
+    collector_id: StrictInt
     slot_id: StrictInt
 
 
@@ -183,15 +183,15 @@ ActionInput = Annotated[
     MoveToInput
     | LeaveGameInput
     | HarvestInput
-    | SellEnergyInput
-    | BuyCrystalInput
-    | DigShardsInput
-    | RefineCrystalInput
+    | SellComputeInput
+    | BuyProgramInput
+    | GatherDataInput
+    | WriteProgramInput
     | SayInput
-    | BuildTowerInput
-    | InstallCrystalInput
-    | FundTowerInput
-    | RemoveCrystalInput,
+    | BuildCollectorInput
+    | InstallProgramInput
+    | FundCollectorInput
+    | RemoveProgramInput,
     Field(discriminator="type"),
 ]
 
@@ -270,23 +270,23 @@ class PositionView(_Message):
 class HarvestView(_Message):
     spring_id: str
     amount: int
-    """Energy paid out when the job ends."""
-    crystal: str
-    """Tier of the crystal doing the work."""
+    """Compute paid out when the job ends."""
+    program: str
+    """Tier of the program doing the work."""
     remaining_seconds: float
     """Time left in the job when this was sent."""
 
 
-class DigView(_Message):
-    quarry_id: str
+class GatherView(_Message):
+    mine_id: str
     amount: int
-    """Shards paid out when the job ends."""
+    """Data paid out when the job ends."""
     remaining_seconds: float
 
 
-class RefineView(_Message):
+class WriteView(_Message):
     tier: str
-    """Tier of the crystal the job makes."""
+    """Tier of the program the job makes."""
     remaining_seconds: float
 
 
@@ -311,29 +311,29 @@ class ResidentView(_Message):
     """Where the resident is when this was sent, on the way while walking."""
     coins: int
     spendable_coins: int
-    tower_balance: int
-    """Total coins, including those set aside by pending offers, contracts, towers and buy
+    collector_balance: int
+    """Total coins, including those set aside by pending offers, contracts, collectors and buy
     orders; public to everyone."""
     left: bool
     rank: int
     """Place by coins, 1 for the most; equal totals share a place. Final once the game ends."""
-    energy: int
-    """Energy owned, the resident's stamina, including those set aside by pending offers and
+    compute: int
+    """Compute owned, the resident's stamina, including those set aside by pending offers and
     sell orders."""
-    crystals: dict[str, int]
-    carried_crystals: dict[str, int]
-    """Crystals owned, tier to count, including those set aside by pending offers and sell orders;
+    programs: dict[str, int]
+    carried_programs: dict[str, int]
+    """Programs owned, tier to count, including those set aside by pending offers and sell orders;
     tiers with none are left out."""
-    shards: int
-    """Shards owned, including those set aside by pending offers and sell orders."""
-    crystals_refined: int
-    """Crystals the resident has refined so far; each makes the next job quicker."""
+    data: int
+    """Data owned, including those set aside by pending offers and sell orders."""
+    programs_written: int
+    """Programs the resident has written so far; each makes the next job quicker."""
     harvesting: HarvestView | None = None
     """Present while the resident is busy harvesting."""
-    digging: DigView | None = None
-    """Present while the resident is busy digging shards."""
-    refining: RefineView | None = None
-    """Present while the resident is busy refining a crystal."""
+    gathering: GatherView | None = None
+    """Present while the resident is busy gathering data."""
+    writing: WriteView | None = None
+    """Present while the resident is busy writing a program."""
     walking: WalkingView | None = None
     """Present while the resident is walking; they head straight for `target` at a steady
     pace and arrive after `remaining_seconds`."""
@@ -348,7 +348,7 @@ class SpringView(_Message):
     reserve: int
 
 
-class QuarryView(_Message):
+class MineView(_Message):
     id: str
     position: PositionView
     radius: float
@@ -357,24 +357,24 @@ class QuarryView(_Message):
 
 class RecipeView(_Message):
     tier: str
-    shards: int
-    energy: int
+    data: int
+    compute: int
     consumes: str | None = None
-    """Tier of the crystal it uses up; left out for the first tier."""
+    """Tier of the program it uses up; left out for the first tier."""
     seconds: float
-    """Game seconds the job takes for a resident who has refined nothing yet."""
+    """Game seconds the job takes for a resident who has written nothing yet."""
 
 
-class WorkshopView(_Message):
-    """Where crystals are refined: a job takes a recipe's `seconds`, less
-    `speedup_per_crystal` of them for every crystal the resident refined before, but never
+class StudioView(_Message):
+    """Where programs are written: a job takes a recipe's `seconds`, less
+    `speedup_per_program` of them for every program the resident has written before, but never
     less than `fastest_share` of them."""
 
     position: PositionView
     radius: float
     recipes: list[RecipeView]
     """One per tier, worst first."""
-    speedup_per_crystal: float
+    speedup_per_program: float
     fastest_share: float
 
 
@@ -439,26 +439,26 @@ class ExchangeView(_Message):
     """Resting orders a resident may have at once."""
 
 
-class CrystalTierView(_Message):
+class ProgramTierView(_Message):
     tier: str
     price: int
-    """Coins one crystal costs at the market."""
-    energy_per_job: int
-    """Energy one harvesting job draws while the spring has that much left."""
+    """Coins one program costs at the market."""
+    compute_per_job: int
+    """Compute one harvesting job draws while the spring has that much left."""
 
 
 class PricePointView(_Message):
     time: float
     """Game seconds since the start."""
     price: float
-    """Coins one more energy fetched then, before rounding."""
+    """Coins one more compute fetched then, before rounding."""
 
 
 class MarketView(_Message):
     """The market and what sets its price, so clients can follow the price as it moves
-    between states: one more energy fetches `base_price * depth / (depth + p)` coins, where
+    between states: one more compute fetches `base_price * depth / (depth + p)` coins, where
     the distance of the pressure p from `resting_pressure` halves every `half_life_seconds`
-    after this was sent, and selling q energy pays
+    after this was sent, and selling q compute pays
     `floor(base_price * depth * ln((depth + p + q) / (depth + p)))`."""
 
     position: PositionView
@@ -470,11 +470,11 @@ class MarketView(_Message):
     """Pressure the market drifts to with no sales; below zero, so the price then climbs
     above `base_price`."""
     pressure: float
-    """Recent sales in energy when this was sent; below zero after a quiet while."""
-    crystals: list[CrystalTierView]
-    """Crystals on sale here at fixed prices, worst first."""
+    """Recent sales in compute when this was sent; below zero after a quiet while."""
+    programs: list[ProgramTierView]
+    """Programs on sale here at fixed prices, worst first."""
     price_history: list[PricePointView]
-    """The energy price over the game so far, oldest first: noted at every sale and every few
+    """The compute price over the game so far, oldest first: noted at every sale and every few
     seconds in between, so a market nobody sells to still shows its price climbing."""
 
 
@@ -559,7 +559,7 @@ class GameView(_Message):
 
 class ResourceBalanceView(_Message):
     coins: int
-    energy: int
+    compute: int
 
 
 class AgentCallView(_Message):
@@ -569,7 +569,7 @@ class AgentCallView(_Message):
     ok: bool
     code: str | None = None
     coins_change: int
-    energy_change: int
+    compute_change: int
 
 
 class AgentTurnView(_Message):
@@ -603,8 +603,8 @@ def agent_turn_view(
         summary=redact(turn.remark)[:500] if turn.remark else None,
         # Exception text is diagnostic, may contain private input, and stays in server logs.
         error="本轮 AI 调用失败，请查看服务端日志。" if turn.error else None,
-        before=ResourceBalanceView(coins=turn.before.coins, energy=turn.before.energy),
-        after=ResourceBalanceView(coins=turn.after.coins, energy=turn.after.energy),
+        before=ResourceBalanceView(coins=turn.before.coins, compute=turn.before.compute),
+        after=ResourceBalanceView(coins=turn.after.coins, compute=turn.after.compute),
         calls=[
             AgentCallView(
                 name=redact(call.name)[:80],
@@ -618,7 +618,7 @@ def agent_turn_view(
                 ok=call.result.ok,
                 code=call.result.code,
                 coins_change=call.coins_change,
-                energy_change=call.energy_change,
+                compute_change=call.compute_change,
             )
             for call in turn.calls[:128]
         ],
@@ -635,61 +635,65 @@ def _redacted_arguments(value: object, redact: Callable[[str], str]) -> object:
     return value
 
 
-class TowerSlotView(_Message):
+class CollectorSlotView(_Message):
     id: int
     resident_id: str
-    crystal: str
+    program: str
     balance: int
     harvested: int
     rent_paid: int
     status: Literal["running", "no_funds", "spring_empty"]
     remaining_seconds: float
-    energy_per_cycle: int
+    compute_per_cycle: int
     rent_per_cycle: int
     upkeep_per_cycle: int
 
 
-class TowerView(_Message):
+class CollectorView(_Message):
     id: int
     owner_id: str
     spring_id: str
-    slots: list[TowerSlotView]
+    slots: list[CollectorSlotView]
 
 
-class TowerRulesView(_Message):
-    price: int = TOWER_PRICE
-    capacity: int = TOWER_CAPACITY
-    cycle_seconds: float = TOWER_SECONDS
-    yield_multiplier: int = TOWER_YIELD
-    """A crystal in a tower harvests this many times its energy per job each cycle."""
+class CollectorRulesView(_Message):
+    price: int = COLLECTOR_PRICE
+    capacity: int = COLLECTOR_CAPACITY
+    cycle_seconds: float = COLLECTOR_SECONDS
+    yield_multiplier: int = COLLECTOR_YIELD
+    """A program in a collector harvests this many times its compute per job each cycle."""
     rent_per_100: int = RENT_PER_100
     upkeep_per_100: int = UPKEEP_PER_100
 
 
-def tower_views(world: World) -> list[TowerView]:
+def collector_views(world: World) -> list[CollectorView]:
     return [
-        TowerView(
-            id=tower.id,
-            owner_id=tower.owner_id,
-            spring_id=tower.spring_id,
+        CollectorView(
+            id=collector.id,
+            owner_id=collector.owner_id,
+            spring_id=collector.spring_id,
             slots=[
-                TowerSlotView(
+                CollectorSlotView(
                     id=slot.id,
                     resident_id=slot.resident_id,
-                    crystal=slot.crystal,
+                    program=slot.program,
                     balance=slot.balance,
                     harvested=slot.harvested,
                     rent_paid=slot.rent_paid,
-                    status=slot_status(world, tower, slot),
+                    status=slot_status(world, collector, slot),
                     remaining_seconds=max(slot.next_at - world.time, 0.0),
-                    energy_per_cycle=cycle_amount(world, tower, slot),
-                    rent_per_cycle=cycle_cost(tower, slot, cycle_amount(world, tower, slot))[0],
-                    upkeep_per_cycle=cycle_cost(tower, slot, cycle_amount(world, tower, slot))[1],
+                    compute_per_cycle=cycle_amount(world, collector, slot),
+                    rent_per_cycle=cycle_cost(
+                        collector, slot, cycle_amount(world, collector, slot)
+                    )[0],
+                    upkeep_per_cycle=cycle_cost(
+                        collector, slot, cycle_amount(world, collector, slot)
+                    )[1],
                 )
-                for slot in tower.slots
+                for slot in collector.slots
             ],
         )
-        for tower in world.towers
+        for collector in world.collectors
     ]
 
 
@@ -698,13 +702,13 @@ class WorldView(_Message):
     springs: list[SpringView]
     residents: list[ResidentView]
     game: GameView
-    towers: list[TowerView]
-    tower_rules: TowerRulesView
+    collectors: list[CollectorView]
+    collector_rules: CollectorRulesView
     market: MarketView | None = None
     """Left out on a map without a market."""
-    quarries: list[QuarryView]
-    workshop: WorkshopView | None = None
-    """Left out on a map without a workshop."""
+    mines: list[MineView]
+    studio: StudioView | None = None
+    """Left out on a map without a studio."""
     exchange: ExchangeView
     speech: list[SpeechView]
     """The latest `SPEECH_VIEW_LIMIT` lines the connection may see, oldest first: every line
@@ -804,8 +808,8 @@ def world_view(
         if line.to is None or (viewer is not None and viewer in (line.speaker_id, line.to))
     ]
     return WorldView(
-        towers=tower_views(world),
-        tower_rules=TowerRulesView(),
+        collectors=collector_views(world),
+        collector_rules=CollectorRulesView(),
         agent_timeline=AgentTimelineView(
             resident_id=viewer, turns=list((agent_turns or {}).get(viewer, ()))
         )
@@ -829,38 +833,38 @@ def world_view(
                 position=_position_view(position_at(resident, world.time)),
                 coins=total_coins(world, resident.id),
                 spendable_coins=resident.coins,
-                tower_balance=tower_coins(world, resident.id),
-                carried_crystals={
+                collector_balance=collector_coins(world, resident.id),
+                carried_programs={
                     m.tier: resident.inventory.count(m.tier)
-                    for m in CRYSTAL_TIERS
+                    for m in PROGRAM_TIERS
                     if resident.inventory.count(m.tier)
                 },
                 left=resident.left,
                 rank=places[resident.id],
-                energy=energy_total(world, resident.id),
-                crystals=_crystals_owned(world, resident.id),
-                shards=_owned(world, resident.id, SHARD),
-                crystals_refined=resident.crystals_refined,
+                compute=compute_total(world, resident.id),
+                programs=_programs_owned(world, resident.id),
+                data=_owned(world, resident.id, DATA),
+                programs_written=resident.programs_written,
                 harvesting=None
                 if resident.harvesting is None
                 else HarvestView(
                     spring_id=resident.harvesting.spring_id,
                     amount=resident.harvesting.amount,
-                    crystal=resident.harvesting.crystal,
+                    program=resident.harvesting.program,
                     remaining_seconds=max(resident.harvesting.ends_at - world.time, 0.0),
                 ),
-                digging=None
-                if resident.digging is None
-                else DigView(
-                    quarry_id=resident.digging.quarry_id,
-                    amount=resident.digging.amount,
-                    remaining_seconds=max(resident.digging.ends_at - world.time, 0.0),
+                gathering=None
+                if resident.gathering is None
+                else GatherView(
+                    mine_id=resident.gathering.mine_id,
+                    amount=resident.gathering.amount,
+                    remaining_seconds=max(resident.gathering.ends_at - world.time, 0.0),
                 ),
-                refining=None
-                if resident.refining is None
-                else RefineView(
-                    tier=resident.refining.tier,
-                    remaining_seconds=max(resident.refining.ends_at - world.time, 0.0),
+                writing=None
+                if resident.writing is None
+                else WriteView(
+                    tier=resident.writing.tier,
+                    remaining_seconds=max(resident.writing.ends_at - world.time, 0.0),
                 ),
                 walking=None
                 if resident.walking is None
@@ -886,41 +890,41 @@ def world_view(
             half_life_seconds=MARKET_HALF_LIFE,
             resting_pressure=MARKET_RESTING_PRESSURE,
             pressure=pressure_at(world.market, world.time),
-            crystals=[
-                CrystalTierView(
-                    tier=tier.tier, price=tier.price, energy_per_job=tier.energy_per_job
+            programs=[
+                ProgramTierView(
+                    tier=tier.tier, price=tier.price, compute_per_job=tier.compute_per_job
                 )
-                for tier in CRYSTAL_TIERS
+                for tier in PROGRAM_TIERS
             ],
             price_history=[
                 PricePointView(time=point.time, price=point.price) for point in world.market.history
             ],
         ),
-        quarries=[
-            QuarryView(
-                id=quarry.id,
-                position=_position_view(quarry.position),
-                radius=quarry.radius,
-                reserve=quarry.reserve,
+        mines=[
+            MineView(
+                id=mine.id,
+                position=_position_view(mine.position),
+                radius=mine.radius,
+                reserve=mine.reserve,
             )
-            for quarry in world.quarries
+            for mine in world.mines
         ],
-        workshop=None
-        if world.workshop is None
-        else WorkshopView(
-            position=_position_view(world.workshop.position),
-            radius=world.workshop.radius,
+        studio=None
+        if world.studio is None
+        else StudioView(
+            position=_position_view(world.studio.position),
+            radius=world.studio.radius,
             recipes=[
                 RecipeView(
                     tier=recipe.tier,
-                    shards=recipe.shards,
-                    energy=recipe.energy,
+                    data=recipe.data,
+                    compute=recipe.compute,
                     consumes=recipe.consumes,
                     seconds=recipe.seconds,
                 )
                 for recipe in RECIPES
             ],
-            speedup_per_crystal=SPEEDUP_PER_CRYSTAL,
+            speedup_per_program=SPEEDUP_PER_PROGRAM,
             fastest_share=FASTEST_SHARE,
         ),
         exchange=_exchange_view(world, viewer),
@@ -1052,8 +1056,8 @@ def _owned(world: World, resident_id: str, item: str) -> int:
     )
 
 
-def _crystals_owned(world: World, resident_id: str) -> dict[str, int]:
-    owned = {tier.tier: _owned(world, resident_id, tier.tier) for tier in CRYSTAL_TIERS}
+def _programs_owned(world: World, resident_id: str) -> dict[str, int]:
+    owned = {tier.tier: _owned(world, resident_id, tier.tier) for tier in PROGRAM_TIERS}
     return {tier: count for tier, count in owned.items() if count > 0}
 
 
@@ -1071,24 +1075,26 @@ def to_action(message: ActionMessage) -> Action:
             return LeaveGame(resident_id=action.resident_id)
         case HarvestInput():
             return Harvest(resident_id=action.resident_id, spring_id=action.spring_id)
-        case SellEnergyInput():
-            return SellEnergy(resident_id=action.resident_id, quantity=action.quantity)
-        case BuyCrystalInput():
-            return BuyCrystal(resident_id=action.resident_id, tier=action.tier)
-        case DigShardsInput():
-            return DigShards(action.resident_id, action.quarry_id)
-        case RefineCrystalInput():
-            return RefineCrystal(action.resident_id, action.tier)
-        case BuildTowerInput():
-            return BuildTower(action.resident_id, action.spring_id)
-        case InstallCrystalInput():
-            return InstallCrystal(
-                action.resident_id, action.tower_id, action.crystal, action.deposit
+        case SellComputeInput():
+            return SellCompute(resident_id=action.resident_id, quantity=action.quantity)
+        case BuyProgramInput():
+            return BuyProgram(resident_id=action.resident_id, tier=action.tier)
+        case GatherDataInput():
+            return GatherData(action.resident_id, action.mine_id)
+        case WriteProgramInput():
+            return WriteProgram(action.resident_id, action.tier)
+        case BuildCollectorInput():
+            return BuildCollector(action.resident_id, action.spring_id)
+        case InstallProgramInput():
+            return InstallProgram(
+                action.resident_id, action.collector_id, action.program, action.deposit
             )
-        case FundTowerInput():
-            return FundTower(action.resident_id, action.tower_id, action.slot_id, action.amount)
-        case RemoveCrystalInput():
-            return RemoveCrystal(action.resident_id, action.tower_id, action.slot_id)
+        case FundCollectorInput():
+            return FundCollector(
+                action.resident_id, action.collector_id, action.slot_id, action.amount
+            )
+        case RemoveProgramInput():
+            return RemoveProgram(action.resident_id, action.collector_id, action.slot_id)
         case SayInput():
             return Say(resident_id=action.resident_id, text=action.text, to=action.to)
 

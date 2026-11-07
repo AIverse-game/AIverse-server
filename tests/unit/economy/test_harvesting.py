@@ -14,9 +14,9 @@ from aiverse_server.core.world import (
     World,
     WorldMap,
 )
-from aiverse_server.economy.crystals import CRYSTAL_TIERS, CrystalTier
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.economy.harvesting import HARVEST_SECONDS, finish_harvesting, next_finish
+from aiverse_server.economy.programs import PROGRAM_TIERS, ProgramTier
 from aiverse_server.game.actions import (
     ActionRejected,
     Harvest,
@@ -38,19 +38,19 @@ from aiverse_server.game.layout import (
 )
 from aiverse_server.game.lifecycle import end_game
 
-C1, C2, C3 = CRYSTAL_TIERS
-HARVEST_YIELD = C1.energy_per_job
+v1, v2, v3 = PROGRAM_TIERS
+HARVEST_YIELD = v1.compute_per_job
 
 
-def resident(resident_id: str, x: float, y: float, *crystals: str) -> Resident:
-    """Carries 50 energy and one crystal of each tier given, C1 if none is."""
-    held = tuple((tier, 1) for tier in crystals or ("C1",))
+def resident(resident_id: str, x: float, y: float, *programs: str) -> Resident:
+    """Carries 50 compute and one program of each tier given, v1 if none is."""
+    held = tuple((tier, 1) for tier in programs or ("v1",))
     return Resident(
         id=resident_id,
         name=resident_id,
         color="#123456",
         position=Position(x, y),
-        inventory=Inventory(((ENERGY, 50), *held)),
+        inventory=Inventory(((COMPUTE, 50), *held)),
     )
 
 
@@ -75,67 +75,67 @@ def at(world: World, time: float) -> World:
     return finish_harvesting(replace(world, time=time))
 
 
-def test_harvesting_takes_the_energy_out_of_the_spring_and_pays_them_when_done() -> None:
+def test_harvesting_takes_the_compute_out_of_the_spring_and_pays_them_when_done() -> None:
     world = perform(WORLD, Harvest("a", "rich"))
     early = replace(world, time=7 + HARVEST_SECONDS - 0.1)
     not_yet = finish_harvesting(early)
     done = at(world, 7 + HARVEST_SECONDS)
 
     assert world.residents[0].harvesting == HarvestJob(
-        "rich", 7 + HARVEST_SECONDS, HARVEST_YIELD, "C1"
+        "rich", 7 + HARVEST_SECONDS, HARVEST_YIELD, "v1"
     )
     assert world.springs[0].reserve == 100 - HARVEST_YIELD
     assert next_finish(world) == 7 + HARVEST_SECONDS
     assert not_yet is early
     assert done.residents[0].harvesting is None
-    assert item_count(done, "a", ENERGY) == 50 + HARVEST_YIELD
+    assert item_count(done, "a", COMPUTE) == 50 + HARVEST_YIELD
     assert next_finish(done) is None
 
 
-@pytest.mark.parametrize("tier", CRYSTAL_TIERS, ids=lambda tier: tier.tier)
-def test_a_job_digs_what_its_crystal_yields_in_the_same_time(tier: CrystalTier) -> None:
+@pytest.mark.parametrize("tier", PROGRAM_TIERS, ids=lambda tier: tier.tier)
+def test_a_job_gathers_what_its_program_yields_in_the_same_time(tier: ProgramTier) -> None:
     world = replace(WORLD, residents=(resident("a", 10, 10, tier.tier),))
 
     job = perform(world, Harvest("a", "rich")).residents[0].harvesting
 
-    assert job == HarvestJob("rich", 7 + HARVEST_SECONDS, tier.energy_per_job, tier.tier)
+    assert job == HarvestJob("rich", 7 + HARVEST_SECONDS, tier.compute_per_job, tier.tier)
 
 
-def test_a_harvester_owning_several_crystals_uses_the_best() -> None:
-    world = replace(WORLD, residents=(resident("a", 10, 10, "C3", "C1", "C2"),))
+def test_a_harvester_owning_several_programs_uses_the_best() -> None:
+    world = replace(WORLD, residents=(resident("a", 10, 10, "v3", "v1", "v2"),))
     job = perform(world, Harvest("a", "rich")).residents[0].harvesting
     assert job is not None
-    assert (job.crystal, job.amount) == ("C3", 100)
+    assert (job.program, job.amount) == ("v3", 100)
 
 
-def test_harvesting_without_a_crystal_is_refused() -> None:
-    bare = replace(WORLD.residents[0], inventory=Inventory(((ENERGY, 50),)))
+def test_harvesting_without_a_program_is_refused() -> None:
+    bare = replace(WORLD.residents[0], inventory=Inventory(((COMPUTE, 50),)))
     world = replace(WORLD, residents=(bare, *WORLD.residents[1:]))
     with pytest.raises(ActionRejected) as raised:
         perform(world, Harvest("a", "rich"))
-    assert raised.value.code == "no_crystal"
+    assert raised.value.code == "no_program"
     assert world.springs[0].reserve == 100
 
 
-def test_a_crystal_set_aside_in_a_sale_offer_cannot_harvest() -> None:
-    world = perform(WORLD, OfferToSell("a", "b", "C1", 1, 100))
+def test_a_program_set_aside_in_a_sale_offer_cannot_harvest() -> None:
+    world = perform(WORLD, OfferToSell("a", "b", "v1", 1, 100))
     with pytest.raises(ActionRejected) as raised:
         perform(world, Harvest("a", "rich"))
-    assert raised.value.code == "no_crystal"
+    assert raised.value.code == "no_program"
 
 
-# b offers to buy the crystal a harvests with.
+# b offers to buy the program a harvests with.
 HARVESTING_WITH_AN_OFFER = perform(
-    add_coins(perform(WORLD, Harvest("a", "rich")), "b", 100), OfferToBuy("b", "a", "C1", 1, 100)
+    add_coins(perform(WORLD, Harvest("a", "rich")), "b", 100), OfferToBuy("b", "a", "v1", 1, 100)
 )
 
 
 @pytest.mark.parametrize(
     "action",
-    [OfferToSell("a", "b", "C1", 1, 100), RespondToEvent("a", 1, accept=True)],
+    [OfferToSell("a", "b", "v1", 1, 100), RespondToEvent("a", 1, accept=True)],
     ids=["offering it", "accepting an offer for it"],
 )
-def test_a_harvester_cannot_part_with_the_crystal_until_the_job_ends(
+def test_a_harvester_cannot_part_with_the_program_until_the_job_ends(
     action: OfferToSell | RespondToEvent,
 ) -> None:
     with pytest.raises(ActionRejected) as raised:
@@ -144,20 +144,20 @@ def test_a_harvester_cannot_part_with_the_crystal_until_the_job_ends(
     assert raised.value.code == "busy"
 
 
-def test_a_crystal_changes_hands_once_the_job_is_paid() -> None:
+def test_a_program_changes_hands_once_the_job_is_paid() -> None:
     sold = perform(at(HARVESTING_WITH_AN_OFFER, 100), RespondToEvent("a", 1, accept=True))
 
-    assert item_count(sold, "a", "C1") == 0
-    assert item_count(sold, "b", "C1") == 2
+    assert item_count(sold, "a", "v1") == 0
+    assert item_count(sold, "b", "v1") == 2
 
 
-def test_a_harvester_who_sold_their_only_crystal_cannot_harvest_again() -> None:
+def test_a_harvester_who_sold_their_only_program_cannot_harvest_again() -> None:
     sold = perform(at(HARVESTING_WITH_AN_OFFER, 100), RespondToEvent("a", 1, accept=True))
 
     with pytest.raises(ActionRejected) as raised:
         perform(sold, Harvest("a", "rich"))
 
-    assert raised.value.code == "no_crystal"
+    assert raised.value.code == "no_program"
 
 
 def test_the_edge_of_the_radius_is_within_reach() -> None:
@@ -172,7 +172,7 @@ def test_a_spring_pays_out_at_most_what_it_has_left() -> None:
     job = harvesting.residents[2].harvesting
     assert job is not None
     assert job.amount == 5
-    assert item_count(paid, "c", ENERGY) == 55
+    assert item_count(paid, "c", COMPUTE) == 55
 
 
 def test_an_empty_spring_cannot_be_harvested() -> None:
@@ -184,12 +184,12 @@ def test_an_empty_spring_cannot_be_harvested() -> None:
     assert raised.value.code == "spring_empty"
 
 
-def test_two_harvesters_share_a_spring_without_digging_the_same_energy() -> None:
+def test_two_harvesters_share_a_spring_without_gathering_the_same_compute() -> None:
     harvesting = perform(perform(WORLD, Harvest("a", "rich")), Harvest("b", "rich"))
     paid = at(harvesting, 100)
 
     assert harvesting.springs[0].reserve == 100 - 2 * HARVEST_YIELD
-    assert item_count(paid, "a", ENERGY) == item_count(paid, "b", ENERGY) == 50 + HARVEST_YIELD
+    assert item_count(paid, "a", COMPUTE) == item_count(paid, "b", COMPUTE) == 50 + HARVEST_YIELD
 
 
 @pytest.mark.parametrize(
@@ -236,7 +236,7 @@ def test_a_harvester_does_not_hold_others_up() -> None:
     assert moved.residents[1].walking is not None
 
 
-def test_a_harvester_may_leave_and_the_energy_goes_back_to_the_spring() -> None:
+def test_a_harvester_may_leave_and_the_compute_goes_back_to_the_spring() -> None:
     world = perform(perform(WORLD, Harvest("a", "rich")), LeaveGame("a"))
     assert world.residents[0].left
     assert world.residents[0].harvesting is None
@@ -246,20 +246,20 @@ def test_a_harvester_may_leave_and_the_energy_goes_back_to_the_spring() -> None:
 def test_ending_the_game_stops_every_job_unpaid() -> None:
     world = end_game(perform(WORLD, Harvest("a", "rich")))
     assert world.residents[0].harvesting is None
-    assert item_count(world, "a", ENERGY) == 50
+    assert item_count(world, "a", COMPUTE) == 50
     assert world.springs[0].reserve == 100
 
 
-def test_energy_being_harvested_count_as_owned() -> None:
-    # a sells every energy carried, then harvests: the sale completing does not take a out.
-    world = perform(add_coins(WORLD, "b", 1), OfferToSell("a", "b", ENERGY, 50, 1))
+def test_compute_being_harvested_counts_as_owned() -> None:
+    # a sells every compute carried, then harvests: the sale completing does not take a out.
+    world = perform(add_coins(WORLD, "b", 1), OfferToSell("a", "b", COMPUTE, 50, 1))
     world = perform(world, Harvest("a", "rich"))
 
     sold = perform(world, RespondToEvent("b", 1, accept=True))
     paid = at(sold, 100)
 
     assert not sold.residents[0].left
-    assert item_count(paid, "a", ENERGY) == HARVEST_YIELD
+    assert item_count(paid, "a", COMPUTE) == HARVEST_YIELD
 
 
 def test_springs_stay_where_they_are() -> None:
@@ -328,17 +328,17 @@ def test_springs_are_inside_the_map_apart_and_stocked(seed: int) -> None:
             lambda: replace(WORLD, springs=(Spring("out", Position(101, 1), 1, 1),)),
             "outside the map",
         ),
-        (lambda: Spring("negative", Position(1, 1), 1, -1), "holds -1 energy"),
+        (lambda: Spring("negative", Position(1, 1), 1, -1), "holds -1 compute"),
         (
             lambda: replace(
                 WORLD,
-                residents=(replace(WORLD.residents[0], harvesting=HarvestJob("x", 10, 1, "C1")),),
+                residents=(replace(WORLD.residents[0], harvesting=HarvestJob("x", 10, 1, "v1")),),
             ),
             "harvests unknown spring",
         ),
         (
-            lambda: replace(WORLD.residents[0], harvesting=HarvestJob("rich", 10, 1, "C2")),
-            "without carrying its crystal",
+            lambda: replace(WORLD.residents[0], harvesting=HarvestJob("rich", 10, 1, "v2")),
+            "without carrying its program",
         ),
         (lambda: replace(WORLD, time=math.nan), "world time must be a finite"),
     ],
@@ -347,7 +347,7 @@ def test_springs_are_inside_the_map_apart_and_stocked(seed: int) -> None:
         "off the map",
         "negative reserve",
         "unknown spring",
-        "crystal not held",
+        "program not held",
         "no time",
     ],
 )

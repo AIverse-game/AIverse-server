@@ -5,22 +5,22 @@ import pytest
 from aiverse_server.core.orders import FILL_LIMIT, Fill, Order, OrderBook
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 
-ORDER = Order(1, "a", "buy", "shard", 5, 10, 0, 300)
+ORDER = Order(1, "a", "buy", "data", 5, 10, 0, 300)
 
 
 @pytest.mark.parametrize(
     ("make", "match"),
     [
-        (lambda: Order(1, "a", "buy", "shard", 0, 10, 0, 300), "quantity"),
-        (lambda: Order(1, "a", "buy", "shard", 5, 0, 0, 300), "price"),
-        (lambda: Order(1, "a", "buy", "shard", 5, 10, 50, 40), "expires before"),
+        (lambda: Order(1, "a", "buy", "data", 0, 10, 0, 300), "quantity"),
+        (lambda: Order(1, "a", "buy", "data", 5, 0, 0, 300), "price"),
+        (lambda: Order(1, "a", "buy", "data", 5, 10, 50, 40), "expires before"),
         (lambda: OrderBook((ORDER, ORDER), 2), "unique"),
         (lambda: OrderBook((ORDER,), 1), "already issued"),
         (
-            lambda: OrderBook(fills=(Fill(1, 0, "shard", 1, 1, "a", "b", "a"),) * (FILL_LIMIT + 1)),
+            lambda: OrderBook(fills=(Fill(1, 0, "data", 1, 1, "a", "b", "a"),) * (FILL_LIMIT + 1)),
             "at most",
         ),
-        (lambda: OrderBook(fills=(Fill(3, 0, "shard", 1, 1, "a", "b", "a"),), next_seq=2), "fill"),
+        (lambda: OrderBook(fills=(Fill(3, 0, "data", 1, 1, "a", "b", "a"),), next_seq=2), "fill"),
     ],
     ids=["quantity", "price", "expiry", "duplicate", "unissued", "too_many_fills", "unissued_fill"],
 )

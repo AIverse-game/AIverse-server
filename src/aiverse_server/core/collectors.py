@@ -1,16 +1,16 @@
-"""Immutable harvesting equipment stored in the world; rules live in economy/towers.py."""
+"""Immutable harvesting equipment stored in the world; rules live in economy/collectors.py."""
 
 import math
 from dataclasses import dataclass
 
-TOWER_CAPACITY = 4
+COLLECTOR_CAPACITY = 4
 
 
 @dataclass(frozen=True)
-class TowerSlot:
+class CollectorSlot:
     id: int
     resident_id: str
-    crystal: str
+    program: str
     balance: int
     next_at: float
     harvested: int = 0
@@ -24,31 +24,31 @@ class TowerSlot:
             (self.rent_paid, 0),
         ):
             if type(amount) is not int or amount < minimum:
-                raise ValueError("invalid tower slot amount")
+                raise ValueError("invalid collector slot amount")
         if (
             not self.resident_id
-            or self.crystal not in ("C1", "C2", "C3")
+            or self.program not in ("v1", "v2", "v3")
             or not math.isfinite(self.next_at)
             or self.next_at < 0
         ):
-            raise ValueError("invalid tower slot identity or time")
+            raise ValueError("invalid collector slot identity or time")
 
 
 @dataclass(frozen=True)
-class Tower:
+class Collector:
     id: int
     owner_id: str
     spring_id: str
-    slots: tuple[TowerSlot, ...] = ()
+    slots: tuple[CollectorSlot, ...] = ()
     next_slot_id: int = 1
 
     def __post_init__(self) -> None:
         if type(self.id) is not int or self.id < 1 or not self.owner_id or not self.spring_id:
-            raise ValueError("invalid tower identity")
+            raise ValueError("invalid collector identity")
         if type(self.next_slot_id) is not int or self.next_slot_id < 1:
             raise ValueError("invalid next slot id")
         ids = [slot.id for slot in self.slots]
-        if len(ids) > TOWER_CAPACITY:
-            raise ValueError("too many tower slots")
+        if len(ids) > COLLECTOR_CAPACITY:
+            raise ValueError("too many collector slots")
         if len(set(ids)) != len(ids) or any(not 1 <= id < self.next_slot_id for id in ids):
-            raise ValueError("invalid tower slot ids")
+            raise ValueError("invalid collector slot ids")

@@ -7,16 +7,16 @@ import pytest
 from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.tools import TOOLS, ResidentTools, ToolSpec, tool_specs
 from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.economy.market import quote
-from aiverse_server.game.actions import BuildTower, InstallCrystal, MoveTo, SellEnergy, perform
+from aiverse_server.game.actions import BuildCollector, InstallProgram, MoveTo, SellCompute, perform
 from aiverse_server.server.app import Game
 
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((ENERGY, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((ENERGY, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((COMPUTE, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((COMPUTE, 100),)), coins=5000),
     ),
     springs=(Spring("p1", Position(80, 50), 4, 300),),
     market=Market(Position(50, 50), 5),
@@ -50,11 +50,11 @@ def test_tools_act_for_their_own_resident_only() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
 
-    result = tools.call("buy_crystal", {"tier": "C1"})
+    result = tools.call("buy_program", {"tier": "v1"})
 
     assert result.ok
-    assert me(game, "a").inventory.count("C1") == 1
-    assert me(game, "b").inventory.count("C1") == 0
+    assert me(game, "a").inventory.count("v1") == 1
+    assert me(game, "b").inventory.count("v1") == 0
     assert result.status is not None and result.status["coins"] == 4400
 
 
@@ -73,19 +73,23 @@ def test_no_tool_takes_the_resident_who_acts(spec: ToolSpec) -> None:
         ("move_to", '{"x": 1, "y": 2, "resident_id": "b"}', "invalid_arguments"),
         ("move_to", "not json", "invalid_arguments"),
         ("move_to", "[1, 2]", "invalid_arguments"),
-        ("sell_energy", '{"quantity": ' + "9" * 5000 + "}", "invalid_arguments"),
-        ("sell_energy", {"quantity": "5"}, "invalid_arguments"),
+        ("sell_compute", '{"quantity": ' + "9" * 5000 + "}", "invalid_arguments"),
+        ("sell_compute", {"quantity": "5"}, "invalid_arguments"),
         ("move_to", {"x": 500, "y": 2}, "out_of_bounds"),
         ("harvest", {"spring_id": "p1"}, "unknown_spring"),
-        ("build_tower", {"spring_id": "p1"}, "unknown_spring"),
-        ("install_crystal", {"tower_id": 1, "crystal": "C1", "deposit": 10}, "unknown_tower"),
-        ("buy_crystal", {"tier": "C9"}, "unknown_crystal"),
+        ("build_collector", {"spring_id": "p1"}, "unknown_spring"),
+        (
+            "install_program",
+            {"collector_id": 1, "program": "v1", "deposit": 10},
+            "unknown_collector",
+        ),
+        ("buy_program", {"tier": "C9"}, "unknown_program"),
         ("forget", {"note_id": 3}, "unknown_note"),
-        ("sell_energy", {"quantity": 100}, "last_energy"),
+        ("sell_compute", {"quantity": 100}, "last_compute"),
         (
             "offer_to_sell",
-            {"buyer_id": "b", "kind": "energy", "quantity": 100, "price": 1},
-            "last_energy",
+            {"buyer_id": "b", "kind": "compute", "quantity": 100, "price": 1},
+            "last_compute",
         ),
     ],
 )
@@ -111,43 +115,48 @@ def test_a_spring_in_sight_is_known_even_before_it_is_remembered() -> None:
 
     result = tools.call("harvest", {"spring_id": "p1"})
 
-    assert result.code == "no_crystal"  # Refused for the crystal, not as an unknown spring.
+    assert result.code == "no_program"  # Refused for the program, not as an unknown spring.
 
 
-def test_towers_never_seen_are_refused_alike_whether_or_not_they_exist() -> None:
+def test_collectors_never_seen_are_refused_alike_whether_or_not_they_exist() -> None:
     harvester = Resident(
-        "c", "丙", "#778899", Position(80, 50), Inventory((("C1", 1),)), coins=10000
+        "c", "丙", "#778899", Position(80, 50), Inventory((("v1", 1),)), coins=10000
     )
     game, _ = make_game(replace(WORLD, residents=(*WORLD.residents, harvester)))
-    ResidentTools(game, "c").call("build_tower", {"spring_id": "p1"})
+    ResidentTools(game, "c").call("build_collector", {"spring_id": "p1"})
     tools = ResidentTools(game, "a")
 
     calls = [
-        tools.call("install_crystal", {"tower_id": tower_id, "crystal": "C1", "deposit": 10})
-        for tower_id in (1, 2)
+        tools.call(
+            "install_program", {"collector_id": collector_id, "program": "v1", "deposit": 10}
+        )
+        for collector_id in (1, 2)
     ] + [
-        tools.call("fund_tower", {"tower_id": tower_id, "slot_id": 1, "amount": 10})
-        for tower_id in (1, 2)
+        tools.call("fund_collector", {"collector_id": collector_id, "slot_id": 1, "amount": 10})
+        for collector_id in (1, 2)
     ]
     calls += [
-        tools.call("remove_crystal", {"tower_id": tower_id, "slot_id": 1}) for tower_id in (1, 2)
+        tools.call("remove_program", {"collector_id": collector_id, "slot_id": 1})
+        for collector_id in (1, 2)
     ]
 
-    assert {(call.code, call.message) for call in calls} == {("unknown_tower", "unknown tower")}
+    assert {(call.code, call.message) for call in calls} == {
+        ("unknown_collector", "unknown collector")
+    }
 
 
-def away_from_a_shared_tower() -> tuple[Game, FakeClock]:
-    """Owner "c" (slot 1) and tenant "b" (slot 2) share tower 1 on p1, then both walk off."""
-    stock = Inventory((("C1", 1), (ENERGY, 100)))
+def away_from_a_shared_collector() -> tuple[Game, FakeClock]:
+    """Owner "c" (slot 1) and tenant "b" (slot 2) share collector 1 on p1, then both walk off."""
+    stock = Inventory((("v1", 1), (COMPUTE, 100)))
     at_spring = Position(80, 50)
     residents = (
         WORLD.residents[0],
         Resident("b", "乙", "#445566", at_spring, stock, coins=10000),
         Resident("c", "丙", "#778899", at_spring, stock, coins=10000),
     )
-    world = perform(replace(WORLD, residents=residents), BuildTower("c", "p1"))
+    world = perform(replace(WORLD, residents=residents), BuildCollector("c", "p1"))
     world = perform(
-        perform(world, InstallCrystal("c", 1, "C1", 500)), InstallCrystal("b", 1, "C1", 500)
+        perform(world, InstallProgram("c", 1, "v1", 500)), InstallProgram("b", 1, "v1", 500)
     )
     game, clock = make_game(world)
     look(game, "b")
@@ -159,56 +168,56 @@ def away_from_a_shared_tower() -> tuple[Game, FakeClock]:
 
 
 def test_tenant_and_owner_can_fund_and_remove_their_slots_from_afar() -> None:
-    game, _ = away_from_a_shared_tower()
+    game, _ = away_from_a_shared_collector()
     tenant, owner = ResidentTools(game, "b"), ResidentTools(game, "c")
 
-    funded = tenant.call("fund_tower", {"tower_id": 1, "slot_id": 2, "amount": 50})
-    removed_by_tenant = tenant.call("remove_crystal", {"tower_id": 1, "slot_id": 2})
-    removed_by_owner = owner.call("remove_crystal", {"tower_id": 1, "slot_id": 1})
+    funded = tenant.call("fund_collector", {"collector_id": 1, "slot_id": 2, "amount": 50})
+    removed_by_tenant = tenant.call("remove_program", {"collector_id": 1, "slot_id": 2})
+    removed_by_owner = owner.call("remove_program", {"collector_id": 1, "slot_id": 1})
 
     assert funded.ok and removed_by_tenant.ok and removed_by_owner.ok
-    assert me(game, "b").inventory.count("C1") == 1
+    assert me(game, "b").inventory.count("v1") == 1
 
 
 def test_a_spring_once_seen_is_not_unknown_after_walking_away() -> None:
-    game, _ = away_from_a_shared_tower()
+    game, _ = away_from_a_shared_collector()
 
-    result = ResidentTools(game, "b").call("build_tower", {"spring_id": "p1"})
+    result = ResidentTools(game, "b").call("build_collector", {"spring_id": "p1"})
 
     assert result.code == "not_at_spring"
 
 
-def test_a_walk_that_would_spend_the_last_energy_is_refused() -> None:
-    poor = replace(WORLD.residents[0], inventory=Inventory(((ENERGY, 10),)))
+def test_a_walk_that_would_spend_the_last_compute_is_refused() -> None:
+    poor = replace(WORLD.residents[0], inventory=Inventory(((COMPUTE, 10),)))
     game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
     before = game.world
 
-    # From (50, 50) to (70, 50) costs 10 energy, all the resident has.
+    # From (50, 50) to (70, 50) costs 10 compute, all the resident has.
     result = ResidentTools(game, "a").call("move_to", {"x": 70, "y": 50})
 
-    assert result.code == "last_energy"
+    assert result.code == "last_compute"
     assert game.world == before
 
 
-def test_a_whisper_on_the_way_that_would_spend_the_last_energy_is_refused() -> None:
-    poor = replace(WORLD.residents[0], inventory=Inventory(((ENERGY, 6),)))
+def test_a_whisper_on_the_way_that_would_spend_the_last_compute_is_refused() -> None:
+    poor = replace(WORLD.residents[0], inventory=Inventory(((COMPUTE, 6),)))
     game, _ = make_game(replace(WORLD, residents=(poor, WORLD.residents[1])))
     tools = ResidentTools(game, "a")
     assert tools.call("move_to", {"x": 60, "y": 50}).ok
 
     result = tools.call("say", {"text": "hi", "to": "b"})
 
-    assert result.code == "last_energy"
-    assert me(game, "a").inventory.count(ENERGY) == 1
+    assert result.code == "last_compute"
+    assert me(game, "a").inventory.count(COMPUTE) == 1
 
 
-def test_selling_all_but_one_energy_keeps_the_resident_in_the_game() -> None:
+def test_selling_all_but_one_compute_keeps_the_resident_in_the_game() -> None:
     game, _ = make_game()
 
-    result = ResidentTools(game, "a").call("sell_energy", {"quantity": 99})
+    result = ResidentTools(game, "a").call("sell_compute", {"quantity": 99})
 
     assert result.ok
-    assert me(game, "a").inventory.count(ENERGY) == 1
+    assert me(game, "a").inventory.count(COMPUTE) == 1
     assert not me(game, "a").left
 
 
@@ -220,9 +229,9 @@ def test_splitting_a_sale_within_a_round_earns_no_more_than_selling_at_once(
     tools = ResidentTools(game, "a", seen_pressure=0.0)
 
     for part in parts:
-        assert tools.call("sell_energy", {"quantity": part}).ok
+        assert tools.call("sell_compute", {"quantity": part}).ok
 
-    # 30 energy sold at once into an untouched market fetch 578 coins, see the market's tests;
+    # 30 compute sold at once into an untouched market fetch 578 coins, see the market's tests;
     # parts round down on their own.
     assert 5000 + 578 - len(parts) < me(game, "a").coins <= 5000 + 578
 
@@ -232,20 +241,20 @@ def test_a_sale_keeps_the_price_the_agent_saw_for_thirty_seconds_only(
     waited: float, held: bool
 ) -> None:
     dumper = replace(
-        WORLD.residents[1], position=Position(52, 50), inventory=Inventory(((ENERGY, 1000),))
+        WORLD.residents[1], position=Position(52, 50), inventory=Inventory(((COMPUTE, 1000),))
     )
     game, clock = make_game(replace(WORLD, residents=(WORLD.residents[0], dumper)))
     tools = ResidentTools(game, "a", seen_pressure=0.0, seen_at=0.0)
-    game.act(SellEnergy("b", 1000))
+    game.act(SellCompute("b", 1000))
     market = game.world.market
     assert market is not None
     clock.now = waited
     at_the_market_price = quote(market, waited, 30)
 
-    result = tools.call("sell_energy", {"quantity": 30})
+    result = tools.call("sell_compute", {"quantity": 30})
 
     assert result.ok
-    # 30 energy into an untouched market fetch 578 coins, see the market's tests.
+    # 30 compute into an untouched market fetch 578 coins, see the market's tests.
     assert at_the_market_price < 578
     assert me(game, "a").coins == 5000 + (578 if held else at_the_market_price)
 
@@ -290,14 +299,14 @@ def test_trading_tools_send_and_answer_offers() -> None:
     seller, buyer = ResidentTools(game, "a"), ResidentTools(game, "b")
 
     offered = seller.call(
-        "offer_to_sell", {"buyer_id": "b", "kind": "energy", "quantity": 10, "price": 150}
+        "offer_to_sell", {"buyer_id": "b", "kind": "compute", "quantity": 10, "price": 150}
     )
     event_id = game.world.events.pending[0].id
     accepted = buyer.call("respond_to_offer", {"event_id": event_id, "accept": True})
 
     assert offered.ok and accepted.ok
     assert me(game, "a").coins == 5150
-    assert me(game, "b").inventory.count(ENERGY) == 110
+    assert me(game, "b").inventory.count(COMPUTE) == 110
 
 
 def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -> None:
@@ -306,7 +315,7 @@ def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -
     arguments = {
         "buyer_id": "b",
         "summary": "a rich spring",
-        "content": "spring p9 near (40, 90) holds 900 energy",
+        "content": "spring p9 near (40, 90) holds 900 compute",
         "price": 150,
     }
 
@@ -365,10 +374,10 @@ def test_information_offers_with_bad_arguments_fail_and_change_nothing(
 
 
 def proposed() -> tuple[Game, FakeClock]:
-    """a, buying, proposes b 2 deliveries of 20 energy for 300 coins within 120 s, b staking
+    """a, buying, proposes b 2 deliveries of 20 compute for 300 coins within 120 s, b staking
     50 on each."""
     game, clock = make_game()
-    assert ResidentTools(game, "a").propose_contract("b", "buyer", ENERGY, 20, 300, 2, 120, 50).ok
+    assert ResidentTools(game, "a").propose_contract("b", "buyer", COMPUTE, 20, 300, 2, 120, 50).ok
     return game, clock
 
 
@@ -438,7 +447,7 @@ def test_the_deliver_tool_works_for_the_supplier_only() -> None:
     assert not refused.ok and refused.code == "not_supplier"
     assert delivered.ok
     assert me(game, "b").coins == 5000 - 100 + 300 + 50
-    assert me(game, "a").inventory.count(ENERGY) == 120
+    assert me(game, "a").inventory.count(COMPUTE) == 120
 
 
 def test_cancelling_shows_the_buyer_how_the_contract_ended() -> None:

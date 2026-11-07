@@ -9,15 +9,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..economy.crystals import CRYSTAL_TIERS
-from ..economy.energy import ENERGY
-from ..economy.shards import SHARD
-from ..economy.towers import TOWER_PRICE
+from ..economy.collectors import COLLECTOR_PRICE
+from ..economy.compute import COMPUTE
+from ..economy.gathering import DATA
+from ..economy.programs import PROGRAM_TIERS
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
-    "production": ("buy_crystal", "sell_energy", "harvest", "dig_shards", "refine_crystal"),
+    "production": ("buy_program", "sell_compute", "harvest", "gather_data", "write_program"),
     "exchange": ("place_order", "cancel_order"),
     "offers": (
         "offer_to_buy",
@@ -27,7 +27,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "withdraw_offer",
     ),
     "contracts": ("propose_contract", "deliver", "cancel_contract"),
-    "towers": ("build_tower", "install_crystal", "fund_tower", "remove_crystal"),
+    "collectors": ("build_collector", "install_program", "fund_collector", "remove_program"),
     "memory": ("remember", "forget"),
 }
 
@@ -38,7 +38,7 @@ DISCOVER_TOOL_SPEC: dict[str, Any] = {
         "description": (
             "Make additional game tools available in this round. Choose a group when the "
             "current tools cannot carry out your plan: production, exchange, offers, "
-            "contracts, towers or memory. The group's tools appear in the next request."
+            "contracts, collectors or memory. The group's tools appear in the next request."
         ),
         "parameters": {
             "type": "object",
@@ -63,8 +63,8 @@ def selected_tool_names(observation: Observation) -> set[str]:
         (
             me.walking_to,
             me.harvesting_spring,
-            me.digging_quarry,
-            me.refining_crystal,
+            me.gathering_mine,
+            me.writing_program,
         )
     )
     names = {"say", "remember"}
@@ -75,27 +75,27 @@ def selected_tool_names(observation: Observation) -> set[str]:
     if not busy:
         names.add("move_to")
         if me.at_market:
-            names.add("buy_crystal")
-            if me.energy > 1:
-                names.add("sell_energy")
+            names.add("buy_program")
+            if me.compute > 1:
+                names.add("sell_compute")
         if me.at_spring is not None:
             spring = next((s for s in observation.known_springs if s.id == me.at_spring), None)
-            if me.crystals:
-                names.add("install_crystal")
+            if me.programs:
+                names.add("install_program")
                 if spring is not None and spring.reserve > 0:
                     names.add("harvest")
             if (
                 spring is not None
                 and spring.reserve > 0
-                and me.coins >= observation.tower_rules["price"]
+                and me.coins >= observation.collector_rules["price"]
             ):
-                names.add("build_tower")
-        if me.at_quarry is not None:
-            quarry = next((q for q in observation.quarries if q.id == me.at_quarry), None)
-            if quarry is not None and quarry.reserve > 0:
-                names.add("dig_shards")
-        if me.at_workshop and me.shards > 0:
-            names.add("refine_crystal")
+                names.add("build_collector")
+        if me.at_mine is not None:
+            mine = next((q for q in observation.mines if q.id == me.at_mine), None)
+            if mine is not None and mine.reserve > 0:
+                names.add("gather_data")
+        if me.at_studio and me.data > 0:
+            names.add("write_program")
         if observation.offers_to_me or observation.information_offers_to_me:
             names.add("respond_to_offer")
         if observation.contract_proposals_to_me:
@@ -118,31 +118,31 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         names.add("forget")
     if any(order.resident_id == me.id for order in world.orders.orders):
         names.add("cancel_order")
-    if any((me.walking, me.harvesting, me.digging, me.refining)):
+    if any((me.walking, me.harvesting, me.gathering, me.writing)):
         return names
 
     names.update(("move_to", "place_order"))
     if world.market is not None and world.market.reaches(me.position):
-        names.add("buy_crystal")
-        if me.inventory.count(ENERGY) > 1:
-            names.add("sell_energy")
+        names.add("buy_program")
+        if me.inventory.count(COMPUTE) > 1:
+            names.add("sell_compute")
     spring = next((spring for spring in world.springs if spring.reaches(me.position)), None)
     if spring is not None:
-        has_crystal = any(me.inventory.count(crystal.tier) > 0 for crystal in CRYSTAL_TIERS)
-        if has_crystal:
-            names.add("install_crystal")
+        has_program = any(me.inventory.count(program.tier) > 0 for program in PROGRAM_TIERS)
+        if has_program:
+            names.add("install_program")
             if spring.reserve > 0:
                 names.add("harvest")
-        if spring.reserve > 0 and me.coins >= TOWER_PRICE:
-            names.add("build_tower")
-    if any(quarry.reaches(me.position) and quarry.reserve > 0 for quarry in world.quarries):
-        names.add("dig_shards")
+        if spring.reserve > 0 and me.coins >= COLLECTOR_PRICE:
+            names.add("build_collector")
+    if any(mine.reaches(me.position) and mine.reserve > 0 for mine in world.mines):
+        names.add("gather_data")
     if (
-        world.workshop is not None
-        and world.workshop.reaches(me.position)
-        and me.inventory.count(SHARD) > 0
+        world.studio is not None
+        and world.studio.reaches(me.position)
+        and me.inventory.count(DATA) > 0
     ):
-        names.add("refine_crystal")
+        names.add("write_program")
     if any(resident.id != me.id and not resident.left for resident in world.residents):
         names.update(("offer_to_buy", "offer_to_sell", "offer_information", "propose_contract"))
     if any(event.recipient_id == me.id for event in world.events.pending):
@@ -151,8 +151,8 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         names.add("withdraw_offer")
     if any(contract.supplier_id == me.id for contract in world.contracts.active):
         names.update(("deliver", "cancel_contract"))
-    if any(slot.resident_id == me.id for tower in world.towers for slot in tower.slots):
-        names.update(("fund_tower", "remove_crystal"))
+    if any(slot.resident_id == me.id for collector in world.collectors for slot in collector.slots):
+        names.update(("fund_collector", "remove_program"))
     return names
 
 

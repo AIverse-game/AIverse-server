@@ -14,14 +14,14 @@ from aiverse_server.core.world import (
     World,
     WorldMap,
 )
-from aiverse_server.economy.energy import ENERGY
+from aiverse_server.economy.compute import COMPUTE
 from aiverse_server.game.actions import (
-    BuildTower,
+    BuildCollector,
     Harvest,
-    InstallCrystal,
+    InstallProgram,
     MoveTo,
     OfferToSell,
-    SellEnergy,
+    SellCompute,
     perform,
 )
 from aiverse_server.residents.perception import begin_turn
@@ -30,8 +30,8 @@ from aiverse_server.server.app import Game
 WORLD = World(
     map=WorldMap(size=100),
     residents=(
-        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((ENERGY, 100),)), coins=5000),
-        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((ENERGY, 100),)), coins=5000),
+        Resident("a", "甲", "#112233", Position(50, 50), Inventory(((COMPUTE, 100),)), coins=5000),
+        Resident("b", "乙", "#445566", Position(60, 50), Inventory(((COMPUTE, 100),)), coins=5000),
     ),
     springs=(Spring("p1", Position(80, 50), 4, 300),),
     market=Market(Position(50, 50), 5),
@@ -59,12 +59,12 @@ def look(game: Game, resident_id: str) -> Observation:
 
 def test_observation_shows_self_market_springs_offers_and_ranking() -> None:
     game, _ = make_game()
-    game.act(OfferToSell("b", "a", ENERGY, 5, 80))
+    game.act(OfferToSell("b", "a", COMPUTE, 5, 80))
 
     seen = look(game, "a")
     them = look(game, "b")
 
-    assert seen.me.at_market and seen.me.energy == 100 and seen.me.coins == 5000
+    assert seen.me.at_market and seen.me.compute == 100 and seen.me.coins == 5000
     assert seen.market is not None and seen.market.distance == 0
     assert seen.offers_to_me[0].from_id == "b" and seen.offers_to_me[0].side == "sell"
     assert [standing.id for standing in seen.residents] == ["a", "b"]
@@ -72,7 +72,7 @@ def test_observation_shows_self_market_springs_offers_and_ranking() -> None:
     # The spring is 30 units away, out of sight, so not yet known.
     assert seen.known_springs == ()
     assert them.my_offers[0].to_id == "a"
-    assert them.me.energy == 95 and them.me.energy_in_offers == 5
+    assert them.me.compute == 95 and them.me.compute_in_offers == 5
     assert [spring.id for spring in them.known_springs] == ["p1"]
     assert them.known_springs[0].walk_cost == 10
 
@@ -93,7 +93,7 @@ def test_market_trend_shows_price_and_anonymous_sales_over_time() -> None:
     assert WORLD.market is not None
     market = replace(WORLD.market, history=(PricePoint(0.0, 20.0),))
     game, clock = make_game(replace(WORLD, market=market))
-    game.act(SellEnergy("a", 20))
+    game.act(SellCompute("a", 20))
     clock.now = 40.0
 
     seen = look(game, "b")
@@ -118,7 +118,7 @@ def test_market_trend_keeps_sales_when_old_price_samples_are_evicted() -> None:
         WORLD,
         time=350.0,
         market=replace(WORLD.market, history=(PricePoint(350.0, 20.0),)),
-        ledger=Ledger((Transfer(90.0, SYSTEM, "a", 100, "market", ENERGY, 5),)),
+        ledger=Ledger((Transfer(90.0, SYSTEM, "a", 100, "market", COMPUTE, 5),)),
     )
     world, perception = begin_turn(world, "b")
 
@@ -133,7 +133,7 @@ def test_market_trend_keeps_sales_when_old_price_samples_are_evicted() -> None:
 
 
 def test_exchange_history_is_bounded_and_does_not_reveal_parties() -> None:
-    fills = tuple(Fill(i, float(i * 40), "C1", 1, 500 + i, "a", "b", "a") for i in range(1, 12))
+    fills = tuple(Fill(i, float(i * 40), "v1", 1, 500 + i, "a", "b", "a") for i in range(1, 12))
     game, clock = make_game(replace(WORLD, orders=OrderBook(fills=fills, next_seq=12)))
     clock.now = 440.0
 
@@ -146,41 +146,41 @@ def test_exchange_history_is_bounded_and_does_not_reveal_parties() -> None:
     assert all("buyer_id" not in trade and "seller_id" not in trade for trade in public_trades)
 
 
-def tower_world() -> World:
-    """A tower with one C1 slot on p1, which is in sight of "b" but not of "a"."""
+def collector_world() -> World:
+    """A collector with one v1 slot on p1, which is in sight of "b" but not of "a"."""
     harvester = Resident(
-        "c", "丙", "#778899", Position(80, 50), Inventory((("C1", 1),)), coins=10000
+        "c", "丙", "#778899", Position(80, 50), Inventory((("v1", 1),)), coins=10000
     )
     world = replace(WORLD, residents=(*WORLD.residents, harvester))
-    return perform(perform(world, BuildTower("c", "p1")), InstallCrystal("c", 1, "C1", 500))
+    return perform(perform(world, BuildCollector("c", "p1")), InstallProgram("c", 1, "v1", 500))
 
 
-def test_spring_in_sight_shows_how_fast_towers_draw_it_down() -> None:
-    game, _ = make_game(tower_world())
+def test_spring_in_sight_shows_how_fast_collectors_draw_it_down() -> None:
+    game, _ = make_game(collector_world())
 
     seen = look(game, "b").known_springs[0]
 
     assert seen.in_sight and seen.seen_ago == 0
-    assert seen.tower_draw_per_second == 3  # 60 energy every 20 seconds.
-    assert seen.seconds_to_empty == 100  # 300 energy at 3 a second.
+    assert seen.collector_draw_per_second == 3  # 60 compute every 20 seconds.
+    assert seen.seconds_to_empty == 100  # 300 compute at 3 a second.
 
 
 def test_spring_out_of_sight_keeps_its_old_reserve_and_hides_the_draw() -> None:
-    game, clock = make_game(tower_world())
+    game, clock = make_game(collector_world())
     look(game, "b")
     game.act(MoveTo("b", Position(50, 50)))
-    clock.now = 45  # Two tower cycles of 60 energy have passed.
+    clock.now = 45  # Two collector cycles of 60 compute have passed.
 
     seen = look(game, "b").known_springs[0]
 
     assert game.world.springs[0].reserve == 180
     assert not seen.in_sight and seen.seen_ago == 45
     assert seen.reserve == 300
-    assert seen.tower_draw_per_second is None and seen.seconds_to_empty is None
+    assert seen.collector_draw_per_second is None and seen.seconds_to_empty is None
 
 
 def test_spring_reserve_trend_uses_only_reserves_the_resident_saw() -> None:
-    game, clock = make_game(tower_world())
+    game, clock = make_game(collector_world())
     look(game, "b")
     clock.now = 65.0
     second = look(game, "b")
@@ -194,37 +194,37 @@ def test_spring_reserve_trend_uses_only_reserves_the_resident_saw() -> None:
     assert [sample.reserve for sample in away.known_springs[0].reserve_history] == [300, 120]
 
 
-def test_towers_on_a_spring_never_seen_are_not_listed() -> None:
-    game, _ = make_game(tower_world())
+def test_collectors_on_a_spring_never_seen_are_not_listed() -> None:
+    game, _ = make_game(collector_world())
 
     unaware = look(game, "a")
     aware = look(game, "b")
 
-    assert unaware.known_springs == () and unaware.towers == ()
-    assert [tower["spring_id"] for tower in aware.towers] == ["p1"]
+    assert unaware.known_springs == () and unaware.collectors == ()
+    assert [collector["spring_id"] for collector in aware.collectors] == ["p1"]
 
 
-def shared_tower_world() -> World:
-    """Owner "c" and tenant "b" each have a slot in tower 1 on p1; "a" knows nothing of it."""
-    stock = Inventory((("C1", 1), (ENERGY, 100)))
+def shared_collector_world() -> World:
+    """Owner "c" and tenant "b" each have a slot in collector 1 on p1; "a" knows nothing of it."""
+    stock = Inventory((("v1", 1), (COMPUTE, 100)))
     at_spring = Position(80, 50)
     residents = (
         WORLD.residents[0],
         Resident("b", "乙", "#445566", at_spring, stock, coins=10000),
         Resident("c", "丙", "#778899", at_spring, stock, coins=10000),
     )
-    world = perform(replace(WORLD, residents=residents), BuildTower("c", "p1"))
+    world = perform(replace(WORLD, residents=residents), BuildCollector("c", "p1"))
     return perform(
-        perform(world, InstallCrystal("c", 1, "C1", 500)), InstallCrystal("b", 1, "C1", 500)
+        perform(world, InstallProgram("c", 1, "v1", 500)), InstallProgram("b", 1, "v1", 500)
     )
 
 
 def slot_holders(seen: Observation) -> list[list[object]]:
-    return [[slot["resident_id"] for slot in tower["slots"]] for tower in seen.towers]  # type: ignore[attr-defined]
+    return [[slot["resident_id"] for slot in collector["slots"]] for collector in seen.collectors]  # type: ignore[attr-defined]
 
 
-def test_an_owner_away_from_the_spring_still_sees_every_slot_of_their_tower() -> None:
-    game, clock = make_game(shared_tower_world())
+def test_an_owner_away_from_the_spring_still_sees_every_slot_of_their_collector() -> None:
+    game, clock = make_game(shared_collector_world())
     game.act(MoveTo("c", Position(50, 50)))
     clock.now = 20
 
@@ -235,7 +235,7 @@ def test_an_owner_away_from_the_spring_still_sees_every_slot_of_their_tower() ->
 
 
 def test_a_tenant_away_from_the_spring_sees_only_their_own_slot() -> None:
-    game, clock = make_game(shared_tower_world())
+    game, clock = make_game(shared_collector_world())
     game.act(MoveTo("b", Position(50, 50)))
     clock.now = 20
 
@@ -248,7 +248,7 @@ def test_a_tenant_away_from_the_spring_sees_only_their_own_slot() -> None:
 def test_a_neighbour_harvesting_at_a_spring_never_seen_does_not_name_it() -> None:
     watcher = replace(WORLD.residents[0], position=Position(58, 50))  # 22 from p1.
     harvester = Resident(
-        "c", "丙", "#778899", Position(76.5, 50), Inventory((("C1", 1),)), coins=9000
+        "c", "丙", "#778899", Position(76.5, 50), Inventory((("v1", 1),)), coins=9000
     )
     game, _ = make_game(replace(WORLD, residents=(watcher, WORLD.residents[1], harvester)))
     game.act(Harvest("c", "p1"))
@@ -262,12 +262,12 @@ def test_a_neighbour_harvesting_at_a_spring_never_seen_does_not_name_it() -> Non
     assert [(h.kind, h.spring_id) for h in seen.activity] == [("started_harvesting", None)]
 
 
-def test_spring_without_towers_has_no_time_to_empty() -> None:
+def test_spring_without_collectors_has_no_time_to_empty() -> None:
     game, _ = make_game()
 
     seen = look(game, "b").known_springs[0]
 
-    assert seen.tower_draw_per_second == 0 and seen.seconds_to_empty is None
+    assert seen.collector_draw_per_second == 0 and seen.seconds_to_empty is None
 
 
 def test_observation_json_is_compact_and_rounded() -> None:

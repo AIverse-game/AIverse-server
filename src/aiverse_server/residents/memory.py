@@ -13,7 +13,7 @@ so deciding what is worth keeping stays with the resident. Every note is handed 
 round in the resident's perception, see `perception.begin_turn`.
 
 Keeping notes is not a primitive (`actions.py`): it changes nothing on the map, costs no
-energy, works while harvesting or walking, and is not broadcast, since memory is not in the
+compute, works while harvesting or walking, and is not broadcast, since memory is not in the
 protocol. Like perception, it is refused for a resident who does not exist or has left, and
 once the game is over. Notes live in the in-memory world, so a new game starts without any.
 

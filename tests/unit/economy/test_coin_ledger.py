@@ -8,31 +8,31 @@ import pytest
 from aiverse_server.core.events import pending_for
 from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Inventory, Market, Position, Resident, Spring, World, WorldMap
-from aiverse_server.economy.crystals import CRYSTAL_TIERS
-from aiverse_server.economy.energy import ENERGY
-from aiverse_server.economy.towers import (
+from aiverse_server.economy.collectors import (
+    COLLECTOR_PRICE,
+    COLLECTOR_SECONDS,
+    COLLECTOR_YIELD,
     RENT_PER_100,
-    TOWER_PRICE,
-    TOWER_SECONDS,
-    TOWER_YIELD,
     UPKEEP_PER_100,
 )
+from aiverse_server.economy.compute import COMPUTE
+from aiverse_server.economy.programs import PROGRAM_TIERS
 from aiverse_server.game.actions import (
     Action,
-    BuildTower,
-    BuyCrystal,
+    BuildCollector,
+    BuyProgram,
     CancelContract,
     Deliver,
-    FundTower,
-    InstallCrystal,
+    FundCollector,
+    InstallProgram,
     LeaveGame,
     OfferInformation,
     OfferToBuy,
     OfferToSell,
     ProposeContract,
-    RemoveCrystal,
+    RemoveProgram,
     RespondToEvent,
-    SellEnergy,
+    SellCompute,
     WithdrawEvent,
     perform,
 )
@@ -44,7 +44,7 @@ Row = tuple[str, str, int, str, str | None, int]
 
 def resident(id: str) -> Resident:
     return Resident(
-        id, id, "#123456", Position(10, 10), Inventory(((ENERGY, 100), ("C1", 2))), 10_000
+        id, id, "#123456", Position(10, 10), Inventory(((COMPUTE, 100), ("v1", 2))), 10_000
     )
 
 
@@ -56,7 +56,7 @@ WORLD = World(
     market=Market(Position(10, 10), 5),
 )
 
-C1_CYCLE = next(m for m in CRYSTAL_TIERS if m.tier == "C1").energy_per_job * TOWER_YIELD
+V1_CYCLE = next(m for m in PROGRAM_TIERS if m.tier == "v1").compute_per_job * COLLECTOR_YIELD
 
 
 def rows(world: World) -> list[Row]:
@@ -75,61 +75,61 @@ def accept(world: World, resident_id: str) -> World:
     return perform(world, RespondToEvent(resident_id, pending_for(world, resident_id)[0].id, True))
 
 
-def test_selling_energy_records_the_market_paying_the_seller() -> None:
-    world = perform(WORLD, SellEnergy("a", 30))
+def test_selling_compute_records_the_market_paying_the_seller() -> None:
+    world = perform(WORLD, SellCompute("a", 30))
 
     coins = next(r.coins for r in world.residents if r.id == "a") - 10_000
-    assert rows(world) == [(SYSTEM, "a", coins, "market", ENERGY, 30)]
+    assert rows(world) == [(SYSTEM, "a", coins, "market", COMPUTE, 30)]
 
 
-def test_buying_a_crystal_records_the_buyer_paying_the_system() -> None:
-    world = perform(WORLD, BuyCrystal("a", "C2"))
+def test_buying_a_program_records_the_buyer_paying_the_system() -> None:
+    world = perform(WORLD, BuyProgram("a", "v2"))
 
-    assert rows(world) == [("a", SYSTEM, 2_400, "crystal_import", "C2", 1)]
+    assert rows(world) == [("a", SYSTEM, 2_400, "program_import", "v2", 1)]
 
 
-def test_a_rented_tower_cycle_records_rent_to_the_owner_and_upkeep_to_the_system() -> None:
-    world = run(WORLD, BuildTower("a", "p1"), InstallCrystal("b", 1, "C1", 500))
-    world = settle_due(replace(world, time=TOWER_SECONDS))
+def test_a_rented_collector_cycle_records_rent_to_the_owner_and_upkeep_to_the_system() -> None:
+    world = run(WORLD, BuildCollector("a", "p1"), InstallProgram("b", 1, "v1", 500))
+    world = settle_due(replace(world, time=COLLECTOR_SECONDS))
 
-    rent = (C1_CYCLE * RENT_PER_100 + 99) // 100
-    upkeep = (C1_CYCLE * UPKEEP_PER_100 + 99) // 100
+    rent = (V1_CYCLE * RENT_PER_100 + 99) // 100
+    upkeep = (V1_CYCLE * UPKEEP_PER_100 + 99) // 100
     assert rows(world) == [
-        ("a", SYSTEM, TOWER_PRICE, "tower_build", None, 0),
+        ("a", SYSTEM, COLLECTOR_PRICE, "collector_build", None, 0),
         ("b", "a", rent, "rent", None, 0),
         ("b", SYSTEM, upkeep, "upkeep", None, 0),
     ]
     assert (rent, upkeep) == (30, 12)
 
 
-def test_the_owner_using_their_own_tower_pays_only_upkeep() -> None:
-    world = run(WORLD, BuildTower("a", "p1"), InstallCrystal("a", 1, "C1", 500))
-    world = settle_due(replace(world, time=TOWER_SECONDS))
+def test_the_owner_using_their_own_collector_pays_only_upkeep() -> None:
+    world = run(WORLD, BuildCollector("a", "p1"), InstallProgram("a", 1, "v1", 500))
+    world = settle_due(replace(world, time=COLLECTOR_SECONDS))
 
-    assert [row[3] for row in rows(world)] == ["tower_build", "upkeep"]
+    assert [row[3] for row in rows(world)] == ["collector_build", "upkeep"]
 
 
 @pytest.mark.parametrize(
     ("offer", "recipient"),
-    [(OfferToBuy("a", "b", ENERGY, 20, 300), "b"), (OfferToSell("b", "a", ENERGY, 20, 300), "a")],
+    [(OfferToBuy("a", "b", COMPUTE, 20, 300), "b"), (OfferToSell("b", "a", COMPUTE, 20, 300), "a")],
 )
 def test_an_accepted_offer_records_the_buyer_paying_the_seller(
     offer: Action, recipient: str
 ) -> None:
     world = accept(perform(WORLD, offer), recipient)
 
-    assert rows(world) == [("a", "b", 300, "offer", ENERGY, 20)]
+    assert rows(world) == [("a", "b", 300, "offer", COMPUTE, 20)]
 
 
 def signed() -> World:
-    """b is to supply a twice with 10 energy for 200 coins each, staking 50 per delivery."""
-    return accept(perform(WORLD, ProposeContract("b", "a", True, ENERGY, 10, 200, 2, 60, 50)), "a")
+    """b is to supply a twice with 10 compute for 200 coins each, staking 50 per delivery."""
+    return accept(perform(WORLD, ProposeContract("b", "a", True, COMPUTE, 10, 200, 2, 60, 50)), "a")
 
 
 def test_a_contract_delivery_records_the_buyer_paying_the_supplier() -> None:
     world = perform(signed(), Deliver("b", 1))
 
-    assert rows(world) == [("a", "b", 200, "contract_payment", ENERGY, 10)]
+    assert rows(world) == [("a", "b", 200, "contract_payment", COMPUTE, 10)]
 
 
 @pytest.mark.parametrize(
@@ -158,28 +158,28 @@ def test_selling_information_records_the_buyer_paying_the_seller() -> None:
 def test_coins_set_aside_and_handed_back_record_nothing() -> None:
     world = run(
         WORLD,
-        OfferToBuy("a", "b", ENERGY, 20, 300),
+        OfferToBuy("a", "b", COMPUTE, 20, 300),
         WithdrawEvent("a", 1),
-        ProposeContract("b", "a", False, ENERGY, 10, 200, 2, 60),
+        ProposeContract("b", "a", False, COMPUTE, 10, 200, 2, 60),
         WithdrawEvent("b", 2),
-        BuildTower("a", "p1"),
-        InstallCrystal("a", 1, "C1", 500),
-        FundTower("a", 1, 1, 100),
-        RemoveCrystal("a", 1, 1),
+        BuildCollector("a", "p1"),
+        InstallProgram("a", 1, "v1", 500),
+        FundCollector("a", 1, 1, 100),
+        RemoveProgram("a", 1, 1),
     )
 
-    assert [row[3] for row in rows(world)] == ["tower_build"]
+    assert [row[3] for row in rows(world)] == ["collector_build"]
 
 
 def rented() -> World:
-    return run(WORLD, BuildTower("a", "p1"), InstallCrystal("b", 1, "C1", 500))
+    return run(WORLD, BuildCollector("a", "p1"), InstallProgram("b", 1, "v1", 500))
 
 
 @pytest.mark.parametrize(
     ("start", "end"),
     [
         (
-            lambda: perform(WORLD, OfferToBuy("a", "b", ENERGY, 20, 300)),
+            lambda: perform(WORLD, OfferToBuy("a", "b", COMPUTE, 20, 300)),
             lambda world: perform(world, RespondToEvent("b", 1, False)),
         ),
         (signed, lambda world: perform(world, LeaveGame("a"))),
@@ -192,9 +192,9 @@ def rented() -> World:
         "offer_declined",
         "contract_buyer_left",
         "contract_game_ended",
-        "tower_tenant_left",
-        "tower_owner_left",
-        "tower_game_ended",
+        "collector_tenant_left",
+        "collector_owner_left",
+        "collector_game_ended",
     ],
 )
 def test_coins_handed_back_when_a_deal_ends_record_nothing(

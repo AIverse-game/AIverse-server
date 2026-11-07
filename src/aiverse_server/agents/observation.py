@@ -1,7 +1,7 @@
 """What an agent is shown at the start of each round: its perception, put together with what
 the resident knows of themselves and what is public.
 
-`observe` adds to the perception (`perception.py`) the resident's own coins, energy, crystals
+`observe` adds to the perception (`perception.py`) the resident's own coins, compute, programs
 and what they are busy with; the offers and contract proposals waiting for them and those
 they sent, the contracts they are party to and the last few of theirs that ended; and every
 resident's name, coins and place, which the page shows anyway and which an agent needs to
@@ -17,31 +17,31 @@ import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
+from ..core.collectors import Collector, CollectorSlot
 from ..core.events import Event, pending_for, pending_from
 from ..core.orders import order_coins
-from ..core.towers import Tower, TowerSlot
 from ..core.world import Contract, ContractEnd, Position, PricePoint, SpringSighting, World
-from ..economy.contracts import ContractProposal, contract_coins, contracts_of
-from ..economy.crystals import CRYSTAL_TIERS
-from ..economy.energy import ENERGY, walk_cost
-from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
-from ..economy.market import unit_price
-from ..economy.shards import SHARD
-from ..economy.towers import (
+from ..economy.collectors import (
+    COLLECTOR_CAPACITY,
+    COLLECTOR_PRICE,
+    COLLECTOR_SECONDS,
+    COLLECTOR_YIELD,
     RENT_PER_100,
-    TOWER_CAPACITY,
-    TOWER_PRICE,
-    TOWER_SECONDS,
-    TOWER_YIELD,
     UPKEEP_PER_100,
+    collector_coins,
     cycle_amount,
     cycle_cost,
     slot_status,
     spring_draw_rate,
-    tower_coins,
 )
+from ..economy.compute import COMPUTE, walk_cost
+from ..economy.contracts import ContractProposal, contract_coins, contracts_of
+from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
+from ..economy.gathering import DATA
+from ..economy.market import unit_price
+from ..economy.programs import PROGRAM_TIERS
+from ..economy.studio import RECIPES, write_seconds
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins, reserved_items
-from ..economy.workshop import RECIPES, refine_seconds
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
 from ..residents.perception import Perception
@@ -73,43 +73,43 @@ class Me:
     """Spendable coins."""
     coins_in_offers: int
     """Coins set aside in purchase offers still waiting for an answer."""
-    energy: int
-    """Energy carried, which walking and speaking spend."""
-    energy_in_offers: int
+    compute: int
+    """Compute carried, which walking and speaking spend."""
+    compute_in_offers: int
     coins_in_orders: int
     """Coins set aside in buy orders resting on the exchange."""
     coins_in_contracts: int
     """Coins set aside as a buyer's payments or a supplier's deposits, in contracts in force
     and in proposals not yet answered."""
-    crystals: dict[str, int]
-    """Crystals carried, tier to count."""
-    shards: int
-    """Shards carried, which refining spends."""
-    crystals_refined: int
-    """Crystals refined so far, which makes refining faster."""
+    programs: dict[str, int]
+    """Programs carried, tier to count."""
+    data: int
+    """Data carried, which writing spends."""
+    programs_written: int
+    """Programs written so far, which makes writing faster."""
     walking_to: Position | None
     arrives_in: float | None
     """Seconds until the walk ends."""
     harvesting_spring: str | None
     harvesting_done_in: float | None
     """Seconds until the harvesting job pays out."""
-    digging_quarry: str | None
-    digging_done_in: float | None
-    refining_crystal: str | None
-    """Tier of the crystal being refined."""
-    refining_done_in: float | None
+    gathering_mine: str | None
+    gathering_done_in: float | None
+    writing_program: str | None
+    """Tier of the program being written."""
+    writing_done_in: float | None
     at_market: bool
     at_spring: str | None
     """The spring the resident stands close enough to harvest, if any."""
-    at_quarry: str | None
-    at_workshop: bool
+    at_mine: str | None
+    at_studio: bool
 
 
 @dataclass(frozen=True)
-class CrystalOnSale:
+class ProgramOnSale:
     tier: str
     price: int
-    energy_per_job: int
+    compute_per_job: int
 
 
 @dataclass(frozen=True)
@@ -118,20 +118,20 @@ class MarketTrendPoint:
     price: float | None
     """Observed market price, or None if its history sample was evicted."""
     sold: int
-    """Anonymous energy sold to the market in this 30-second bucket."""
+    """Anonymous compute sold to the market in this 30-second bucket."""
 
 
 @dataclass(frozen=True)
 class MarketView:
     position: Position
     radius: float
-    energy_price: float
-    """Coins one more energy fetches right now; it falls as energy is sold."""
+    compute_price: float
+    """Coins one more compute fetches right now; it falls as compute is sold."""
     distance: float
     walk_cost: int
-    """Energy a walk from here to the market's centre costs."""
+    """Compute a walk from here to the market's centre costs."""
     walk_seconds: float
-    crystals: tuple[CrystalOnSale, ...]
+    programs: tuple[ProgramOnSale, ...]
     trend: tuple[MarketTrendPoint, ...]
     """At most one price point per 30-second bucket over the last five minutes."""
 
@@ -192,8 +192,8 @@ class ExchangeView:
 
 
 @dataclass(frozen=True)
-class QuarryView:
-    """A shard quarry; quarries are public, so the reserve is always current."""
+class MineView:
+    """A data mine; mines are public, so the reserve is always current."""
 
     id: str
     position: Position
@@ -207,16 +207,16 @@ class QuarryView:
 @dataclass(frozen=True)
 class RecipeView:
     tier: str
-    shards: int
-    energy: int
+    data: int
+    compute: int
     consumes: str | None
-    """Tier of the crystal it uses up; None for C1."""
+    """Tier of the program it uses up; None for v1."""
     seconds: float
-    """Game seconds refining takes this resident, practice counted."""
+    """Game seconds writing takes this resident, practice counted."""
 
 
 @dataclass(frozen=True)
-class WorkshopView:
+class StudioView:
     position: Position
     radius: float
     distance: float
@@ -231,16 +231,16 @@ class SpringView:
     position: Position
     radius: float
     reserve: int
-    """Energy left when last seen."""
+    """Compute left when last seen."""
     seen_ago: float
     """Seconds since the reserve was seen; 0 when in sight."""
     in_sight: bool
     """Seen this round, so the reserve is current."""
-    tower_draw_per_second: float | None
-    """Energy per second the running towers on this spring take out of it; None unless in sight,
-    since a spring out of sight is not watched. Manual harvesting is not counted."""
+    collector_draw_per_second: float | None
+    """Compute per second the running collectors on this spring take out of it; None unless in
+    sight, since a spring out of sight is not watched. Manual harvesting is not counted."""
     seconds_to_empty: float | None
-    """Seconds until the reserve is gone at that rate; None unless in sight and towers are
+    """Seconds until the reserve is gone at that rate; None unless in sight and collectors are
     drawing on it."""
     distance: float
     walk_cost: int
@@ -274,7 +274,7 @@ class Standing:
     """Total coins, including those set aside in offers."""
     rank: int
     left: bool
-    crystals_refined: int
+    programs_written: int
 
 
 @dataclass(frozen=True)
@@ -397,9 +397,9 @@ class Observation:
     me: Me
     market: MarketView | None
     exchange: ExchangeView
-    quarries: tuple[QuarryView, ...]
-    """Every quarry, nearest first."""
-    workshop: WorkshopView | None
+    mines: tuple[MineView, ...]
+    """Every mine, nearest first."""
+    studio: StudioView | None
     known_springs: tuple[SpringView, ...]
     """Every spring discovered so far, nearest first."""
     discovered: tuple[str, ...]
@@ -422,9 +422,9 @@ class Observation:
     """What others did nearby since the resident last looked."""
     long_term_notes: tuple[NoteView, ...]
     short_term_notes: tuple[NoteView, ...]
-    tower_balance: int
-    tower_rules: dict[str, int | float]
-    towers: tuple[dict[str, object], ...]
+    collector_balance: int
+    collector_rules: dict[str, int | float]
+    collectors: tuple[dict[str, object], ...]
     notices: tuple[NoticeView, ...] = ()
     """What the server announced to everyone since the resident last looked."""
     last_thinking_seconds: float | None = None
@@ -446,13 +446,13 @@ def observe(
     resident's earlier rounds took, oldest first."""
     me = next(resident for resident in world.residents if resident.id == resident_id)
     here = perception.position
-    crystal_tiers = {crystal.tier for crystal in CRYSTAL_TIERS}
+    program_tiers = {program.tier for program in PROGRAM_TIERS}
     walk = me.walking
     job = me.harvesting
-    dig = me.digging
-    refine = me.refining
+    gather = me.gathering
+    write = me.writing
     market = world.market
-    workshop = world.workshop
+    studio = world.studio
     standings = ranks(world)
     at_spring = next(
         (spring.id for spring in world.springs if spring.reaches(here) and walk is None),
@@ -479,16 +479,16 @@ def observe(
         key=lambda spring: spring.distance,
     )
     return Observation(
-        tower_balance=tower_coins(world, resident_id),
-        tower_rules={
-            "price": TOWER_PRICE,
-            "capacity": TOWER_CAPACITY,
-            "cycle_seconds": TOWER_SECONDS,
-            "yield_multiplier": TOWER_YIELD,
+        collector_balance=collector_coins(world, resident_id),
+        collector_rules={
+            "price": COLLECTOR_PRICE,
+            "capacity": COLLECTOR_CAPACITY,
+            "cycle_seconds": COLLECTOR_SECONDS,
+            "yield_multiplier": COLLECTOR_YIELD,
             "rent_per_100": RENT_PER_100,
             "upkeep_per_100": UPKEEP_PER_100,
         },
-        towers=_tower_views(world, resident_id, in_sight),
+        collectors=_collector_views(world, resident_id, in_sight),
         time=perception.time,
         remaining_seconds=remaining,
         last_thinking_seconds=thinking[-1] if thinking else None,
@@ -499,81 +499,81 @@ def observe(
             position=here,
             coins=me.coins,
             coins_in_offers=reserved_coins(world, resident_id),
-            energy=me.inventory.count(ENERGY),
-            energy_in_offers=reserved_items(world, resident_id, ENERGY),
+            compute=me.inventory.count(COMPUTE),
+            compute_in_offers=reserved_items(world, resident_id, COMPUTE),
             coins_in_orders=order_coins(world.orders, resident_id),
             coins_in_contracts=contract_coins(world, resident_id),
-            crystals={
+            programs={
                 kind: count
                 for kind, count in me.inventory.counts().items()
-                if kind in crystal_tiers
+                if kind in program_tiers
             },
-            shards=me.inventory.count(SHARD),
-            crystals_refined=me.crystals_refined,
+            data=me.inventory.count(DATA),
+            programs_written=me.programs_written,
             walking_to=walk.target if walk is not None else None,
             arrives_in=max(walk.arrives_at - world.time, 0.0) if walk is not None else None,
             harvesting_spring=job.spring_id if job is not None else None,
             harvesting_done_in=max(job.ends_at - world.time, 0.0) if job is not None else None,
-            digging_quarry=dig.quarry_id if dig is not None else None,
-            digging_done_in=max(dig.ends_at - world.time, 0.0) if dig is not None else None,
-            refining_crystal=refine.tier if refine is not None else None,
-            refining_done_in=max(refine.ends_at - world.time, 0.0) if refine is not None else None,
+            gathering_mine=gather.mine_id if gather is not None else None,
+            gathering_done_in=max(gather.ends_at - world.time, 0.0) if gather is not None else None,
+            writing_program=write.tier if write is not None else None,
+            writing_done_in=max(write.ends_at - world.time, 0.0) if write is not None else None,
             at_market=market is not None and walk is None and market.reaches(here),
             at_spring=at_spring,
-            at_quarry=next(
-                (quarry.id for quarry in world.quarries if quarry.reaches(here) and walk is None),
+            at_mine=next(
+                (mine.id for mine in world.mines if mine.reaches(here) and walk is None),
                 None,
             ),
-            at_workshop=workshop is not None and walk is None and workshop.reaches(here),
+            at_studio=studio is not None and walk is None and studio.reaches(here),
         ),
         market=None
         if perception.market is None
         else MarketView(
             position=perception.market.position,
             radius=perception.market.radius,
-            energy_price=perception.market.price,
+            compute_price=perception.market.price,
             distance=_distance(here, perception.market.position),
             walk_cost=walk_cost(here, perception.market.position),
             walk_seconds=walk_seconds(here, perception.market.position),
-            crystals=tuple(
-                CrystalOnSale(crystal.tier, crystal.price, crystal.energy_per_job)
-                for crystal in perception.market.crystals
+            programs=tuple(
+                ProgramOnSale(program.tier, program.price, program.compute_per_job)
+                for program in perception.market.programs
             ),
             trend=_market_trend(world),
         ),
         exchange=_exchange_view(world, resident_id),
-        quarries=tuple(
+        mines=tuple(
             sorted(
                 (
-                    QuarryView(
-                        quarry.id,
-                        quarry.position,
-                        quarry.radius,
-                        quarry.reserve,
-                        _distance(here, quarry.position),
-                        walk_cost(here, quarry.position),
-                        walk_seconds(here, quarry.position),
+                    MineView(
+                        mine.id,
+                        mine.position,
+                        mine.radius,
+                        mine.reserve,
+                        _distance(here, mine.position),
+                        walk_cost(here, mine.position),
+                        walk_seconds(here, mine.position),
                     )
-                    for quarry in world.quarries
+                    for mine in world.mines
                 ),
-                key=lambda quarry: quarry.distance,
+                key=lambda mine: mine.distance,
             )
         ),
-        workshop=None
-        if workshop is None
-        else WorkshopView(
-            workshop.position,
-            workshop.radius,
-            _distance(here, workshop.position),
-            walk_cost(here, workshop.position),
-            walk_seconds(here, workshop.position),
+        studio=None
+        if studio is None
+        else StudioView(
+            studio.position,
+            studio.radius,
+            _distance(here, studio.position),
+            walk_cost(here, studio.position),
+            walk_seconds(here, studio.position),
             tuple(
                 RecipeView(
                     recipe.tier,
-                    recipe.shards,
-                    recipe.energy,
+                    recipe.data,
+                    recipe.compute,
                     recipe.consumes,
-                    refine_seconds(recipe, me.crystals_refined),
+                    write_seconds(recipe, me.programs_written),
                 )
                 for recipe in RECIPES
             ),
@@ -599,7 +599,7 @@ def observe(
                 coins=total_coins(world, resident.id),
                 rank=standings[resident.id],
                 left=resident.left,
-                crystals_refined=resident.crystals_refined,
+                programs_written=resident.programs_written,
             )
             for resident in world.residents
         ),
@@ -648,9 +648,9 @@ def observe(
 
 
 def _exchange_view(world: World, resident_id: str) -> ExchangeView:
-    mine = [fill for fill in world.orders.fills if resident_id in (fill.buyer_id, fill.seller_id)][
-        -FILLS_SHOWN:
-    ]
+    own_fills = [
+        fill for fill in world.orders.fills if resident_id in (fill.buyer_id, fill.seller_id)
+    ][-FILLS_SHOWN:]
     return ExchangeView(
         books=tuple(
             BookView(
@@ -682,7 +682,7 @@ def _exchange_view(world: World, resident_id: str) -> ExchangeView:
                 fill.quantity,
                 fill.price,
             )
-            for fill in mine
+            for fill in own_fills
         ),
         recent_trades=tuple(
             ExchangeTradeView(world.time - fill.time, fill.item, fill.quantity, fill.price)
@@ -822,46 +822,48 @@ def _ended(end: ContractEnd, resident_id: str, now: float) -> EndedContractView:
 
 
 def known_slots(
-    tower: Tower, resident_id: str, in_sight: frozenset[str]
-) -> tuple[TowerSlot, ...] | None:
-    """The slots of a tower the resident can know of: all of them when its spring is in sight
-    or the resident owns it, else only their own; None when they know nothing of it. A tower
+    collector: Collector, resident_id: str, in_sight: frozenset[str]
+) -> tuple[CollectorSlot, ...] | None:
+    """The slots of a collector the resident can know of: all of them when its spring is in sight
+    or the resident owns it, else only their own; None when they know nothing of it. A collector
     on a spring they have not seen would give the spring's state away."""
-    if tower.spring_id in in_sight or tower.owner_id == resident_id:
-        return tower.slots
-    own = tuple(slot for slot in tower.slots if slot.resident_id == resident_id)
+    if collector.spring_id in in_sight or collector.owner_id == resident_id:
+        return collector.slots
+    own = tuple(slot for slot in collector.slots if slot.resident_id == resident_id)
     return own or None
 
 
-def _tower_views(
+def _collector_views(
     world: World, resident_id: str, in_sight: frozenset[str]
 ) -> tuple[dict[str, object], ...]:
-    """The towers the resident can know of, see `known_slots`."""
+    """The collectors the resident can know of, see `known_slots`."""
     views: list[dict[str, object]] = []
-    for tower in world.towers:
-        slots = known_slots(tower, resident_id, in_sight)
+    for collector in world.collectors:
+        slots = known_slots(collector, resident_id, in_sight)
         if slots is None:
             continue
         views.append(
             {
-                "id": tower.id,
-                "owner_id": tower.owner_id,
-                "spring_id": tower.spring_id,
+                "id": collector.id,
+                "owner_id": collector.owner_id,
+                "spring_id": collector.spring_id,
                 "position": asdict(
-                    next(p.position for p in world.springs if p.id == tower.spring_id)
+                    next(p.position for p in world.springs if p.id == collector.spring_id)
                 ),
                 "slots": [
                     {
                         "id": s.id,
                         "resident_id": s.resident_id,
-                        "crystal": s.crystal,
+                        "program": s.program,
                         "balance": s.balance,
                         "harvested": s.harvested,
                         "rent_paid": s.rent_paid,
-                        "status": slot_status(world, tower, s),
+                        "status": slot_status(world, collector, s),
                         "next_in": max(s.next_at - world.time, 0.0),
-                        "energy_per_cycle": cycle_amount(world, tower, s),
-                        "rent_and_upkeep": sum(cycle_cost(tower, s, cycle_amount(world, tower, s))),
+                        "compute_per_cycle": cycle_amount(world, collector, s),
+                        "rent_and_upkeep": sum(
+                            cycle_cost(collector, s, cycle_amount(world, collector, s))
+                        ),
                     }
                     for s in slots
                 ],
@@ -877,7 +879,7 @@ def _spring_view(
     in_sight: bool,
     reserve_history: tuple[SpringReserveView, ...],
 ) -> SpringView:
-    """A known spring; how fast towers drain it is told only while the resident can see it."""
+    """A known spring; how fast collectors drain it is told only while the resident can see it."""
     draw = spring_draw_rate(world, sighting.spring_id) if in_sight else None
     return SpringView(
         id=sighting.spring_id,
@@ -886,7 +888,7 @@ def _spring_view(
         reserve=sighting.reserve,
         seen_ago=0.0 if in_sight else max(world.time - sighting.seen_at, 0.0),
         in_sight=in_sight,
-        tower_draw_per_second=draw,
+        collector_draw_per_second=draw,
         seconds_to_empty=sighting.reserve / draw if draw else None,
         distance=_distance(here, sighting.position),
         walk_cost=walk_cost(here, sighting.position),
