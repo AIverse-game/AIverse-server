@@ -24,6 +24,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "offer_to_buy",
         "offer_to_sell",
         "offer_information",
+        "offer_shares",
         "respond_to_offer",
         "withdraw_offer",
     ),
@@ -89,11 +90,23 @@ def selected_tool_names(observation: Observation) -> set[str]:
         here = observation.land.here
         if here is not None and here.owner is None and me.coins >= here.price:
             names.add("buy_parcel")
-        if observation.offers_to_me or observation.information_offers_to_me:
+        if (
+            observation.offers_to_me
+            or observation.information_offers_to_me
+            or observation.share_offers_to_me
+        ):
             names.add("respond_to_offer")
+        if any(parcel.shares.get(me.id) for parcel in observation.land.mine) or (
+            observation.land.stakes
+        ):
+            names.add("offer_shares")
         if observation.contract_proposals_to_me:
             names.add("respond_to_offer")
-        if observation.my_offers or observation.my_information_offers:
+        if (
+            observation.my_offers
+            or observation.my_information_offers
+            or observation.my_share_offers
+        ):
             names.add("withdraw_offer")
         if observation.my_contract_proposals:
             names.add("withdraw_offer")
@@ -136,6 +149,8 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         names.add("buy_parcel")
     if any(resident.id != me.id and not resident.left for resident in world.residents):
         names.update(("offer_to_buy", "offer_to_sell", "offer_information", "propose_contract"))
+    if any(parcel.held_by(me.id) for parcel in world.parcels):
+        names.add("offer_shares")
     if any(event.recipient_id == me.id for event in world.events.pending):
         names.add("respond_to_offer")
     if any(event.sender_id == me.id for event in world.events.pending):

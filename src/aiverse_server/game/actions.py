@@ -50,6 +50,7 @@ from ..economy.exchange import (
     place_order,
 )
 from ..economy.land import LandError, LandErrorCode, buy_parcel
+from ..economy.shares import ShareOffer, SharesError, SharesErrorCode
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
 from ..residents.information_offer import InformationError, InformationErrorCode, InformationOffer
 from ..residents.memory import NoteError, NoteErrorCode
@@ -71,6 +72,7 @@ RejectionCode = (
     | LandErrorCode
     | ComputeErrorCode
     | AdsErrorCode
+    | SharesErrorCode
     | InformationErrorCode
     | NoteErrorCode
 )
@@ -162,6 +164,22 @@ class OfferInformation:
     content: str
     price: int
     """Coins for the information."""
+
+
+@dataclass(frozen=True)
+class OfferShares:
+    """Offer `buyer_id` `shares` of the parcel `parcel_id` for `price` coins, see `shares.py`.
+
+    Nothing is set aside, but the shares offered cannot be offered again; the transfer
+    happens when the buyer accepts. A price of 0 gives them away.
+    """
+
+    resident_id: str
+    buyer_id: str
+    parcel_id: str
+    shares: int
+    price: int
+    """Coins for all the shares."""
 
 
 @dataclass(frozen=True)
@@ -301,6 +319,7 @@ Action = (
     | OfferToBuy
     | OfferToSell
     | OfferInformation
+    | OfferShares
     | ProposeContract
     | Deliver
     | CancelContract
@@ -342,6 +361,12 @@ def _carry_out(world: World, action: Action) -> World:
             try:
                 return send_event(world, action.resident_id, action.buyer_id, offer)[0]
             except (EventError, InformationError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case OfferShares():
+            stake = ShareOffer(action.parcel_id, action.shares, action.price)
+            try:
+                return send_event(world, action.resident_id, action.buyer_id, stake)[0]
+            except (EventError, SharesError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case ProposeContract():
             payload = ContractProposal(
@@ -429,6 +454,7 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
         InventoryError,
         TradeError,
         ContractError,
+        SharesError,
         InformationError,
         NoteError,
     ) as error:

@@ -525,6 +525,8 @@ class World:
         for parcel in self.parcels:
             if parcel.owner_id not in ids:
                 raise ValueError(f"parcel {parcel.id} has an unknown owner")
+            if any(holder not in ids for holder, _ in parcel.shares):
+                raise ValueError(f"parcel {parcel.id} has an unknown share holder")
             if parcel.facility is not None and parcel.facility.built_at > self.time:
                 raise ValueError(f"parcel {parcel.id} has a facility built in the future")
         owners = {parcel.id: parcel.owner_id for parcel in self.parcels}

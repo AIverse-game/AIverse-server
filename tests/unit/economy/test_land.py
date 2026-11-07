@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from aiverse_server.core.inventory import coin_balance
-from aiverse_server.core.land import Parcel
+from aiverse_server.core.land import PARCEL_SHARES, Parcel
 from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy.land import grid_size, plot, plot_at, plots
@@ -43,6 +43,7 @@ def test_buying_a_parcel_pays_the_town_and_makes_it_the_buyers() -> None:
     world = perform(WORLD, BuyParcel("a"))
 
     assert world.parcels == (Parcel(5, 3, "a"),)
+    assert world.parcels[0].shares == (("a", PARCEL_SHARES),)
     assert coin_balance(world, "a") == 5_000 - 2_540
     last = world.ledger.transfers[-1]
     assert (last.payer, last.payee, last.amount, last.channel) == ("a", SYSTEM, 2_540, "land")

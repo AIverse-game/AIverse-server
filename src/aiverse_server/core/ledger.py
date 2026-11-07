@@ -37,11 +37,12 @@ Channel = Literal[
     "exchange",
     "land",
     "visitors",
+    "shares",
 ]
 """What the coins paid for: compute bought from the system, an accepted trade offer, a
 delivery under a contract, a supplier's deposit forfeited to the buyer, information sold, a
-fill on the exchange, a parcel of land bought from the town, or visitors paying a facility's
-owner."""
+fill on the exchange, a parcel of land bought from the town, visitors paying a facility's
+holders, or shares of a parcel sold."""
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,7 @@ Numbers come from the same constants as the game. Tool schemas describe argument
 the observation carries the current state and prices.
 """
 
-from ..core.land import AD_SLOT_CAPACITY
+from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
 from ..economy.ads import (
     CONTENT_ITEM,
@@ -91,10 +91,15 @@ and contract, or put it in an ad slot of your own with place_content. You need n
 and sell it.
 - An ad slot shows up to {AD_SLOT_CAPACITY} pieces of content, each for {CONTENT_LIFETIME:g}s
 from when you put it in, then it goes stale and is gone; keep supplying it. Every
-{PAY_PERIOD:g}s the town pays the owner of each slot showing content: the parcel's footfall,
-shared equally with other slots showing content within {SHARE_REACH:g} units, times the pieces
-shown, times {PAY_PER_FOOTFALL:g}. A slot showing nothing earns nothing. The land observation
-gives each of your slots' income at the next payday.
+{PAY_PERIOD:g}s the town pays each slot showing content: the parcel's footfall, shared equally
+with other slots showing content within {SHARE_REACH:g} units, times the pieces shown, times
+{PAY_PER_FOOTFALL:g}. A slot showing nothing earns nothing. The land observation gives each of
+your slots' income at the next payday.
+- The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
+a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
+nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
+Only the buyer of a parcel builds on it and puts content in it, whoever holds its shares. Land
+stakes lists parcels of others you hold shares of.
 - Visitors come to the middle of the map: {VISITORS_AT_START:g} at the start, +{VISITORS_AT_START:g}
 per {VISITOR_GROWTH_SECONDS / 60:g} min, thinning to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g}
 units, plus {RESIDENT_FOOTFALL:g} for each resident standing within {RESIDENT_REACH:g}. The

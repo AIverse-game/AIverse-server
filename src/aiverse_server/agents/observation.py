@@ -16,11 +16,11 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from ..core.compute import Job
 from ..core.events import Event, pending_for, pending_from
-from ..core.land import AD_SLOT_CAPACITY, Parcel
+from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES, Parcel
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
 from ..economy.ads import CONTENT_LIFETIME, PAY_PERIOD, expected_income
@@ -37,6 +37,7 @@ from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
 from ..economy.footfall import footfall, visitors
 from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot_at, plots
+from ..economy.shares import ShareOffer, split_income
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
@@ -173,6 +174,26 @@ class MyParcelView:
     income_per_payday: int = 0
     """Coins its ad slot would be paid at the next payday as things stand: its footfall, shared
     with the neighbouring slots showing content, times the pieces shown."""
+    shares: dict[str, int] = field(default_factory=dict)
+    """Who holds the parcel's shares and how many of the 100; the income is paid out by them."""
+    my_cut_per_payday: int = 0
+    """The part of `income_per_payday` that goes to the resident."""
+
+
+@dataclass(frozen=True)
+class StakeView:
+    """A parcel somebody else owns of which the resident holds shares."""
+
+    id: str
+    owner: str
+    my_shares: int
+    shares: dict[str, int]
+    """Who holds the parcel's shares and how many of the 100."""
+    facility: str | None
+    content: int
+    """Pieces of content its ad slot shows now."""
+    income_per_payday: int
+    my_cut_per_payday: int
 
 
 @dataclass(frozen=True)
@@ -250,6 +271,8 @@ class LandView:
     mine: tuple[MyParcelView, ...]
     best_free: tuple[ParcelView, ...]
     """Free parcels with the most footfall now, best first."""
+    stakes: tuple[StakeView, ...] = ()
+    """Parcels of other residents of which the resident holds shares, and so is paid."""
 
 
 @dataclass(frozen=True)
@@ -294,6 +317,19 @@ class InformationOfferView:
     """All the recipient sees until they pay; the content is withheld."""
     price: int
     """Coins for the information."""
+
+
+@dataclass(frozen=True)
+class ShareOfferView:
+    event_id: int
+    from_id: str
+    to_id: str
+    parcel: str
+    shares: int
+    price: int
+    """Coins for all the shares; 0 when they are given away."""
+    cut_per_payday: int
+    """What the shares would be paid at the next payday as things stand, whoever holds them."""
 
 
 @dataclass(frozen=True)
@@ -411,6 +447,8 @@ class Observation:
     short_term_notes: tuple[NoteView, ...]
     notices: tuple[NoticeView, ...] = ()
     """What the server announced to everyone since the resident last looked."""
+    share_offers_to_me: tuple[ShareOfferView, ...] = ()
+    my_share_offers: tuple[ShareOfferView, ...] = ()
     last_thinking_seconds: float | None = None
     """Game seconds the resident's previous round took, from its look to the end of the
     round, whether it went well or not; None in the first round."""
@@ -473,6 +511,8 @@ def observe(
         ),
         offers_to_me=_offers(pending_for(world, resident_id)),
         my_offers=_offers(pending_from(world, resident_id)),
+        share_offers_to_me=_share_offers(world, pending_for(world, resident_id)),
+        my_share_offers=_share_offers(world, pending_from(world, resident_id)),
         information_offers_to_me=_information_offers(pending_for(world, resident_id)),
         my_information_offers=_information_offers(pending_from(world, resident_id)),
         contract_proposals_to_me=_proposals(pending_for(world, resident_id)),
@@ -521,6 +561,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         if job.owner_id == resident_id and job.parcel_id is not None
     }
     facilities = {parcel.id: parcel for parcel in world.parcels if parcel.facility}
+    owned = {parcel.id: parcel for parcel in world.parcels}
 
     def view(square: Plot) -> ParcelView:
         return ParcelView(
@@ -564,12 +605,40 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
                 built.get(square.id),
                 building.get(square.id),
                 _goes_stale_in(world, facilities.get(square.id)),
-                expected_income(world, facilities[square.id]) if square.id in facilities else 0,
+                _income(world, facilities.get(square.id)),
+                dict(owned[square.id].shares),
+                _cut(world, facilities.get(square.id), resident_id),
             )
             for square in mine
         ),
         best_free=tuple(view(square) for square in best),
+        stakes=tuple(
+            StakeView(
+                parcel.id,
+                parcel.owner_id,
+                parcel.held_by(resident_id),
+                dict(parcel.shares),
+                parcel.facility.kind if parcel.facility else None,
+                len(_goes_stale_in(world, parcel)),
+                _income(world, parcel),
+                _cut(world, parcel, resident_id),
+            )
+            for parcel in world.parcels
+            if parcel.owner_id != resident_id and parcel.held_by(resident_id)
+        ),
     )
+
+
+def _income(world: World, parcel: Parcel | None) -> int:
+    """Coins the ad slot on `parcel` is paid at its next payday as things stand, 0 without."""
+    return expected_income(world, parcel) if parcel is not None else 0
+
+
+def _cut(world: World, parcel: Parcel | None, resident_id: str) -> int:
+    """The part of that going to `resident_id`."""
+    if parcel is None:
+        return 0
+    return dict(split_income(parcel, _income(world, parcel))).get(resident_id, 0)
 
 
 def _goes_stale_in(world: World, parcel: Parcel | None) -> tuple[float, ...]:
@@ -705,6 +774,29 @@ def _offers(events: tuple[Event, ...]) -> tuple[OfferView, ...]:
         for event in events
         if isinstance(event.payload, PurchaseOffer | SaleOffer)
     )
+
+
+def _share_offers(world: World, events: tuple[Event, ...]) -> tuple[ShareOfferView, ...]:
+    """The share offers among `events`."""
+    parcels = {parcel.id: parcel for parcel in world.parcels}
+    views = []
+    for event in events:
+        offer = event.payload
+        if not isinstance(offer, ShareOffer):
+            continue
+        parcel = parcels[offer.parcel_id]
+        views.append(
+            ShareOfferView(
+                event_id=event.id,
+                from_id=event.sender_id,
+                to_id=event.recipient_id,
+                parcel=offer.parcel_id,
+                shares=offer.shares,
+                price=offer.price,
+                cut_per_payday=_income(world, parcel) * offer.shares // PARCEL_SHARES,
+            )
+        )
+    return tuple(views)
 
 
 def _information_offers(events: tuple[Event, ...]) -> tuple[InformationOfferView, ...]:

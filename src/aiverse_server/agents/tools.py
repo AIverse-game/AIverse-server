@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
 from ..core.compute import JobSource, NodeKind
-from ..core.land import AD_SLOT_CAPACITY
+from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, PAY_PERIOD
 from ..economy.compute import (
@@ -55,6 +55,7 @@ from ..game.actions import (
     MakeContent,
     MoveTo,
     OfferInformation,
+    OfferShares,
     OfferToBuy,
     OfferToSell,
     PlaceContent,
@@ -172,6 +173,20 @@ class OfferInformationArgs(_Args):
     price: StrictInt = Field(description="Coins for the information.")
 
 
+class OfferSharesArgs(_Args):
+    buyer_id: str = Field(description="Resident id you hand the shares to.")
+    parcel_id: str = Field(
+        description="id of a parcel you hold shares of, in land.mine or land.stakes."
+    )
+    shares: StrictInt = Field(
+        description=f"How many of the parcel's {PARCEL_SHARES} shares, at most those you hold "
+        "that are not already offered."
+    )
+    price: StrictInt = Field(
+        description="Coins for all of them, paid by the buyer when they accept; 0 gives them away."
+    )
+
+
 class PlaceOrderArgs(_Args):
     side: Literal["buy", "sell"]
     item: str = Field(description="Kind of item.")
@@ -192,16 +207,16 @@ class CancelOrderArgs(_Args):
 
 class RespondToOfferArgs(_Args):
     event_id: StrictInt = Field(
-        description="event_id of an offer in offers_to_me or information_offers_to_me, or a "
-        "proposal in contract_proposals_to_me."
+        description="event_id of an offer in offers_to_me, information_offers_to_me or "
+        "share_offers_to_me, or a proposal in contract_proposals_to_me."
     )
     accept: StrictBool = Field(description="true to accept, false to reject.")
 
 
 class WithdrawOfferArgs(_Args):
     event_id: StrictInt = Field(
-        description="event_id of an offer in my_offers or my_information_offers, or a proposal "
-        "in my_contract_proposals."
+        description="event_id of an offer in my_offers, my_information_offers or "
+        "my_share_offers, or a proposal in my_contract_proposals."
     )
 
 
@@ -408,8 +423,18 @@ TOOLS = (
         OfferInformationArgs,
     ),
     ToolSpec(
+        "offer_shares",
+        f"Offer another resident shares of a parcel, out of its {PARCEL_SHARES}. The holders of "
+        "a parcel's shares split what its facility earns in proportion, at every payday, "
+        "whoever built it. Use it to pay for work or share a parcel with a partner. Nothing "
+        "moves until they accept and pay, and you keep earning on the shares until then. "
+        "Whoever bought the parcel still alone builds on it and stocks it with content.",
+        OfferSharesArgs,
+    ),
+    ToolSpec(
         "respond_to_offer",
-        "Accept or reject an offer (items or information) or contract proposal sent to you.",
+        "Accept or reject an offer (items, information or parcel shares) or contract proposal "
+        "sent to you.",
         RespondToOfferArgs,
     ),
     ToolSpec(
@@ -635,6 +660,8 @@ class ResidentTools:
                 act(OfferToSell(me, args.buyer_id, args.kind, args.quantity, args.price))
             case OfferInformationArgs():
                 act(OfferInformation(me, args.buyer_id, args.summary, args.content, args.price))
+            case OfferSharesArgs():
+                act(OfferShares(me, args.buyer_id, args.parcel_id, args.shares, args.price))
             case PlaceOrderArgs():
                 book = self.game.world.orders
                 order_id, first_fill = book.next_id, book.next_seq

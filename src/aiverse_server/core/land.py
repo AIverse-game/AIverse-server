@@ -13,6 +13,10 @@ need them, see the client repository's docs/design/facilities.md."""
 AD_SLOT_CAPACITY = 5
 """Pieces of content an ad slot shows at once."""
 
+PARCEL_SHARES = 100
+"""Shares every parcel is cut into. Its facility's income is paid to the holders in proportion
+to them, see `economy/shares.py`."""
+
 
 @dataclass(frozen=True)
 class Facility:
@@ -50,7 +54,12 @@ class Parcel:
     col: int
     row: int
     owner_id: str
+    """Who bought it and runs it: only they build on it and put content in it. Selling shares
+    does not change that."""
     facility: Facility | None = None
+    shares: tuple[tuple[str, int], ...] = ()
+    """(holder id, shares) pairs: who the facility's income goes to, `PARCEL_SHARES` in all.
+    Left empty, the owner holds them all, as when they bought it. Stored sorted by holder."""
 
     @property
     def id(self) -> str:
@@ -62,6 +71,21 @@ class Parcel:
                 raise ValueError(f"parcel index {index!r}, must be an integer >= 0")
         if not self.owner_id:
             raise ValueError("a parcel needs an owner")
+        shares = self.shares or ((self.owner_id, PARCEL_SHARES),)
+        holders = [holder for holder, _ in shares]
+        if len(set(holders)) != len(holders) or not all(holders):
+            raise ValueError(f"parcel {self.id} lists a share holder twice or none")
+        for holder, count in shares:
+            # Exactly int, as for item counts.
+            if type(count) is not int or count < 1:
+                raise ValueError(f"{holder!r} holds {count!r} shares, must be an integer >= 1")
+        if sum(count for _, count in shares) != PARCEL_SHARES:
+            raise ValueError(f"parcel {self.id} has shares that do not add up to {PARCEL_SHARES}")
+        object.__setattr__(self, "shares", tuple(sorted(shares)))
+
+    def held_by(self, resident_id: str) -> int:
+        """Shares of this parcel `resident_id` holds."""
+        return dict(self.shares).get(resident_id, 0)
 
 
 def parcel_id(col: int, row: int) -> str:

@@ -4,9 +4,11 @@ from typing import Any
 
 import pytest
 
+from aiverse_server.core.land import Parcel
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy import exchange as exchange_rules
 from aiverse_server.game.actions import (
+    OfferShares,
     OfferToSell,
     PlaceOrder,
     ProposeContract,
@@ -126,6 +128,15 @@ def test_states_show_only_the_viewers_offers_and_contracts() -> None:
     for outsider in ("c", None):
         hidden = world_view(world, 100, viewer=outsider)
         assert (hidden.offers, hidden.contract_proposals, hidden.contracts) == ([], [], [])
+
+
+def test_a_pending_share_offer_is_not_sent_to_the_page() -> None:
+    world = replace(WORLD, parcels=(Parcel(0, 0, "a"),))
+    world = perform(world, OfferShares("a", "b", "L0-0", 30, 100))
+
+    shown = world_view(world, 100, viewer="b").model_dump(by_alias=True, exclude_none=True)
+
+    assert (shown["offers"], shown["contractProposals"]) == ([], [])
 
 
 def test_the_latest_lines_are_counted_among_those_the_viewer_may_see() -> None:

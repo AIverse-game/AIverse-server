@@ -10,7 +10,8 @@ Every `PAY_PERIOD` game seconds, at multiples of it, the town pays each slot sho
 `pay_visitors`: the footfall at the slot, see `footfall.py`, shared with the other slots
 showing content within `SHARE_REACH`, times the pieces shown and `PAY_PER_FOOTFALL`. A slot
 showing nothing earns nothing and takes no share from its neighbours. The coins come from
-outside the town and go to the owner of the parcel, ledger channel `visitors`.
+outside the town and go to the holders of the parcel's shares in proportion, see `shares.py`,
+ledger channel `visitors`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -26,6 +27,7 @@ from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
 from .footfall import footfall
 from .land import plot
+from .shares import split_income
 
 CONTENT_ITEM = "ad_content"
 """The item kind of content for an ad slot."""
@@ -94,9 +96,9 @@ def pay_visitors(world: World) -> World:
         fresh = tuple(stale_at for stale_at in facility.contents if stale_at > world.time)
         paid = replace(facility, contents=fresh, next_pay_at=payday_after(world.time))
         world = _with_facility(world, parcel, paid)
-        if income > 0:
-            world = add_coins(world, parcel.owner_id, income)
-            world = record_transfer(world, SYSTEM, parcel.owner_id, income, "visitors")
+        for holder, part in split_income(parcel, income):
+            world = add_coins(world, holder, part)
+            world = record_transfer(world, SYSTEM, holder, part, "visitors")
     return world
 
 
