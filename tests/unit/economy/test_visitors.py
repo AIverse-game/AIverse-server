@@ -1,4 +1,5 @@
-"""Visitors: scripted tourists who walk the map, choose ad slots to see and are counted as views."""
+"""Visitors: scripted tourists who walk the map, choose venues to visit and pass ad slots that are
+counted as views."""
 
 import math
 from dataclasses import replace
@@ -11,11 +12,9 @@ from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy import visitors
 from aiverse_server.economy.ads import CONTENT_LIFETIME
 from aiverse_server.economy.visitors import (
-    MAX_DWELL,
+    DWELL,
     MAX_STOPS,
-    MIN_DWELL,
     MIN_STOPS,
-    SEEN_FOR,
     TRAFFIC_REACH,
     VISITOR_COUNT,
     VISITOR_SPEED,
@@ -34,7 +33,7 @@ from aiverse_server.residents.walking import WALK_SPEED
 
 @pytest.fixture(autouse=True)
 def tourists_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tourists look at ad slots here; the working route is tested in `test_working_tourists.py`."""
+    """Tourists pick venues here; the working route is tested in `test_working_tourists.py`."""
     monkeypatch.setattr(visitors, "ROUTE_SHARE", 0.0)
 
 
@@ -45,6 +44,15 @@ PORTAL = Facility("portal", 0.0)
 def slot(col: int, row: int, pieces: int = 1) -> Parcel:
     """An ad slot showing `pieces` pieces of content that stay fresh for a long while."""
     return Parcel(col, row, "a", Facility("ad", 0.0, (CONTENT_LIFETIME * 10,) * pieces))
+
+
+def hall(col: int, row: int, games: int = 1) -> Parcel:
+    """A game hall showing `games` games that stay fresh for a long while."""
+    return Parcel(col, row, "a", Facility("game_hall", 0.0, (CONTENT_LIFETIME * 10,) * games))
+
+
+def workspace(col: int, row: int) -> Parcel:
+    return Parcel(col, row, "a", Facility("workspace", 0.0))
 
 
 def world_of(*parcels: Parcel, crowd: Crowd | None = None) -> World:
@@ -81,8 +89,8 @@ def the_visitor(world: World) -> Visitor:
     return world.crowd.visitors[0]
 
 
-def test_a_visitor_comes_in_at_the_entrance_and_heads_for_the_slot_worth_seeing() -> None:
-    world = world_of(slot(5, 5), crowd=crowd_of(visitor()))
+def test_a_visitor_comes_in_at_the_entrance_and_heads_for_the_venue_worth_visiting() -> None:
+    world = world_of(hall(5, 5), crowd=crowd_of(visitor()))
 
     after = at(world, 5.0)
 
@@ -94,27 +102,37 @@ def test_a_visitor_comes_in_at_the_entrance_and_heads_for_the_slot_worth_seeing(
     assert MIN_STOPS <= walker.stops_left <= MAX_STOPS
 
 
-def test_a_visitor_who_stays_at_a_slot_is_counted_once_with_the_people_it_stands_for() -> None:
-    world = world_of(slot(5, 5), crowd=crowd_of(visitor()))
+def test_a_visitor_who_stays_at_a_venue_stays_for_its_dwell_and_counts_no_view() -> None:
+    # The ad slot on L8-6 is 10 from the hall on L8-5, the edge of what a visitor can see.
+    world = world_of(hall(8, 5), slot(8, 6), crowd=crowd_of(visitor()))
     walking = the_visitor(at(world, 5.0))
 
     arrived = at(at(world, 5.0), walking.until)
+    stayed = at(arrived, the_visitor(arrived).until)
 
     stayer = the_visitor(arrived)
+    low, high = DWELL["game_hall"]
     assert stayer.phase == "staying"
-    assert MIN_DWELL <= stayer.until - walking.until <= MAX_DWELL
-    assert arrived.crowd.views == (("L5-5", visitor_weight(walking.until)),)
-    assert stayer.seen == (("L5-5", walking.until + SEEN_FOR),)
+    assert low <= stayer.until - walking.until <= high
+    assert stayed.crowd.views == arrived.crowd.views == ()
 
 
-def test_a_visitor_does_not_come_back_to_a_slot_it_was_just_counted_at() -> None:
-    world = world_of(slot(5, 5), crowd=crowd_of(visitor(), seed=3))
-    stayer = the_visitor(at(at(world, 5.0), the_visitor(at(world, 5.0)).until))
+def test_a_visitor_does_not_go_straight_back_to_the_venue_it_has_just_left() -> None:
+    picks = []
+    for seed in range(30):
+        leaving = visitor(
+            phase="staying",
+            until=1.0,
+            at=Position(85, 55),
+            target=Position(85, 55),
+            goal="place",
+            stop="L8-5",
+            stops_left=2,
+        )
+        world = world_of(hall(8, 5), hall(8, 7), crowd=crowd_of(leaving, seed=seed))
+        picks.append(the_visitor(at(world, 1.0)).stop)
 
-    done = at(at(at(world, 5.0), the_visitor(at(world, 5.0)).until), stayer.until)
-
-    assert the_visitor(done).goal == "wander"
-    assert done.crowd.views == (("L5-5", visitor_weight(the_visitor(at(world, 5.0)).until)),)
+    assert picks == ["L8-7"] * 30
 
 
 def test_a_visitor_who_has_seen_enough_walks_out_and_stays_away_before_coming_again() -> None:
@@ -169,8 +187,8 @@ def test_a_visitor_who_only_clips_the_edge_of_a_slots_circle_does_not_see_it() -
     assert arrived.crowd.views == ()
 
 
-def test_a_slot_showing_nothing_is_neither_chosen_nor_seen() -> None:
-    bare = Parcel(5, 5, "a", Facility("ad", 0.0))
+def test_a_game_hall_showing_no_games_is_not_chosen() -> None:
+    bare = Parcel(5, 5, "a", Facility("game_hall", 0.0))
     world = world_of(bare, crowd=crowd_of(visitor()))
 
     after = at(world, 5.0)
@@ -179,65 +197,68 @@ def test_a_slot_showing_nothing_is_neither_chosen_nor_seen() -> None:
     assert the_visitor(after).stop is None
 
 
-def test_only_ad_slots_are_chosen() -> None:
-    hall = Parcel(5, 5, "a", Facility("game_hall", 0.0, (CONTENT_LIFETIME * 10,)))
-    world = world_of(hall, crowd=crowd_of(visitor()))
+def test_an_ad_slot_is_never_somewhere_to_go_however_much_it_shows() -> None:
+    world = world_of(slot(5, 5, pieces=5), crowd=crowd_of(visitor()))
 
     after = at(world, 5.0)
 
     assert the_visitor(after).goal == "wander"
+    assert the_visitor(after).stop is None
 
 
-def first_picks(*slots: Parcel) -> list[str | None]:
+def first_picks(*venues: Parcel) -> list[str | None]:
     """Where each of 100 visitors, differing only in the seed of their dice, heads first."""
     picks = []
     for seed in range(100):
-        world = world_of(*slots, crowd=crowd_of(visitor(), seed=seed))
+        world = world_of(*venues, crowd=crowd_of(visitor(), seed=seed))
         picks.append(the_visitor(at(world, 5.0)).stop)
     return picks
 
 
-def test_a_slot_with_more_content_draws_more_visitors_all_else_equal() -> None:
+def test_a_game_hall_with_more_games_draws_more_visitors_all_else_equal() -> None:
     # L2-5 and L7-5 are centred 25 either side of the entrance.
-    picks = first_picks(slot(2, 5, pieces=5), slot(7, 5, pieces=1))
+    picks = first_picks(hall(2, 5, games=5), hall(7, 5, games=1))
 
     assert picks.count("L2-5") > picks.count("L7-5") > 0
 
 
-def test_nearer_slots_draw_more_visitors_all_else_equal() -> None:
-    picks = first_picks(slot(5, 5, pieces=3), slot(0, 0, pieces=3))
+def test_nearer_venues_draw_more_visitors_all_else_equal() -> None:
+    picks = first_picks(hall(5, 5, games=3), hall(0, 0, games=3))
 
     assert picks.count("L5-5") > picks.count("L0-0") > 0
 
 
-def test_a_crowded_slot_loses_visitors_to_a_worse_one() -> None:
-    # Everyone comes in together, so the slots fill up while they are chosen. Alone, most would
-    # pick the five pieces over the one.
+def test_a_workspace_is_a_venue_visitors_go_to_too() -> None:
+    picks = first_picks(workspace(5, 5))
+
+    assert picks == ["L5-5"] * 100
+
+
+def test_a_crowded_venue_loses_visitors_to_a_worse_one() -> None:
+    # Everyone comes in together, so the venues fill up while they are chosen. Alone, most would
+    # pick the five games over the one.
     packed = tuple(visitor(id=i, until=5.0) for i in range(40))
-    world = world_of(slot(2, 5, pieces=5), slot(7, 5, pieces=1), crowd=crowd_of(*packed, seed=4))
+    world = world_of(hall(2, 5, games=5), hall(7, 5, games=1), crowd=crowd_of(*packed, seed=4))
 
     after = at(world, 5.0)
 
     better = sum(v.stop == "L2-5" for v in after.crowd.visitors)
-    alone = first_picks(slot(2, 5, pieces=5), slot(7, 5, pieces=1)).count("L2-5")
+    alone = first_picks(hall(2, 5, games=5), hall(7, 5, games=1)).count("L2-5")
     assert better / 40 < alone / 100 - 0.1
 
 
-def test_a_slot_stops_counting_the_visitors_who_have_left_it() -> None:
+def test_a_venue_stops_counting_the_visitors_who_have_left_it() -> None:
     # Thirty visitors finish their stay at L2-5, with nowhere left to go, in the same moment as
     # one more chooses between it and L7-5, which are as good as each other and as near.
-    both = (("L2-5", 999.0), ("L7-5", 999.0))
     leaving = tuple(
-        visitor(
-            id=i, phase="staying", until=5.0, goal="place", stop="L2-5", stops_left=1, seen=both
-        )
+        visitor(id=i, phase="staying", until=5.0, goal="place", stop="L2-5", stops_left=0)
         for i in range(30)
     )
     picks = []
     for seed in range(60):
         chooser = visitor(id=99, until=5.0, stops_left=2)
         crowd = crowd_of(*leaving, chooser, seed=seed)
-        world = world_of(slot(2, 5, pieces=2), slot(7, 5, pieces=2), crowd=crowd)
+        world = world_of(hall(2, 5, games=2), hall(7, 5, games=2), crowd=crowd)
         after = at(world, 5.0)
         picks.append(after.crowd.visitors[-1].stop)
 
@@ -258,18 +279,6 @@ def test_a_slot_a_visitor_was_just_counted_at_is_not_counted_again_when_it_passe
     arrived = at(world, walk.until)
 
     assert arrived.crowd.views == ()
-
-
-def test_a_visitor_back_on_a_new_trip_is_not_counted_again_at_a_slot_it_was_counted_at() -> None:
-    # Away until 5, having been counted at L5-5 until 100, with a trip that wants one stop.
-    back = visitor(seen=(("L5-5", 100.0),))
-    world = world_of(slot(5, 5), crowd=crowd_of(back))
-
-    after = at(world, 5.0)
-
-    assert the_visitor(after).goal in ("wander", "exit")
-    assert the_visitor(after).stop is None
-    assert after.crowd.views == ()
 
 
 def test_a_visitor_with_nothing_to_see_gives_up_roaming_and_leaves_in_the_end() -> None:
@@ -304,12 +313,19 @@ def test_visitors_roam_when_nothing_is_worth_seeing_and_stay_on_the_map() -> Non
 def test_each_view_adds_more_people_as_the_game_goes_on() -> None:
     assert visitor_weight(0.0) == 1.0
     assert visitor_weight(1_200.0) == 2.0
-    world = world_of(slot(5, 5), crowd=crowd_of(visitor(until=1_200.0)))
-    walking = the_visitor(replace(at(replace(world, time=1_200.0), 1_200.0)))
+    walk = visitor(
+        phase="walking",
+        until=1_200.0 + 40.0 / VISITOR_SPEED,
+        at=Position(30, 50),
+        target=Position(70, 50),
+        departs_at=1_200.0,
+        goal="exit",
+    )
+    world = world_of(slot(5, 4), crowd=crowd_of(walk))
 
-    arrived = at(at(replace(world, time=1_200.0), 1_200.0), walking.until)
+    arrived = at(world, walk.until)
 
-    assert arrived.crowd.views == (("L5-5", visitor_weight(walking.until)),)
+    assert arrived.crowd.views == (("L5-4", visitor_weight(walk.until)),)
     assert arrived.crowd.views[0][1] > 2.0
 
 
@@ -333,10 +349,10 @@ def test_a_walker_is_where_the_line_from_start_to_target_puts_them() -> None:
 
 
 def test_a_visitor_takes_a_network_of_portals_when_it_is_shorter_and_comes_out_at_once() -> None:
-    # Portals on L0-5 (5, 55) and L9-5 (95, 55), joined; the slot on L8-5 (85, 55) is 70 from
+    # Portals on L0-5 (5, 55) and L9-5 (95, 55), joined; the venue on L8-5 (85, 55) is 70 from
     # the visitor at (10, 55) on foot but only 5 + 10 through the portals.
     portals = (Parcel(0, 5, "a", PORTAL), Parcel(9, 5, "a", PORTAL))
-    base = replace(world_of(*portals, slot(8, 5)), links=(Link("L0-5", "L9-5", 0),))
+    base = replace(world_of(*portals, hall(8, 5)), links=(Link("L0-5", "L9-5", 0),))
     walk = visitor(
         phase="staying", until=1.0, at=Position(10, 55), target=Position(10, 55), stops_left=2
     )
@@ -357,7 +373,7 @@ def test_a_visitor_takes_a_network_of_portals_when_it_is_shorter_and_comes_out_a
 def test_a_visitor_crosses_to_another_island_only_by_the_bridge() -> None:
     # Five by five islands on a 150 map: L5-1 (55, 15) is on the island east of the one the
     # visitor is on, joined to it by a bridge at y = 15, from x = 28 to x = 32.
-    base = replace(world_of(slot(5, 1)), map=WorldMap(size=150, block_cells=3, lobby=True))
+    base = replace(world_of(hall(5, 1)), map=WorldMap(size=150, block_cells=3, lobby=True))
     walk = visitor(
         phase="staying", until=1.0, at=Position(15, 5), target=Position(15, 5), stops_left=1
     )
@@ -377,11 +393,11 @@ def test_a_visitor_crosses_to_another_island_only_by_the_bridge() -> None:
 
 def test_through_portals_the_walks_to_the_first_and_from_the_last_cross_bridges_too() -> None:
     # Portals on L0-0 (5, 5) and L14-0 (145, 5), joined. The visitor on the second island walks to
-    # the first portal over the bridge at (28..32, 15); the slot on L12-3 (125, 35) is on the
+    # the first portal over the bridge at (28..32, 15); the venue on L12-3 (125, 35) is on the
     # island south of the second portal's, which it reaches over the bridge at x = 135.
     islands = WorldMap(size=150, block_cells=3, lobby=True)
     portals = (Parcel(0, 0, "a", PORTAL), Parcel(14, 0, "a", PORTAL))
-    base = replace(world_of(*portals, slot(12, 3)), map=islands, links=(Link("L0-0", "L14-0", 0),))
+    base = replace(world_of(*portals, hall(12, 3)), map=islands, links=(Link("L0-0", "L14-0", 0),))
     walk = visitor(
         phase="staying", until=1.0, at=Position(45, 15), target=Position(45, 15), stops_left=1
     )
@@ -404,7 +420,7 @@ def test_portals_that_are_not_joined_save_the_visitor_nothing() -> None:
     walk = visitor(
         phase="staying", until=1.0, at=Position(10, 55), target=Position(10, 55), stops_left=2
     )
-    world = world_of(*portals, slot(8, 5), crowd=crowd_of(walk))
+    world = world_of(*portals, hall(8, 5), crowd=crowd_of(walk))
 
     after = at(world, 1.0)
 

@@ -2,12 +2,12 @@
 
 A sponsor is the system playing a party from outside the town, like the vendors of compute.
 Each has a budget that fills at `Sponsor.rate` coins for each game second, up to
-`BUDGET_CAP_SECONDS` worth, and pays `Sponsor.price` coins for each person who saw an ad slot,
+`BUDGET_CAP_SECONDS` worth, and pays `Sponsor.price` coins for each person who passed an ad slot,
 see `visitors.py`. Views are paid for at paydays, which fall at multiples of `PAY_PERIOD`, all
 slots at once, `pay_sponsors`. The payday of a multiple is held at the first moment on or after
 it when there are views to pay for, which is the multiple itself when the clock is on time, a
 few milliseconds later when it is not, and the first step of a visitor after it when nobody had
-seen a slot before; a multiple is held at most once, however late, and it counts as the time the
+passed a slot before; a multiple is held at most once, however late, and it counts as the time the
 budgets were topped up to: the views each slot has had since the last one are pooled and
 the sponsors who pay most buy them first, as many as their budgets allow. When the budgets
 fall short, every slot is paid for the same share of its views, at the average price paid, and
@@ -57,8 +57,8 @@ def default_sponsors() -> SponsorBook:
 
 
 def unsettled_views(world: World) -> dict[str, float]:
-    """People who have seen each slot since it was last dealt with, by parcel; slots nobody has
-    seen since are left out."""
+    """People who have passed each slot since it was last dealt with, by parcel; slots nobody has
+    passed since are left out."""
     done = dict(world.sponsors.settled)
     waiting = {}
     for parcel_id, people in world.crowd.views:
@@ -71,7 +71,7 @@ def unsettled_views(world: World) -> dict[str, float]:
 def pay_sponsors(world: World) -> World:
     """At a payday, pay every slot for the views it has had since the last one, as the module
     docstring describes, and top up the sponsors' budgets. The same world when no multiple of
-    the period has come since the last payday, when there are no sponsors or when nobody has seen
+    the period has come since the last payday, when there are no sponsors or when nobody has passed
     a slot since."""
     book = world.sponsors
     payday = latest_payday(world.time)

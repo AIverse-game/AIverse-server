@@ -27,7 +27,7 @@ def me(game: Game, resident_id: str) -> Resident:
     return next(r for r in game.world.residents if r.id == resident_id)
 
 
-def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_earn_from_an_ad_slot_on_it() -> None:
+def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_build_ad_slots_nobody_passes() -> None:
     """Plays a fast-forwarded game: each round every bot acts, then the clock jumps to the
     next thing that falls due, at least 2 seconds on."""
 
@@ -53,12 +53,14 @@ def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_earn_from_an_ad_slot_on
         built = [parcel for parcel in game.world.parcels if parcel.facility is not None]
         assert sorted(parcel.owner_id for parcel in built) == sorted(set(owners))
         assert game.world.compute.jobs == ()
-        # They keep their slots stocked with content from their own compute, and sponsors pay
-        # for it: more than the land cost the owners.
+        # They keep their slots stocked with content from their own compute. Nobody goes to look
+        # at an ad, and no venue stands anywhere in this game, so no visitor passes the slots and
+        # sponsors pay nothing; only the land costs them coins.
         assert all(parcel.facility.contents for parcel in built if parcel.facility)
         paid = sum(t.amount for t in game.world.ledger.transfers if t.channel == "sponsors")
         spent = sum(t.amount for t in game.world.ledger.transfers if t.channel == "land")
-        assert spent > 0 and paid > 0
+        assert spent > 0 and paid == 0
+        assert game.world.crowd.views == ()
         for parcel in game.world.parcels:
             owner = me(game, parcel.owner_id)
             assert owner.coins > STARTING_COINS - 9_000

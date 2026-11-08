@@ -48,7 +48,7 @@ def test_a_crowd_lists_visitors_in_order_and_views_by_parcel_once() -> None:
         Crowd(views=(("L1-1", 0.0),))
 
 
-def test_views_of_a_parcel_are_found_and_zero_when_nobody_saw_it() -> None:
+def test_views_of_a_parcel_are_found_and_zero_when_nobody_passed_it() -> None:
     crowd = Crowd(views=(("L1-1", 2.5),))
 
     assert (crowd.viewed("L1-1"), crowd.viewed("L2-2")) == (2.5, 0.0)

@@ -8,9 +8,9 @@ seconds and then goes stale; the clock starts when it is put in, so a piece in h
 spoils. A facility shows at most `AD_SLOT_CAPACITY` pieces at once.
 
 A game hall shows games and a workspace shows nothing, see `compute.py` for how they are built;
-both earn from the fees working tourists pay at the door, see `admissions.py`, and a game hall draws
-them only while it shows a game. An ad slot earns from the views it gets, see `sponsors.py`;
-what draws visitors to any of them is the content it shows, see `visitors.py`.
+both earn from the fees visitors pay at the door, see `admissions.py`, and a game hall draws
+them only while it shows a game, see `visitors.py`. An ad slot earns from the people who pass it
+while it shows content, see `sponsors.py`; nobody goes to look at one.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.

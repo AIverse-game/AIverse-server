@@ -156,18 +156,16 @@ def test_a_visitor_on_the_route_does_not_go_to_ad_slots_but_counts_as_seeing_one
     assert dict(arrived.admissions.unpaid).keys() == {"L9-5"}
 
 
-def test_a_visitor_off_the_route_looks_at_ad_slots_and_never_pays_a_fee(
+def test_a_visitor_off_the_route_goes_to_a_venue_and_pays_the_fee_there(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(visitors, "ROUTE_SHARE", 0.0)
-    slot = Parcel(5, 5, "a", Facility("ad", 0.0, (CONTENT_LIFETIME * 10,)))
-    world = world_of(slot, Parcel(2, 5, "a", WORKSPACE), Parcel(2, 6, "a", HALL), crowd=arriving())
+    world = world_of(Parcel(2, 5, "a", WORKSPACE), Parcel(2, 6, "a", HALL), crowd=arriving())
 
     after = at(world, 60.0)
 
-    assert after.crowd.views != ()
-    assert after.admissions.unpaid == ()
-    assert the_visitor(after).route == ()
+    assert taken(after) > 0
+    assert set(dict(after.admissions.admitted)) <= {"L2-5", "L2-6"}
 
 
 def test_the_fees_taken_are_the_fee_times_the_people_let_in() -> None:
@@ -184,16 +182,17 @@ def test_the_fees_taken_are_the_fee_times_the_people_let_in() -> None:
 
 
 def on_the_route(monkeypatch: pytest.MonkeyPatch, share: float) -> tuple[int, int]:
-    """Visitors out in town at 125 s with a route left or on their way to the workspace, and
-    all of those out in town, with `share` of the trips set to follow the route."""
+    """Visitors out in town at 125 s, and those of them still on a working route, with `share` of
+    the trips set to follow the route."""
     monkeypatch.setattr(visitors, "ROUTE_SHARE", share)
-    slot = Parcel(1, 1, "a", Facility("ad", 0.0, (CONTENT_LIFETIME * 10,)))
-    world = world_of(slot, Parcel(5, 5, "a", WORKSPACE), crowd=new_crowd(200, seed=5))
+    world = world_of(
+        Parcel(5, 5, "a", WORKSPACE), Parcel(2, 5, "a", HALL), crowd=new_crowd(200, seed=5)
+    )
 
     after = at(world, 125.0)
 
     out = [v for v in after.crowd.visitors if v.trip and v.phase != "away"]
-    return len([v for v in out if v.route or v.stop == "L5-5"]), len(out)
+    return len([v for v in out if v.route]), len(out)
 
 
 def test_a_share_of_the_trips_follow_the_working_route_when_the_dice_decide(

@@ -485,8 +485,8 @@ TOOLS = (
         f"node hired for it ({on_demand_cost(VENUE_WORKLOAD)} coins), or on one of your "
         "subscribed generative nodes. A game hall shows games (make_content with content "
         f"game, then place_content), up to {AD_SLOT_CAPACITY} for {CONTENT_LIFETIME:g} s each. "
-        "Tourists on the working route pay a fee at the door of each, and go to a game hall only "
-        "while it shows games; the fees are paid out to the holders at paydays.",
+        "Visitors pay a fee at the door of each, and go to a game hall only while it shows games; "
+        "the fees are paid out to the holders at paydays.",
         BuildVenueArgs,
     ),
     ToolSpec(
@@ -523,9 +523,9 @@ TOOLS = (
         f"Put one piece of {CONTENT_ITEM!r} you carry into the ad slot on one of your parcels, "
         f"or of {GAME_ITEM!r} into a game hall, from anywhere. A facility shows up to "
         f"{AD_SLOT_CAPACITY} pieces; each is shown for {CONTENT_LIFETIME:g} s from now and then "
-        f"goes stale. Every {PAY_PERIOD:g} s the sponsors pay an ad slot for the people who saw "
-        "it, and more pieces draw more visitors; a game hall earns from the fees tourists on "
-        "the working route pay at its door, and draws them only while it shows games.",
+        f"goes stale. Every {PAY_PERIOD:g} s the sponsors pay an ad slot for the people who passed "
+        "it while it showed content; a game hall earns from the fees visitors pay at its door, "
+        "and draws them only while it shows games.",
         PlaceContentArgs,
     ),
     ToolSpec(

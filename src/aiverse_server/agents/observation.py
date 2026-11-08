@@ -195,7 +195,7 @@ class MyParcelView:
     first."""
     income_last_payday: int = 0
     """Coins its ad slot was paid at the last payday that had views to pay for, for the people
-    who saw it since the one before; 0 for a slot paid nothing then."""
+    who passed it since the one before; 0 for a slot paid nothing then."""
     shares: dict[str, int] = field(default_factory=dict)
     """Who holds the parcel's shares and how many of the 100; the income is paid out by them."""
     my_cut_last_payday: int = 0
@@ -346,7 +346,7 @@ class LinkProposalView:
 class SponsorView:
     name: str
     price_per_view: float
-    """Coins it pays for one person who saw an ad slot."""
+    """Coins it pays for one person who passed an ad slot."""
     budget_per_second: float
     """Coins its budget fills with each second."""
     budget_now: int

@@ -52,7 +52,7 @@ def with_sponsors(*sponsors: Sponsor, crowd: Crowd | None = None, time: float = 
 
 
 def seen(a: float = 0, b: float = 0, c: float = 0) -> Crowd:
-    """People who saw the slots on L7-7, L7-8 and L1-1."""
+    """People who passed the slots on L7-7, L7-8 and L1-1."""
     pairs = (("L1-1", c), ("L7-7", a), ("L7-8", b))
     return Crowd(views=tuple((parcel, n) for parcel, n in pairs if n))
 
@@ -61,7 +61,7 @@ def coins(world: World, resident_id: str) -> int:
     return coin_balance(world, resident_id) - 1_000
 
 
-def test_a_slot_is_paid_at_the_payday_for_the_people_who_saw_it_at_the_price_a_view() -> None:
+def test_a_slot_is_paid_at_the_payday_for_the_people_who_passed_it_at_the_price_a_view() -> None:
     world = with_sponsors(sponsor(price=2.0), crowd=seen(a=10))
 
     before = settle_due(replace(world, time=PAY_PERIOD - 0.1))
@@ -233,7 +233,7 @@ def test_a_payday_the_clock_arrives_at_late_is_still_held_once_and_not_skipped()
 
 
 def test_views_seen_after_a_quiet_payday_are_paid_at_once_not_a_period_later() -> None:
-    # Nobody saw a slot at 30, so nothing was paid; the first views come at 47.3.
+    # Nobody passed a slot at 30, so nothing was paid; the first views come at 47.3.
     world = with_sponsors(sponsor(price=1.0), crowd=Crowd(), time=47.3)
     seen_now = replace(world, crowd=seen(a=4))
 

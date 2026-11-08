@@ -32,6 +32,7 @@ from ..economy.visitors import (
     SEEN_FOR,
     VIEW_RADIUS,
     VISITOR_COUNT,
+    WORKSPACE_PIECES,
 )
 from ..game.layout import BLOCK_CELLS, BLOCKS, MAP_SIZE, create_default_world
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
@@ -67,8 +68,8 @@ def system_prompt(
 at game end. Only coins count; land and items are worth nothing at the end.
 
 The state of the world
-- Coins come into the world two ways: sponsors pay ad slots for the views they get, and
-tourists on a working route pay a fee at the door of workspaces and game halls, see below.
+- Coins come into the world two ways: sponsors pay ad slots for the people who pass them, and
+visitors pay a fee at the door of workspaces and game halls, see below.
 Coins also change hands between residents, and leave you when you buy land or compute. Spend
 them only on something that can plausibly bring more back; spending nothing is allowed.
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Walking is a
@@ -96,15 +97,14 @@ coins on a hired node. It joins your items, and you may sell it on the exchange 
 and contract, or put it in an ad slot of your own with place_content.
 - An ad slot shows up to {AD_SLOT_CAPACITY} pieces of content, each for {CONTENT_LIFETIME:g}s
 from when you put it in, then it goes stale and is gone; keep supplying it. Every
-{PAY_PERIOD:g}s the sponsors pay for the people who saw ad slots since the last payday: the
+{PAY_PERIOD:g}s the sponsors pay for the people who passed ad slots since the last payday: the
 land observation lists them with the price each pays per person and its budget, and when the
-budgets run short every slot is paid for the same share of its views. A slot showing nothing
-draws no visitors and earns nothing: building one is no income by itself, and an empty slot
-earns nothing even beside a busy path. A slot that shows content also counts the people who
-spend {MIN_VIEW_SECONDS:g}s within {VIEW_RADIUS:g} units of it on their way elsewhere, say
-across a bridge between islands, and the same person counts again at a slot only after
-{SEEN_FOR:g}s. Each of your slots shows the people who saw it, and what
-it was paid at the last payday.
+budgets run short every slot is paid for the same share of its views. Nobody goes to look at an
+ad, so a slot earns only from the people passing close by on their way to a venue: they count
+when they spend {MIN_VIEW_SECONDS:g}s within {VIEW_RADIUS:g} units of it, say on a walk across a
+bridge between islands, and the same person counts again at a slot only after {SEEN_FOR:g}s. A
+slot showing nothing counts no one and earns nothing, so building one is no income by itself.
+Each of your slots shows the people who passed it, and what it was paid at the last payday.
 - The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
@@ -112,23 +112,23 @@ Only the buyer of a parcel builds on it and puts content in it, whoever holds it
 - To buy a block together, stand in it and joint_buy_parcel to a partner: they pay part of the
 price for a number of shares, you pay the rest at once and keep the other shares and the
 running of it. It is bought when they accept; if someone buys it first, withdraw.
-- {VISITOR_COUNT} scripted visitors come in at the middle of the map, go to ad slots showing
-content, more to ones with more pieces and nearer to them, fewer to crowded ones, then leave and
-come again; each stands for more people as the game goes on. Passing close by is not enough
-on its own, see the passers-by above. Some trips are the working route instead, see build_venue.
+- {VISITOR_COUNT} scripted visitors come in at the middle of the map and go to workspaces and game
+halls showing games, more to ones with more pieces (a workspace counts as {WORKSPACE_PIECES}) and
+nearer to them, fewer to crowded ones, paying the fee at each door; then they leave and come
+again, and each stands for more people as the game goes on. Some trips follow the working route
+instead, see build_venue.
 The land observation shows how many people are passing each parcel now.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
 - build_venue builds a game hall or a workspace on a parcel of yours, like an ad slot but
 dearer: {VENUE_WORKLOAD:g} workload, {venue_own_s:g}s on your own compute, {venue_hired_s:g}s and
-{venue_hired_coins} coins on a hired node. A venue earns from a fee at its door, not from
-sponsors: {ROUTE_SHARE:.0%} of the trips are tourists on a rough working route, to a workspace
-and then to a game hall showing games, who pay {FEES["workspace"]} and {FEES["game_hall"]} coins a
-person; a stop with nowhere to go is skipped, so either venue earns on its own. The fees are paid
-to the holders at paydays, with the sponsors' pay. A workspace needs no content. A game hall
-draws nobody until it shows games (make_content content=game, {GAME_WORKLOAD:g} workload, then
-place_content); games go stale after {CONTENT_LIFETIME:g}s like ads, so keep supplying
-them. A game is its own item, {GAME_ITEM!r}; an ad slot cannot show it.
-The other trips only visit ad slots, so a venue never draws those people.
+{venue_hired_coins} coins on a hired node. Visitors go to venues, so a venue earns from their fees
+at the door, {FEES["workspace"]} coins for a workspace and {FEES["game_hall"]} for a game hall, per
+person; the fees are paid to the holders at paydays, with the sponsors' pay. {ROUTE_SHARE:.0%} of
+the trips are a working route, a workspace and then a game hall showing games, and the others pick
+any venue. A workspace needs no content. A game hall draws nobody until it shows games
+(make_content content=game, {GAME_WORKLOAD:g} workload, then place_content); games go stale after
+{CONTENT_LIFETIME:g}s like ads, so keep supplying them. A game is its own item, {GAME_ITEM!r}; an ad
+slot cannot show it.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units or privately to one resident anywhere; at most

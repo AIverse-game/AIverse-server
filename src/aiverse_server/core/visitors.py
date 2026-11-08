@@ -15,9 +15,9 @@ Phase = Literal["away", "walking", "staying"]
 until `until`."""
 
 Goal = Literal["place", "wander", "exit"]
-"""What a walk is for: to go to the facility on the parcel `Visitor.stop`, an ad slot to see, a
-workspace to work in or a game hall to play in; to roam to a random spot because nothing was
-worth seeing; or to leave through the entrance."""
+"""What a walk is for: to go to the venue on the parcel `Visitor.stop`, a workspace to work in or a
+game hall to play in; to roam to a random spot because there is no venue to go to; or to leave
+through the entrance."""
 
 RouteStop = Literal["workspace", "game_hall"]
 """A kind of facility on a rough route: the working route goes to a workspace and then a game
@@ -51,7 +51,7 @@ class Visitor:
     route: tuple[RouteStop, ...] = ()
     """The rough route the visitor follows on this trip, if it has one: the kinds of facility it
     still means to go to, in order; the one it is on its way to or at is not in it. A visitor
-    without a route is an ordinary tourist who looks at ad slots; one with a route differs in
+    without a route is an ordinary tourist who picks any venue; one with a route differs in
     nothing else."""
     trip: int = 0
     """Visits to town so far, counting this one; with `step` it gives the dice of each choice
@@ -59,9 +59,9 @@ class Visitor:
     step: int = 0
     """Choices made on this trip."""
     stops_left: int = 0
-    """Ad slots still to see on this trip before leaving."""
+    """Venues still to visit on this trip before leaving."""
     seen: tuple[tuple[str, float], ...] = ()
-    """(parcel id, game time) pairs: slots this visitor has been counted at, and until when it
+    """(parcel id, game time) pairs: ad slots this visitor has been counted at, and until when it
     does not count again."""
 
     def __post_init__(self) -> None:
@@ -83,14 +83,14 @@ class Visitor:
 
 @dataclass(frozen=True)
 class Crowd:
-    """All the scripted visitors, and how many people have seen each ad slot."""
+    """All the scripted visitors, and how many people have passed each ad slot."""
 
     seed: int = 0
     """Seeds the dice the visitors throw, so a game can be played again with the same crowd."""
     visitors: tuple[Visitor, ...] = ()
     """In order of id."""
     views: tuple[tuple[str, float], ...] = ()
-    """(parcel id, people) pairs: people who have seen the slot on that parcel so far, sorted
+    """(parcel id, people) pairs: people who have passed the slot on that parcel so far, sorted
     by parcel. Fractions, since a visitor stands for more than one person."""
 
     def __post_init__(self) -> None:
@@ -104,5 +104,5 @@ class Crowd:
             raise ValueError("views must be positive and finite")
 
     def viewed(self, parcel_id: str) -> float:
-        """People who have seen the slot on `parcel_id` so far."""
+        """People who have passed the slot on `parcel_id` so far."""
         return dict(self.views).get(parcel_id, 0.0)

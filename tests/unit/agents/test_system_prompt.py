@@ -45,11 +45,11 @@ def test_the_prompt_says_only_coins_count_at_the_end() -> None:
     assert "Only coins count; land and items are worth nothing at the end." in prompt
 
 
-def test_the_prompt_says_sponsors_pay_ad_slots_for_the_views_they_get() -> None:
+def test_the_prompt_says_sponsors_pay_ad_slots_for_the_people_who_pass_them() -> None:
     prompt = system_prompt("甲", "a")
 
-    assert "sponsors pay ad slots for the views they get" in prompt
-    assert "A slot showing nothing\ndraws no visitors and earns nothing" in prompt
+    assert "sponsors pay ad slots for the people who pass them" in prompt
+    assert "A slot showing nothing counts no one and earns nothing" in " ".join(prompt.split())
     assert "buy_parcel" in prompt
 
 
@@ -57,20 +57,23 @@ def test_the_prompt_names_door_fees_as_a_second_source_of_coins() -> None:
     prompt = " ".join(system_prompt("甲", "a").split())
 
     assert "Coins come into the world two ways" in prompt
-    assert f"pay {FEES['workspace']} and {FEES['game_hall']} coins a person" in prompt
+    assert f"{FEES['workspace']} coins for a workspace and {FEES['game_hall']} for a game hall" in (
+        prompt
+    )
 
 
-def test_the_prompt_says_an_empty_ad_slot_earns_nothing_even_beside_a_path() -> None:
+def test_the_prompt_says_nobody_goes_to_an_ad_and_only_passers_by_count() -> None:
     prompt = " ".join(system_prompt("甲", "a").split())
 
-    assert "an empty slot earns nothing even beside a busy path" in prompt
+    assert "Nobody goes to look at an ad" in prompt
+    assert "and go to workspaces and game halls showing games" in prompt
 
 
 def test_the_prompt_explains_venues_with_the_game_constants() -> None:
     prompt = " ".join(system_prompt("甲", "a").split())
 
     assert f"{VENUE_WORKLOAD:g} workload" in prompt
-    assert f"{ROUTE_SHARE:.0%} of the trips are tourists" in prompt
+    assert f"{ROUTE_SHARE:.0%} of the trips are a working route" in prompt
     assert f"make_content content=game, {GAME_WORKLOAD:g} workload" in prompt
     assert "A game hall draws nobody until it shows games" in prompt
     assert f"games go stale after {CONTENT_LIFETIME:g}s like ads" in prompt

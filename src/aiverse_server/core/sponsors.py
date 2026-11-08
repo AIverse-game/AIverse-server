@@ -37,7 +37,7 @@ class SponsorBook:
     topped_up_at: float = 0.0
     """Game time the sponsors' budgets were last topped up, at the last payday."""
     settled: tuple[tuple[str, float], ...] = ()
-    """(parcel id, people) pairs sorted by parcel: how many of the people who have seen the
+    """(parcel id, people) pairs sorted by parcel: how many of the people who have passed the
     slot on a parcel, `Crowd.views`, have been paid for or passed over so far."""
     last_paid: tuple[tuple[str, int], ...] = ()
     """(parcel id, coins) pairs sorted by parcel: what each slot was paid at the latest payday
@@ -59,7 +59,7 @@ class SponsorBook:
             raise ValueError("last paid amounts must be integers > 0")
 
     def settled_of(self, parcel_id: str) -> float:
-        """People who have seen the slot on `parcel_id` and been dealt with."""
+        """People who have passed the slot on `parcel_id` and been dealt with."""
         return dict(self.settled).get(parcel_id, 0.0)
 
     def last_paid_to(self, parcel_id: str) -> int:

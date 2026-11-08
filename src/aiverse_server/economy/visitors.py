@@ -3,37 +3,37 @@ layout of the town and not fixed beforehand.
 
 There are `VISITOR_COUNT` of them, each standing for more and more people as the game goes on,
 `visitor_weight`. A visitor comes in through the entrance, the middle of the map, and makes a
-few stops at ad slots showing content. On `ROUTE_SHARE` of the trips the visitor is a working
-tourist: it differs from the others in nothing but a rough route, to a workspace and then to a game
-hall showing games, instead of the ad slots, paying the system-set fee at each door, see
-`admissions.py`. A stop with nowhere to go on the route is skipped, and with none left the visitor
+few stops at venues, a workspace or a game hall showing games, paying the system-set fee at each
+door, see `admissions.py`. On `ROUTE_SHARE` of the trips the visitor is a working tourist: it
+differs from the others in nothing but its route, a workspace and then a game hall showing games,
+in that order. A stop with nowhere to go on the route is skipped, and with none left the visitor
 leaves. Then the visitor walks back out and stays away a while before coming again. Nothing
 about it is stored beyond where it set off from and to, and when: where it is in between is
 worked out from that, `visitor_position`, and something happens only when a walk or a stay
 ends, `advance_crowd`, at the times `next_visit` gives.
 
-Where to next, `_head_for`: among the facilities of the kind it needs (for the others the ad
-slots showing content that it has not been counted at lately), it picks by a multinomial logit,
-so every facility has a chance but better ones more. The utility is `APPEAL` times the log of one
+Nobody goes to look at an ad slot. Ad slots earn only from the visitors who pass close by on
+their way to a venue, see `_count_views`.
+
+Where to next, `_head_for`: among the venues it may go to, it picks by a multinomial logit,
+so every venue has a chance but better ones more. The utility is `APPEAL` times the log of one
 plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`), less
 `WALK_COST` per second of walking and `CROWD_COST` per `CROWD_CAPACITY` visitors already going
 or standing there, plus noise. The walk is the shorter of walking on foot and going through a
-network of portals, see `portals.Router`, so the lines change which slots are near, and whether
-a visitor takes one is its own choice. Visitors use the lines for nothing. Where the map has
-islands the walk keeps to them and crosses from one to the next only by the bridges, see
-`islands.py`; residents are not held to that. With nothing worth seeing the visitor roams to a
+network of portals, see `portals.Router`, so the lines change which ad slots are passed, and
+whether a visitor takes one is its own choice. Visitors use the lines for nothing. Where the map
+has islands the walk keeps to them and crosses from one to the next only by the bridges, see
+`islands.py`; residents are not held to that. With no venue to go to the visitor roams to a
 random spot nearby, on its own island, and looks again.
 
 Choices are random but the dice are not stateful: each is a hash of the crowd's seed, the
 visitor, its trip, its step and what is being chosen, so the same game plays out the same way.
 
-A visitor, on whatever route, counts as having seen a slot when it spends at least
-`MIN_VIEW_SECONDS` within `VIEW_RADIUS` of it, standing there or passing by on the way to
-somewhere else, and is not counted at the same slot again for
-`SEEN_FOR` game seconds, even on a later trip. The count is made when the walk ends, judging
-by the slots showing content then, and adds the people the visitor
-stands for to the views of the slot's parcel, `Crowd.views`, which the sponsors pay for, see
-`sponsors.py`.
+A visitor, on whatever route, counts as having passed an ad slot when it spends at least
+`MIN_VIEW_SECONDS` within `VIEW_RADIUS` of it on the way to somewhere else, and is not counted at
+the same slot again for `SEEN_FOR` game seconds, even on a later trip. The count is made when the
+walk ends, judging by the slots showing content then, and adds the people the visitor stands for
+to the views of the slot's parcel, `Crowd.views`, which the sponsors pay for, see `sponsors.py`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched.
@@ -68,22 +68,20 @@ FIRST_ENTRY_SPREAD = 120.0
 
 MIN_STOPS = 2
 MAX_STOPS = 4
-"""Ad slots a visitor stops at on one trip, at least and at most."""
-
-MIN_DWELL = 6.0
-MAX_DWELL = 14.0
-"""Game seconds a visitor stays at an ad slot it has come to see, least and most."""
+"""Venues a visitor stops at on one trip, at least and at most."""
 
 DWELL: dict[str, tuple[float, float]] = {
-    "ad": (MIN_DWELL, MAX_DWELL),
     "workspace": (20.0, 40.0),
     "game_hall": (10.0, 20.0),
 }
-"""Game seconds a visitor stays at a facility of each kind, least and most."""
+"""Game seconds a visitor stays at a venue of each kind, least and most."""
+
+VENUE_KINDS: tuple[str, ...] = ("workspace", "game_hall")
+"""The venues a visitor may go to, see `_pick`."""
 
 ROUTE_SHARE = 0.3
-"""Share of trips that follow the working route, to a workspace and then a game hall, instead
-of looking at ad slots."""
+"""Share of trips that follow the working route, a workspace and then a game hall, instead of
+going to the venues the dice pick."""
 
 WORKSPACE_PIECES = 1
 """A workspace shows no content, so it draws visitors as an ad slot showing this many pieces
@@ -105,8 +103,7 @@ MIN_VIEW_SECONDS = 4.0
 whole circle takes 8."""
 
 SEEN_FOR = 120.0
-"""Game seconds after being counted at a slot during which a visitor is not counted there again,
-and does not choose it."""
+"""Game seconds after being counted at a slot during which a visitor is not counted there again."""
 
 APPEAL = 2.0
 """Utility for each unit of the log of one plus the pieces of content a slot shows."""
@@ -204,15 +201,16 @@ class _Town:
     """What visitors can go to right now."""
 
     places: dict[str, dict[str, tuple[Position, int]]]
-    """By kind of facility, then parcel: the centre and the pieces of content that draw people.
-    Only ad slots and game halls showing content are in it, and every workspace."""
+    """By kind of facility, then parcel: the centre and the pieces of content. Ad slots showing
+    content are in it, to count the people passing them, and so are the venues visitors can go
+    to: every workspace and each game hall showing games."""
     kinds: Mapping[str, str]
     """The kind of facility on each parcel that has one."""
 
 
 def advance_crowd(world: World) -> World:
     """Take the next step for every visitor whose walk, stay or absence has ended by
-    `world.time`: count what the walkers who arrived have seen, take the fees of those who went
+    `world.time`: count what the walkers who arrived have passed, take the fees of those who went
     into a workspace or game hall, then send everyone on. The same world when none has."""
     now = world.time
     due = [visitor for visitor in world.crowd.visitors if visitor.until <= now]
@@ -253,7 +251,7 @@ def _step(
     heading: Counter[str],
 ) -> tuple[Visitor, dict[str, float], str | None]:
     """The visitor after the phase that has just ended, the people it has counted at each ad
-    slot it saw, and the parcel of the workspace or game hall it has just paid to get into, if
+    slot it passed, and the parcel of the workspace or game hall it has just paid to get into, if
     any. `heading` is how many visitors are going or standing at each place, and is kept up to
     date."""
     now = visitor.until
@@ -279,22 +277,22 @@ def _step(
         if visitor.stop is not None:
             heading[visitor.stop] -= 1
         gone = replace(visitor, stop=None, goal="exit")
-        return _head_for(world, gone, now, town, heading), {}, None
+        return _head_for(world, gone, now, town, heading, just_left=visitor.stop), {}, None
     # A walk has ended.
     kind = town.kinds[visitor.stop] if visitor.stop is not None else None
     dwell = 0.0
     if kind is not None:
         low, high = DWELL[kind]
         dwell = low + _dice(seed, visitor, "dwell") * (high - low)
-    gained, seen = _count_views(visitor, now, dwell if kind == "ad" else 0.0, town.places["ad"])
+    gained, seen = _count_views(visitor, now, town.places["ad"])
     here = replace(visitor, at=visitor.target, legs=(), seen=seen)
     if visitor.goal == "wander":
         # Roaming uses up a stop too, so with nothing to see a visitor still leaves in the end.
         here = replace(here, stops_left=max(visitor.stops_left - 1, 0))
     if visitor.goal == "place":
-        stays = replace(here, phase="staying", until=now + dwell)
-        if kind == "ad":
-            return replace(stays, stops_left=visitor.stops_left - 1), gained, None
+        # Going in uses up a stop too; a visitor on the route has none of its own to count.
+        left = max(visitor.stops_left - 1, 0)
+        stays = replace(here, phase="staying", until=now + dwell, stops_left=left)
         return stays, gained, visitor.stop
     if visitor.goal == "exit":
         gap = MIN_AWAY + _dice(seed, visitor, "away") * (MAX_AWAY - MIN_AWAY)
@@ -308,10 +306,13 @@ def _head_for(
     now: float,
     town: _Town,
     heading: Counter[str],
+    just_left: str | None = None,
 ) -> Visitor:
-    """Send the visitor, standing at `visitor.target`, to the next place it picks, to the
-    entrance when it has had enough, or roaming when it finds no ad slot to see. A visitor on a
-    route goes to a facility for each stop on it, skipping those with nowhere to go."""
+    """Send the visitor, standing at `visitor.target`, to the next venue it picks, to the
+    entrance when it has had enough, or roaming when it finds no venue to go to. A visitor on a
+    route goes to a venue for each stop on it, skipping those with nowhere to go. The venue it
+    has just left, `just_left`, is not picked again straight away: from there the walk is free,
+    so it would win every time, and each entry pays a fee."""
     here = visitor.target
     router = Router(world, here)
     goal: Goal = "exit"
@@ -321,12 +322,12 @@ def _head_for(
     if rest:
         left = list(rest)
         while left and stop is None:
-            picked = _pick(world, visitor, left.pop(0), town, heading, router, now)
+            picked = _pick(world, visitor, (left.pop(0),), town, heading, router, just_left)
             if picked is not None:
                 goal, (stop, target) = "place", picked
         rest = tuple(left)
     elif visitor.stops_left > 0:
-        picked = _pick(world, visitor, "ad", town, heading, router, now)
+        picked = _pick(world, visitor, VENUE_KINDS, town, heading, router, just_left)
         if picked is None:
             goal, target = "wander", _roam_from(world, visitor, here)
         else:
@@ -353,22 +354,24 @@ def _head_for(
 def _pick(
     world: World,
     visitor: Visitor,
-    kind: str,
+    kinds: tuple[str, ...],
     town: _Town,
     heading: Counter[str],
     router: Router,
-    now: float,
+    avoid: str | None,
 ) -> tuple[str, Position] | None:
-    """The facility of `kind` the visitor chooses, with its centre, by the logit of the module
-    docstring; None when there is nothing it can go to. An ad slot it was counted at lately is
-    out."""
+    """The venue of one of `kinds` the visitor chooses, with its centre, by the logit of the module
+    docstring, but not `avoid`; None when there is nothing it can go to."""
     seed = world.crowd.seed
-    recent = {parcel_id for parcel_id, until in visitor.seen if until > now}
+    options = {
+        parcel_id: place
+        for kind in kinds
+        for parcel_id, place in town.places[kind].items()
+        if parcel_id != avoid
+    }
     best: float | None = None
     chosen: tuple[str, Position] | None = None
-    for parcel_id, (centre, pieces) in sorted(town.places[kind].items()):
-        if kind == "ad" and parcel_id in recent:
-            continue
+    for parcel_id, (centre, pieces) in sorted(options.items()):
         seconds = router.to(centre).distance / VISITOR_SPEED
         utility = (
             APPEAL * math.log(1 + pieces)
@@ -384,19 +387,15 @@ def _pick(
 def _count_views(
     visitor: Visitor,
     now: float,
-    dwell: float,
     slots: dict[str, tuple[Position, int]],
 ) -> tuple[dict[str, float], tuple[tuple[str, float], ...]]:
     """The people the walk that has just ended adds to each ad slot's views, and the visitor's
     record of where it has been counted. A slot counts when the walk spent `MIN_VIEW_SECONDS`
-    within `VIEW_RADIUS` of it, with the stay at its target added, and the visitor has not been
-    counted there lately."""
+    within `VIEW_RADIUS` of it, and the visitor has not been counted there lately."""
     seconds: defaultdict[str, float] = defaultdict(float)
     for start, end in _legs(visitor):
         for parcel_id, (centre, _) in slots.items():
             seconds[parcel_id] += _inside(start, end, centre, VIEW_RADIUS) / VISITOR_SPEED
-    if visitor.stop is not None and visitor.stop in slots:
-        seconds[visitor.stop] += dwell
     recent = {parcel_id: until for parcel_id, until in visitor.seen if until > now}
     gained: dict[str, float] = {}
     for parcel_id, spent in sorted(seconds.items()):

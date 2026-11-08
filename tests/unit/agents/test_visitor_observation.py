@@ -1,4 +1,4 @@
-"""What a model is told about the people who have seen its ad slots."""
+"""What a model is told about the people who have passed its ad slots."""
 
 from dataclasses import replace
 
