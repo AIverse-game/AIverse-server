@@ -46,6 +46,7 @@ from ..core.land import Facility, FacilityKind, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
 from .ads import CONTENT_ITEM, GAME_ITEM
+from .land import claimed, venue_fits, venue_footprint
 from .portals import MAX_PORTALS, portal_count
 
 SELF_RATE = 1.0
@@ -135,6 +136,8 @@ ComputeErrorCode = Literal[
     "not_your_parcel",
     "parcel_built",
     "parcel_busy",
+    "parcel_covered",
+    "no_room_for_venue",
     "invalid_source",
     "source_busy",
     "unknown_node",
@@ -238,12 +241,14 @@ def start_build_venue(
     node_id: int | None = None,
 ) -> World:
     """Start building a game hall or a workspace, `kind`, on the bare parcel `parcel_id` of the
-    resident, as `start_build_ad` does for an ad slot."""
+    resident, as `start_build_ad` does for an ad slot. A venue takes up the square of
+    `venue_cells` parcels with that parcel at its north-west corner: all of them must be the
+    resident's, untaken, and in the same block."""
     _find(world, resident_id)
     job = BUILD_JOB.get(kind)
     if job is None:
         raise ComputeError("unknown_venue_kind", f"no venues of kind {kind!r}")
-    parcel = _bare_parcel(world, resident_id, parcel_id)
+    parcel = _bare_parcel(world, resident_id, parcel_id, venue=True)
     return _start_job(world, resident_id, job, parcel.id, source, node_id)
 
 
@@ -381,12 +386,36 @@ def cancel_compute(world: World, resident_id: str | None = None) -> World:
     return replace(world, compute=keep)
 
 
-def _bare_parcel(world: World, resident_id: str, parcel_id: str) -> Parcel:
+def _bare_parcel(world: World, resident_id: str, parcel_id: str, *, venue: bool = False) -> Parcel:
+    """The resident's parcel `parcel_id`, bare, and for a venue every parcel it would take up
+    theirs and untaken too."""
+    by_cell = {(p.col, p.row): p for p in world.parcels}
     parcel = next((p for p in world.parcels if p.id == parcel_id), None)
     if parcel is None or parcel.owner_id != resident_id:
         raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     if parcel.facility is not None:
         raise ComputeError("parcel_built", f"parcel {parcel_id} already has a facility")
+    if venue and not venue_fits(world.map, parcel.col, parcel.row):
+        raise ComputeError(
+            "no_room_for_venue",
+            f"a venue takes up {world.map.venue_cells} x {world.map.venue_cells} parcels with "
+            f"{parcel_id} at its north-west corner, which would reach out of the block",
+        )
+    taken = claimed(world)
+    cells = (
+        venue_footprint(world.map, parcel.col, parcel.row) if venue else ((parcel.col, parcel.row),)
+    )
+    for cell in cells:
+        holder = by_cell.get(cell)
+        if holder is None or holder.owner_id != resident_id:
+            raise ComputeError(
+                "not_your_parcel",
+                f"parcel {parcel_id!r} needs parcels that are not all {resident_id}'s",
+            )
+        if cell in taken and taken[cell] != parcel.id:
+            raise ComputeError(
+                "parcel_covered", f"parcel {holder.id} is taken up by what is on {taken[cell]}"
+            )
     return parcel
 
 

@@ -62,6 +62,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                     "size": 50,
                     "parcelSize": 10,
                     "blockCells": 1,
+                    "venueCells": 1,
                     "lobby": False,
                     "parcelPrices": [
                         [2170, 2340, 2410, 2340, 2170],
@@ -119,7 +120,11 @@ def test_default_app_serves_the_fixed_layout() -> None:
         ws.receive_json()
         world = ws.receive_json()["world"]
     assert world["map"]["size"] == 150
-    assert (world["map"]["blockCells"], world["map"]["lobby"]) == (3, True)
+    assert (world["map"]["blockCells"], world["map"]["venueCells"], world["map"]["lobby"]) == (
+        3,
+        2,
+        True,
+    )
     assert [r["id"] for r in world["residents"]] == [f"r{n}" for n in range(1, 9)]
     assert {r["coins"] for r in world["residents"]} == {10_000}
     assert {(r["position"]["x"], r["position"]["y"]) for r in world["residents"]} == {(75, 75)}

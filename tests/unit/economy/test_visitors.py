@@ -102,6 +102,16 @@ def test_a_visitor_comes_in_at_the_entrance_and_heads_for_the_venue_worth_visiti
     assert MIN_STOPS <= walker.stops_left <= MAX_STOPS
 
 
+def test_a_visitor_heads_for_the_middle_of_the_square_a_venue_takes_up() -> None:
+    world = world_of(hall(5, 5), crowd=crowd_of(visitor()))
+    big = replace(world, map=WorldMap(size=100, block_cells=2, venue_cells=2))
+
+    after = at(big, 5.0)
+
+    assert the_visitor(after).stop == "L5-5"
+    assert the_visitor(after).target == Position(60, 60)
+
+
 def test_a_visitor_who_stays_at_a_venue_stays_for_its_dwell_and_counts_no_view() -> None:
     # The ad slot on L8-6 is 10 from the hall on L8-5, the edge of what a visitor can see.
     world = world_of(hall(8, 5), slot(8, 6), crowd=crowd_of(visitor()))

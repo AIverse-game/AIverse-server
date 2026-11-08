@@ -50,7 +50,7 @@ from ..core.world import Position, World
 from .admissions import FEES, admit
 from .ads import shown
 from .islands import on_island
-from .land import parcel_centre, town_centre
+from .land import facility_centre, town_centre
 from .portals import Router
 
 VISITOR_COUNT = 200
@@ -451,7 +451,7 @@ def _town(world: World) -> _Town:
             continue
         if pieces:
             places[facility.kind][parcel.id] = (
-                parcel_centre(world.map, parcel.col, parcel.row),
+                facility_centre(world.map, parcel.col, parcel.row, facility.kind),
                 pieces,
             )
     return _Town(places, kinds)

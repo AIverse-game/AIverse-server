@@ -34,7 +34,7 @@ from ..economy.visitors import (
     VISITOR_COUNT,
     WORKSPACE_PIECES,
 )
-from ..game.layout import BLOCK_CELLS, BLOCKS, MAP_SIZE, create_default_world
+from ..game.layout import BLOCK_CELLS, BLOCKS, MAP_SIZE, VENUE_CELLS, create_default_world
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.speech import HEARING_RADIUS
@@ -80,8 +80,9 @@ in blocks of {BLOCK_CELLS} x {BLOCK_CELLS} parcels.
 Land is bought a whole block at a time: standing in a free block, buy_parcel buys all {cells} of its
 parcels from the town for {block_low}-{block_high} coins, dearer nearer the middle of the map.
 The lobby, the middle block where everyone starts, cannot be bought. A block stays
-yours; it earns only through ad slots, workspaces or game halls built on its parcels, one to a
-parcel.
+yours; it earns only through ad slots, workspaces or game halls built on its parcels. An ad slot
+takes one parcel; a workspace or a game hall takes up {VENUE_CELLS} x {VENUE_CELLS} parcels, so a
+block holds one venue and the parcels left over for ad slots.
 - Compute is a speed: a job of W workload takes W / rate seconds. Your own compute is free,
 {SELF_RATE:g} workload/s, one job at a time of any kind. A node does {NODE_RATE:g}/s, one job at
 a time. Hire one for a single job at {ON_DEMAND_PRICE} coins per workload, or subscribe with
@@ -119,16 +120,17 @@ again, and each stands for more people as the game goes on. Some trips follow th
 instead, see build_venue.
 The land observation shows how many people are passing each parcel now.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
-- build_venue builds a game hall or a workspace on a parcel of yours, like an ad slot but
-dearer: {VENUE_WORKLOAD:g} workload, {venue_own_s:g}s on your own compute, {venue_hired_s:g}s and
-{venue_hired_coins} coins on a hired node. Visitors go to venues, so a venue earns from their fees
-at the door, {FEES["workspace"]} coins for a workspace and {FEES["game_hall"]} for a game hall, per
-person; the fees are paid to the holders at paydays, with the sponsors' pay. {ROUTE_SHARE:.0%} of
-the trips are a working route, a workspace and then a game hall showing games, and the others pick
-any venue. A workspace needs no content. A game hall draws nobody until it shows games
-(make_content content=game, {GAME_WORKLOAD:g} workload, then place_content); games go stale after
-{CONTENT_LIFETIME:g}s like ads, so keep supplying them. A game is its own item, {GAME_ITEM!r}; an ad
-slot cannot show it.
+- build_venue builds a game hall or a workspace on a square of {VENUE_CELLS} x {VENUE_CELLS}
+parcels with the parcel you name at its north-west corner; all of them must be yours, bare and in
+one block. It is like an ad slot but dearer: {VENUE_WORKLOAD:g} workload, {venue_own_s:g}s on
+your own compute, {venue_hired_s:g}s and {venue_hired_coins} coins on a hired node. Visitors go to
+venues, so a venue earns from their fees at the door, {FEES["workspace"]} coins for a workspace
+and {FEES["game_hall"]} for a game hall, per person; the fees are paid to the holders at paydays,
+with the sponsors' pay. {ROUTE_SHARE:.0%} of the trips are a working route, a workspace and then a
+game hall showing games, and the others pick any venue. A workspace needs no content. A game hall
+draws nobody until it shows games (make_content content=game, {GAME_WORKLOAD:g} workload, then
+place_content); games go stale after {CONTENT_LIFETIME:g}s like ads, so keep supplying them. A game
+is its own item, {GAME_ITEM!r}; an ad slot cannot show it.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units or privately to one resident anywhere; at most

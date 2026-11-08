@@ -11,7 +11,7 @@ from typing import Any
 
 from ..economy.ads import ITEM_FOR
 from ..economy.compute import MAX_NODES, NODE_SECONDS, subscription_cost
-from ..economy.land import for_sale_at, plot_at
+from ..economy.land import claimed, for_sale_at, plot_at, venue_room
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
@@ -71,10 +71,11 @@ def selected_tool_names(observation: Observation) -> set[str]:
     compute = observation.compute
     names.add("make_content")
     if any(
-        parcel.facility is None and parcel.building_ends_in is None
+        parcel.facility is None and parcel.building_ends_in is None and parcel.covered_by is None
         for parcel in observation.land.mine
     ):
         names.add("build_ad")
+    if any(parcel.venue_room for parcel in observation.land.mine):
         names.add("build_venue")
     if (
         len(compute.my_nodes) < compute.max_nodes
@@ -141,13 +142,12 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     if any(order.resident_id == me.id for order in world.orders.orders):
         names.add("cancel_order")
     book = world.compute
-    working = {job.parcel_id for job in book.jobs}
+    taken = claimed(world)
     names.add("make_content")
-    if any(
-        parcel.owner_id == me.id and parcel.facility is None and parcel.id not in working
-        for parcel in world.parcels
-    ):
+    my_parcels = [parcel for parcel in world.parcels if parcel.owner_id == me.id]
+    if any((parcel.col, parcel.row) not in taken for parcel in my_parcels):
         names.add("build_ad")
+    if any(venue_room(world, parcel, taken) for parcel in my_parcels):
         names.add("build_venue")
     if sum(node.owner_id == me.id for node in book.nodes) < MAX_NODES and me.coins >= (
         subscription_cost(NODE_SECONDS[0])

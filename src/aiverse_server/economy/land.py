@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from ..core.inventory import take_coins
-from ..core.land import Parcel, parcel_id, parse_parcel_id
+from ..core.land import VENUE_FACILITIES, Parcel, parcel_id, parse_parcel_id
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import Position, World, WorldMap
 
@@ -93,6 +93,79 @@ def block_parcels(world: World, parcel_id_: str) -> tuple[Parcel, ...]:
         return ()
     cells = set(block_of(world, *cell))
     return tuple(p for p in world.parcels if (p.col, p.row) in cells)
+
+
+def venue_footprint(world_map: WorldMap, col: int, row: int) -> tuple[tuple[int, int], ...]:
+    """The (column, row) of every parcel a venue built on the parcel at `col`, `row` takes up:
+    a square of `world_map.venue_cells` parcels with that parcel at its north-west corner."""
+    cells = world_map.venue_cells
+    return tuple((col + dc, row + dr) for dr in range(cells) for dc in range(cells))
+
+
+def venue_fits(world_map: WorldMap, col: int, row: int) -> bool:
+    """Whether a venue built on the parcel at `col`, `row` stays inside that parcel's block and
+    on the map."""
+    block, venue = world_map.block_cells, world_map.venue_cells
+    count = max(int(world_map.size // PARCEL_SIZE), 1)
+    return (
+        col % block + venue <= block
+        and row % block + venue <= block
+        and col + venue <= count
+        and row + venue <= count
+    )
+
+
+def venue_centre(world_map: WorldMap, col: int, row: int) -> Position:
+    """The middle of the square a venue built on the parcel at `col`, `row` takes up."""
+    first = parcel_centre(world_map, col, row)
+    last_col, last_row = venue_footprint(world_map, col, row)[-1]
+    last = parcel_centre(world_map, last_col, last_row)
+    return Position((first.x + last.x) / 2, (first.y + last.y) / 2)
+
+
+def facility_centre(world_map: WorldMap, col: int, row: int, kind: str | None) -> Position:
+    """The middle of what the facility of `kind` on the parcel at `col`, `row` takes up; of the
+    parcel itself when it is bare."""
+    if kind in VENUE_FACILITIES:
+        return venue_centre(world_map, col, row)
+    return parcel_centre(world_map, col, row)
+
+
+def claimed(world: World) -> dict[tuple[int, int], str]:
+    """Which parcels are taken, by the id of the parcel whose facility or running building job
+    takes them: its own, and for a venue the whole square it takes up."""
+    taken: dict[tuple[int, int], str] = {}
+    by_id = {parcel.id: parcel for parcel in world.parcels}
+    for parcel in world.parcels:
+        if parcel.facility is None:
+            continue
+        if parcel.facility.kind in VENUE_FACILITIES:
+            cells = venue_footprint(world.map, parcel.col, parcel.row)
+        else:
+            cells = ((parcel.col, parcel.row),)
+        taken.update(dict.fromkeys(cells, parcel.id))
+    for job in world.compute.jobs:
+        site = by_id.get(job.parcel_id or "")
+        if site is None:
+            continue
+        if job.kind in ("build_game_hall", "build_workspace"):
+            cells = venue_footprint(world.map, site.col, site.row)
+        else:
+            cells = ((site.col, site.row),)
+        taken.update(dict.fromkeys(cells, site.id))
+    return taken
+
+
+def venue_room(world: World, parcel: Parcel, taken: dict[tuple[int, int], str]) -> bool:
+    """Whether the owner of `parcel` could start a venue on it: it fits in the block and every
+    parcel of the square is theirs and untaken."""
+    if not venue_fits(world.map, parcel.col, parcel.row):
+        return False
+    mine = {(p.col, p.row) for p in world.parcels if p.owner_id == parcel.owner_id}
+    return all(
+        cell in mine and cell not in taken
+        for cell in venue_footprint(world.map, parcel.col, parcel.row)
+    )
 
 
 def plot(world: World, col: int, row: int) -> Plot:

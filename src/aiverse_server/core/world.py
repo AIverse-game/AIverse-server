@@ -460,6 +460,10 @@ class WorldMap:
     lobby: bool = False
     """Whether the middle block is the spawn lobby, which nobody owns or can buy. Needs an odd
     number of blocks along each side."""
+    venue_cells: int = 1
+    """Parcels along each side of the square a game hall or a workspace takes up, with its
+    north-west corner on the parcel it is built on; 2 makes them 2 x 2 parcels. Other facilities
+    take one parcel. A venue lies inside one block, so this is at most `block_cells`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.size) and self.size > 0):
@@ -469,6 +473,10 @@ class WorldMap:
         if type(self.block_price_factor) is not int or self.block_price_factor < 1:
             raise ValueError(
                 f"block_price_factor must be an integer >= 1, got {self.block_price_factor!r}"
+            )
+        if type(self.venue_cells) is not int or not 1 <= self.venue_cells <= self.block_cells:
+            raise ValueError(
+                f"venue_cells must be an integer from 1 to block_cells, got {self.venue_cells!r}"
             )
         if self.lobby and self.block_cells == 1:
             raise ValueError("a lobby needs blocks of more than one parcel")

@@ -76,6 +76,7 @@ from ..game.actions import (
     WithdrawEvent,
     perform,
 )
+from ..game.layout import VENUE_CELLS
 from ..game.lifecycle import GameError, total_coins
 from ..residents.information_offer import SUMMARY_LIMIT
 from ..residents.memory import NoteError
@@ -130,7 +131,10 @@ class BuyNodeArgs(_Args):
 
 
 class BuildAdArgs(_Args):
-    parcel_id: str = Field(description="id of one of your parcels with no facility and no job.")
+    parcel_id: str = Field(
+        description="id of one of your parcels with no facility and no job, not taken up by a "
+        "venue (land.mine[].covered_by is null)."
+    )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
         "paid now; subscription: one of your nodes, named in node_id."
@@ -143,7 +147,10 @@ class BuildAdArgs(_Args):
 
 
 class BuildPortalArgs(_Args):
-    parcel_id: str = Field(description="id of one of your parcels with no facility and no job.")
+    parcel_id: str = Field(
+        description="id of one of your parcels with no facility and no job, not taken up by a "
+        "venue (land.mine[].covered_by is null)."
+    )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
         "paid now; subscription: one of your generative nodes, named in node_id."
@@ -157,7 +164,12 @@ class BuildPortalArgs(_Args):
 
 class BuildVenueArgs(_Args):
     kind: Literal["game_hall", "workspace"] = Field(description="Which venue to build.")
-    parcel_id: str = Field(description="id of one of your parcels with no facility and no job.")
+    parcel_id: str = Field(
+        description="id of the parcel at the north-west corner of the square the venue takes up: "
+        "it, the parcels east and south of it that make up the square (observation field "
+        "land.mine[].venue_room says whether it fits), all in one block, yours, with no facility "
+        "and no job."
+    )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
         "paid now; subscription: one of your generative nodes, named in node_id."
@@ -478,8 +490,11 @@ TOOLS = (
     ),
     ToolSpec(
         "build_venue",
-        "Start building a game hall or a workspace on one of your parcels, from anywhere, even "
-        "while walking; it appears when the job ends. It takes "
+        "Start building a game hall or a workspace, from anywhere, even while walking; it "
+        "appears when the job ends. A venue is big: it takes up a square of "
+        f"{VENUE_CELLS} x {VENUE_CELLS} parcels of one block, all yours and bare, with the "
+        "parcel you name at its north-west corner, so nothing else can be built on those "
+        "parcels. It takes "
         f"{VENUE_WORKLOAD:g} workload: {job_seconds(VENUE_WORKLOAD, 'self'):g} s on your own "
         f"compute (free, one job at a time), {job_seconds(VENUE_WORKLOAD, 'on_demand'):g} s on a "
         f"node hired for it ({on_demand_cost(VENUE_WORKLOAD)} coins), or on one of your "

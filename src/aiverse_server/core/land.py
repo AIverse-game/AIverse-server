@@ -15,6 +15,9 @@ repository's docs/design/facilities.md."""
 
 FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal", "game_hall", "workspace")
 
+VENUE_FACILITIES: tuple[FacilityKind, ...] = ("game_hall", "workspace")
+"""The facilities that take up a square of `WorldMap.venue_cells` parcels, not one."""
+
 CONTENT_KINDS: tuple[FacilityKind, ...] = ("ad", "game_hall")
 """The facilities that show content: an ad slot shows ads, a game hall games."""
 

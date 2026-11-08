@@ -42,12 +42,15 @@ from ..economy.joint_purchase import JointPurchase, reserved_purchase_coins
 from ..economy.land import (
     PARCEL_SIZE,
     Plot,
+    claimed,
+    facility_centre,
     for_sale_at,
     grid_size,
     plot,
     plot_at,
     plots,
     town_centre,
+    venue_room,
 )
 from ..economy.portals import (
     MAX_LINKS_PER_PORTAL,
@@ -206,6 +209,12 @@ class MyParcelView:
     people_admitted: float = 0.0
     """People let into its workspace or game hall so far this game, who paid the fee at the door;
     the fees are paid out to the holders at paydays, with the sponsors' pay."""
+    covered_by: str | None = None
+    """The parcel whose venue, built or being built, takes this one up; nothing else can be built
+    here. None when it is not taken up by another parcel's venue."""
+    venue_room: bool = False
+    """Whether a game hall or workspace could be started with this parcel at its north-west
+    corner now: the parcels it would take up are all yours and untaken."""
 
 
 @dataclass(frozen=True)
@@ -700,6 +709,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
     facilities = {parcel.id: parcel for parcel in world.parcels if parcel.facility}
     traffic = Traffic(world)
     owned = {parcel.id: parcel for parcel in world.parcels}
+    taken = claimed(world)
 
     def view(square: Plot) -> ParcelView:
         return ParcelView(
@@ -741,6 +751,30 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             _distance(here, square.centre),
         ),
     )[:LAND_SHOWN]
+
+    def mine_view(square: Plot) -> MyParcelView:
+        parcel = owned[square.id]
+        kind = built.get(square.id)
+        centre = facility_centre(world.map, square.col, square.row, kind)
+        holder = taken.get((square.col, square.row))
+        return MyParcelView(
+            square.id,
+            centre,
+            traffic.near(centre),
+            _distance(here, centre),
+            walk_seconds(here, centre),
+            kind,
+            building.get(square.id),
+            _goes_stale_in(world, facilities.get(square.id)),
+            _income(world, facilities.get(square.id)),
+            dict(parcel.shares),
+            _cut(world, facilities.get(square.id), resident_id),
+            round(world.crowd.viewed(square.id), 1),
+            round(world.admissions.admitted_to(square.id), 1),
+            holder if holder != square.id else None,
+            venue_room(world, parcel, taken),
+        )
+
     return LandView(
         parcel_size=PARCEL_SIZE,
         grid=grid_size(world),
@@ -749,24 +783,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         pay_period=PAY_PERIOD,
         sponsors=_sponsor_views(world),
         here=view(square_here) if standing and square_here is not None else None,
-        mine=tuple(
-            MyParcelView(
-                square.id,
-                square.centre,
-                traffic.near(square.centre),
-                _distance(here, square.centre),
-                walk_seconds(here, square.centre),
-                built.get(square.id),
-                building.get(square.id),
-                _goes_stale_in(world, facilities.get(square.id)),
-                _income(world, facilities.get(square.id)),
-                dict(owned[square.id].shares),
-                _cut(world, facilities.get(square.id), resident_id),
-                round(world.crowd.viewed(square.id), 1),
-                round(world.admissions.admitted_to(square.id), 1),
-            )
-            for square in mine
-        ),
+        mine=tuple(mine_view(square) for square in mine),
         best_free=tuple(view(square) for square in best),
         stakes=tuple(
             StakeView(

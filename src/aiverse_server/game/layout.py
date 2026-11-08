@@ -11,6 +11,10 @@ from ..economy.visitors import new_crowd
 BLOCK_CELLS = 3
 """Parcels along each side of a block, the unit land is bought in."""
 
+VENUE_CELLS = 2
+"""Parcels along each side of the square a game hall or a workspace takes up: 2 x 2 parcels,
+20 x 20 map units."""
+
 BLOCKS = 5
 """Blocks along each side; the middle one is the spawn lobby."""
 
@@ -51,6 +55,7 @@ def create_default_world() -> World:
             block_cells=BLOCK_CELLS,
             block_price_factor=BLOCK_PRICE_FACTOR,
             lobby=True,
+            venue_cells=VENUE_CELLS,
         ),
         residents=DEFAULT_RESIDENTS,
         crowd=new_crowd(),
