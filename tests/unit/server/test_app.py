@@ -1,4 +1,5 @@
 import asyncio
+import json
 from dataclasses import replace
 
 import pytest
@@ -93,6 +94,51 @@ def test_outbox_keeps_only_the_latest_state_and_sends_it_after_replies() -> None
     assert asyncio.run(drain(outbox)) == ["welcome", "result", "state 2"]
     assert outbox.state is None
     assert not outbox.replies
+
+
+def test_outbox_keeps_only_the_latest_visitors_and_sends_them_after_the_state() -> None:
+    async def drain(outbox: Outbox) -> list[str]:
+        return [await outbox.get() for _ in range(3)]
+
+    outbox = Outbox(limit=2)
+    outbox.put_visitors("visitors 1")
+    outbox.put_state("state")
+    outbox.put_visitors("visitors 2")
+    outbox.put("result")
+    assert asyncio.run(drain(outbox)) == ["result", "state", "visitors 2"]
+    assert outbox.visitors is None
+
+
+def test_pushing_visitors_reaches_every_watcher_with_the_visitors_of_now() -> None:
+    walker = Visitor(
+        id=1,
+        phase="walking",
+        until=100.0,
+        at=Position(0, 0),
+        target=Position(50, 0),
+        departs_at=0.0,
+    )
+    game, clock = make_game(replace(WORLD, crowd=Crowd(visitors=(walker,))))
+    first, second = Outbox(), Outbox()
+    game.watch(first)
+    game.watch(second)
+
+    clock.now = 4.0
+    game.push_visitors()
+
+    assert first.visitors is not None
+    assert first.visitors == second.visitors
+    assert json.loads(first.visitors)["visitors"][0]["position"] == {"x": 10.0, "y": 0.0}
+
+
+def test_pushing_visitors_in_a_world_without_any_sends_nothing() -> None:
+    game, _ = make_game()
+    watcher = Outbox()
+    game.watch(watcher)
+
+    game.push_visitors()
+
+    assert watcher.visitors is None
 
 
 def test_a_burst_of_moves_does_not_overflow_other_connections() -> None:

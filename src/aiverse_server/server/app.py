@@ -7,7 +7,9 @@ resident's whispers, offers and contracts, and no one else's. It may also hand a
 language model with `start_agent`, or take them back with `stop_agent`; the server's config
 file may override the model settings pages send, see `config.py`.
 The game ends a fixed time after the app is created; every connection then receives the
-final `state`. Walks finish on the same clock, and are broadcast too.
+final `state`. Walks finish on the same clock, and are broadcast too. The scripted visitors are
+not part of a `state`; each greeted connection gets them in a `visitors` message on hello and every
+`VISITOR_PUSH_SECONDS` after.
 """
 
 import asyncio
@@ -68,6 +70,7 @@ from .protocol import (
     setting_names,
     to_action,
     to_llm_settings,
+    visitors_message,
     world_view,
 )
 
@@ -139,6 +142,10 @@ def handle_text(
     return Outcome([ActionResultMessage(ok=True)], after, greeted, viewer)
 
 
+VISITOR_PUSH_SECONDS = 2.0
+"""How often the visitors are sent. A visitor walks on from the stretch it was sent with, so this
+only bounds how long one stands still after finishing or how late a new one shows up."""
+
 # A connection is closed once this many replies are waiting for it: it sends faster than it
 # reads, and keeping more would let one client grow the server's memory without bound.
 OUTBOX_LIMIT = 256
@@ -156,7 +163,8 @@ class Outbox:
 
     Replies to the connection's own frames queue up in order, up to `limit`. A world
     snapshot is complete, so only the latest one waits, and it goes out after the queued
-    replies. Moves by other connections, however many, therefore never grow this outbox.
+    replies; the latest `visitors` message waits the same way, behind the state. Moves by other
+    connections, however many, therefore never grow this outbox.
     `viewer` is the resident the connection views as, which decides the whispers, offers
     and contracts in its snapshots.
     """
@@ -165,6 +173,7 @@ class Outbox:
         self.viewer: str | None = None
         self.replies: deque[str] = deque()
         self.state: str | None = None
+        self.visitors: str | None = None
         self.limit = limit
         self.overflowed = asyncio.Event()
         self._ready = asyncio.Event()
@@ -180,12 +189,19 @@ class Outbox:
         self.state = text
         self._ready.set()
 
+    def put_visitors(self, text: str) -> None:
+        self.visitors = text
+        self._ready.set()
+
     async def get(self) -> str:
         while True:
             if self.replies:
                 return self.replies.popleft()
             if self.state is not None:
                 text, self.state = self.state, None
+                return text
+            if self.visitors is not None:
+                text, self.visitors = self.visitors, None
                 return text
             self._ready.clear()
             await self._ready.wait()
@@ -481,6 +497,25 @@ class Game:
             self._changed.clear()
             self.tick()
 
+    async def run_visitors(self) -> None:
+        while not self.world.ended:
+            await asyncio.sleep(VISITOR_PUSH_SECONDS)
+            self.push_visitors()
+
+    def push_visitors(self) -> None:
+        """Bring the world up to now and send every greeted connection where the visitors are."""
+        self.tick()
+        text = self.visitors_text()
+        if text is None:
+            return
+        for outbox in self._outboxes:
+            outbox.put_visitors(text)
+
+    def visitors_text(self) -> str | None:
+        """The visitors as of the world's present time, encoded; None when there are none."""
+        message = visitors_message(self.world)
+        return None if message is None else encode(message)
+
     def watch(self, outbox: Outbox) -> None:
         self._outboxes.add(outbox)
 
@@ -550,6 +585,9 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
             outbox.viewer = outcome.viewer
             if outcome.greeted and not greeted:
                 game.watch(outbox)
+                visitors = game.visitors_text()
+                if visitors is not None:
+                    outbox.put_visitors(visitors)
             greeted = outcome.greeted
             for reply in outcome.replies:
                 # The state answering hello also waits in the slot, behind the welcome.
@@ -610,6 +648,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         clock_task = asyncio.create_task(game.run_clock())
+        visitors_task = asyncio.create_task(game.run_visitors())
         for resident_id, brain in (agents or {}).items():
             model = brain.model if isinstance(brain, ChatCompletionsBrain) else None
             game.start_agent(resident_id, brain, model)
@@ -617,6 +656,7 @@ def create_app(
             yield
         finally:
             clock_task.cancel()
+            visitors_task.cancel()
             await game.stop_agents()
 
     app = FastAPI(title="AIverse server", lifespan=lifespan)

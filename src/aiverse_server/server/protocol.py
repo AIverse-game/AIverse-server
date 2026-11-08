@@ -30,6 +30,7 @@ from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
 from ..economy.land import PARCEL_SIZE, grid_size, plots
 from ..economy.trade import PurchaseOffer, SaleOffer
+from ..economy.visitors import VISITOR_SPEED, remaining_legs, visitor_position
 from ..game.actions import (
     Action,
     ActionRejected,
@@ -47,7 +48,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 26
+PROTOCOL_VERSION = 27
 
 ERROR_MAX_LENGTH = 200
 
@@ -534,6 +535,35 @@ class StateMessage(_Message):
     world: WorldView
 
 
+class LegView(_Message):
+    """A straight stretch of a visitor's walk. When a walk has several, the next may start
+    elsewhere than this one ends: the visitor went through a portal, which takes no time."""
+
+    start: PositionView
+    end: PositionView
+
+
+class VisitorView(_Message):
+    id: int
+    position: PositionView
+    """Where the visitor is when this was sent."""
+    legs: list[LegView] = []
+    """The stretches it has still to walk, at `VisitorsMessage.speed`, the first one starting at
+    `position`; empty while it stands. Past the last it stands at the end of it."""
+
+
+class VisitorsMessage(_Message):
+    """The scripted visitors on the map, which move on all the time and so are not part of a
+    `state`. Each one is a snapshot to play on locally: it holds until the next `visitors`
+    message, which replaces it; a visitor missing from that one has left the map. Sent to every
+    greeted connection straight after `state` on hello, then every `VISITOR_PUSH_SECONDS`."""
+
+    type: Literal["visitors"] = "visitors"
+    speed: float
+    """Map units a walking visitor covers per second."""
+    visitors: list[VisitorView]
+
+
 class ActionResultMessage(_Message):
     """Reply to the sender's `action`. On success the new world follows as a `state`
     sent to every connection; `code` and `message` are present only on rejection."""
@@ -569,7 +599,12 @@ class ErrorMessage(_Message):
 
 
 ServerMessage = (
-    WelcomeMessage | StateMessage | ActionResultMessage | AgentResultMessage | ErrorMessage
+    WelcomeMessage
+    | StateMessage
+    | VisitorsMessage
+    | ActionResultMessage
+    | AgentResultMessage
+    | ErrorMessage
 )
 
 
@@ -795,6 +830,26 @@ def _exchange_view(world: World, viewer: str | None) -> ExchangeView:
         ],
         max_orders=MAX_ORDERS,
     )
+
+
+def visitors_message(world: World) -> VisitorsMessage | None:
+    """The visitors on the map at `world.time`; None when the world has no visitors at all."""
+    if not world.crowd.visitors:
+        return None
+    views = []
+    for visitor in world.crowd.visitors:
+        here = visitor_position(visitor, world.time)
+        if here is None:
+            continue
+        ahead = remaining_legs(visitor, world.time)
+        # The first leg starts where the visitor is, even at the instant it ends one leg and
+        # starts the next through a portal.
+        legs = [
+            LegView(start=_position_view(start), end=_position_view(end)) for start, end in ahead
+        ]
+        spot = ahead[0][0] if ahead else here
+        views.append(VisitorView(id=visitor.id, position=_position_view(spot), legs=legs))
+    return VisitorsMessage(speed=VISITOR_SPEED, visitors=views)
 
 
 def _position_view(position: Position) -> PositionView:

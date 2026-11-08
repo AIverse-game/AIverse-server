@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.game.lifecycle import GAME_DURATION
 from aiverse_server.residents.walking import WALK_SPEED
@@ -645,3 +646,17 @@ def test_a_lone_surrogate_is_refused_and_states_still_go_out(client: TestClient)
         ws.send_text(say("a", "still here"))
         assert ws.receive_json()["ok"] is True
         assert ws.receive_json()["world"]["speech"][-1]["text"] == "still here"
+
+
+def test_hello_is_followed_by_the_visitors_when_the_world_has_any(clock: FakeClock) -> None:
+    standing = Visitor(id=1, phase="staying", until=9.0, at=Position(5, 5), target=Position(5, 5))
+    world = replace(SMALL_WORLD, crowd=Crowd(visitors=(standing,)))
+    with TestClient(create_app(world, clock=clock)).websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps(HELLO))
+        messages = [ws.receive_json() for _ in range(3)]
+    assert [message["type"] for message in messages] == ["welcome", "state", "visitors"]
+    assert messages[2] == {
+        "type": "visitors",
+        "speed": 2.5,
+        "visitors": [{"id": 1, "position": {"x": 5.0, "y": 5.0}, "legs": []}],
+    }

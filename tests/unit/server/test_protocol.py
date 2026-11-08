@@ -6,6 +6,7 @@ import pytest
 
 from aiverse_server.core.compute import ComputeBook, Job
 from aiverse_server.core.land import Facility, Parcel
+from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy import exchange as exchange_rules
 from aiverse_server.game.actions import (
@@ -26,6 +27,7 @@ from aiverse_server.server.protocol import (
     OrderView,
     bad_message,
     parse_client_message,
+    visitors_message,
     world_view,
 )
 
@@ -286,3 +288,51 @@ def test_fill_times_are_sent_to_a_tenth_of_a_second() -> None:
     exchange = world_view(world, 1).exchange
 
     assert exchange.fills[0].time == 74.1
+
+
+def visitors_world(*visitors: Visitor, time: float = 0.0) -> World:
+    return replace(WORLD, time=time, crowd=Crowd(visitors=visitors))
+
+
+def test_visitors_on_the_map_are_sent_with_the_legs_they_have_left() -> None:
+    walker = Visitor(
+        id=1,
+        phase="walking",
+        until=20.0,
+        at=Position(0, 0),
+        target=Position(25, 0),
+        departs_at=0.0,
+        goal="exit",
+    )
+    stander = Visitor(id=2, phase="staying", until=30.0, at=Position(5, 5), target=Position(5, 5))
+    world = visitors_world(walker, stander, time=2.0)
+
+    message = visitors_message(world)
+
+    assert message is not None
+    assert message.model_dump(by_alias=True) == {
+        "type": "visitors",
+        "speed": 2.5,
+        "visitors": [
+            {
+                "id": 1,
+                "position": {"x": 5.0, "y": 0.0},
+                "legs": [{"start": {"x": 5.0, "y": 0.0}, "end": {"x": 25.0, "y": 0.0}}],
+            },
+            {"id": 2, "position": {"x": 5.0, "y": 5.0}, "legs": []},
+        ],
+    }
+
+
+def test_visitors_off_the_map_are_left_out() -> None:
+    away = Visitor(id=1, phase="away", until=9.0, at=Position(50, 50), target=Position(50, 50))
+    world = visitors_world(away)
+
+    message = visitors_message(world)
+
+    assert message is not None
+    assert message.visitors == []
+
+
+def test_a_world_without_visitors_has_no_visitors_message() -> None:
+    assert visitors_message(WORLD) is None

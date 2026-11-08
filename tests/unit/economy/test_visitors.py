@@ -23,6 +23,7 @@ from aiverse_server.economy.visitors import (
     new_crowd,
     next_visit,
     people_near,
+    remaining_legs,
     visitor_position,
     visitor_weight,
 )
@@ -506,3 +507,47 @@ def test_traffic_counts_visitors_in_the_next_square_over_and_answers_for_many_sp
 
 def test_visitors_walk_as_fast_as_residents() -> None:
     assert VISITOR_SPEED == WALK_SPEED
+
+
+def test_the_legs_still_to_walk_start_where_the_visitor_is_now() -> None:
+    walker = visitor(
+        phase="walking",
+        departs_at=10.0,
+        at=Position(0, 0),
+        target=Position(100, 10),
+        legs=((Position(0, 0), Position(10, 0)), (Position(60, 10), Position(100, 10))),
+    )
+
+    legs = remaining_legs(walker, 10.0 + 10 / VISITOR_SPEED / 2)
+
+    assert legs == [
+        (Position(5, 0), Position(10, 0)),
+        (Position(60, 10), Position(100, 10)),
+    ]
+
+
+def test_a_visitor_who_has_walked_past_a_portal_has_only_the_far_legs_left() -> None:
+    walker = visitor(
+        phase="walking",
+        departs_at=0.0,
+        at=Position(0, 0),
+        target=Position(100, 10),
+        legs=((Position(0, 0), Position(10, 0)), (Position(60, 10), Position(100, 10))),
+    )
+
+    legs = remaining_legs(walker, 10 / VISITOR_SPEED + 4 / VISITOR_SPEED)
+
+    assert legs == [(Position(64, 10), Position(100, 10))]
+
+
+@pytest.mark.parametrize("phase", ["away", "staying"])
+def test_a_visitor_who_is_not_walking_has_no_legs_left(phase: str) -> None:
+    standing = visitor(phase=phase, target=Position(20, 20))
+
+    assert remaining_legs(standing, 3.0) == []
+
+
+def test_a_visitor_who_has_arrived_has_no_legs_left_even_before_the_step_is_taken() -> None:
+    walker = visitor(phase="walking", at=Position(0, 0), target=Position(10, 0))
+
+    assert remaining_legs(walker, 1_000.0) == []

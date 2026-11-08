@@ -190,6 +190,23 @@ def visitor_position(visitor: Visitor, time: float) -> Position | None:
     return visitor.target
 
 
+def remaining_legs(visitor: Visitor, time: float) -> list[tuple[Position, Position]]:
+    """The straight stretches the visitor has still to walk at game time `time`, the first one
+    starting where it is. Empty when it is away, standing or has arrived."""
+    if visitor.phase != "walking":
+        return []
+    walked = max(time - visitor.departs_at, 0.0) * VISITOR_SPEED
+    legs = _legs(visitor)
+    for index, (start, end) in enumerate(legs):
+        length = math.dist((start.x, start.y), (end.x, end.y))
+        if walked < length:
+            share = walked / length
+            here = Position(_along(start.x, end.x, share), _along(start.y, end.y, share))
+            return [(here, end), *legs[index + 1 :]]
+        walked -= length
+    return []
+
+
 def next_visit(world: World) -> float | None:
     """Game time when the earliest walk, stay or absence of a visitor ends, or None when there
     are no visitors."""
