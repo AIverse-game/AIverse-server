@@ -2,12 +2,11 @@
 
 The system sets one fee for each kind of facility, `FEES`, in coins for one person. A visitor
 stands for more people as the game goes on, `visitors.visitor_weight`, and pays for all of
-them: the fee times that. The money is the visitor's own, from its purse for the trip, see
-`Visitor.purse`, and comes from outside the town; what a visitor cannot pay for it does not
-visit. A facility is not paid at the door but, like the ad slots, at the paydays of
-`sponsors.py`: the fees taken since the last payday are paid out to the holders of the parcel's
-shares, see `shares.py`, in whole coins, the part of a coin left carried to the next payday.
-Ledger channel `visitors`.
+them: the fee times that. The money comes from outside the town, and is bounded by how many
+visitors there are and how often they go in. A facility is not paid at the door but, like the
+ad slots, at the paydays of `sponsors.py`: the fees taken since the last payday are paid out to
+the holders of the parcel's shares, see `shares.py`, in whole coins, the part of a coin left
+carried to the next payday. Ledger channel `visitors`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched.

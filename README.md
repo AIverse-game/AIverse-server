@@ -207,7 +207,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/core/compute.py` | 不可变的算力状态：订阅的节点 `Node`、进行中的工作 `Job`、`ComputeBook` 及校验 |
 | `src/aiverse_server/core/admissions.py` | 不可变的入场费状态 `AdmissionBook`（未付的费用、累计进门的人数、上次付款日、上个付款日各设施收到的钱） |
 | `src/aiverse_server/core/sponsors.py` | 不可变的赞助商状态：赞助商 `Sponsor`（出价、预算速率、现有预算）与 `SponsorBook`（上次充值时刻、各地块已结算的展示、上个付款日各地块的收入） |
-| `src/aiverse_server/core/visitors.py` | 不可变的脚本访客状态：访客 `Visitor`（阶段、出发点与目标、起止时刻、经过的传送门、目的、已逛的广告位、游客或工作用户 `kind`、工作用户还要去的设施 `errands` 与钱包 `purse`）与人群 `Crowd`（种子、全部访客、各地块被看到的人数） |
+| `src/aiverse_server/core/visitors.py` | 不可变的脚本访客状态：访客 `Visitor`（阶段、出发点与目标、起止时刻、经过的传送门、目的、已逛的广告位、这一趟还要去的大致路线 `route`，空表示普通游客逛广告位）与人群 `Crowd`（种子、全部访客、各地块被看到的人数） |
 | `src/aiverse_server/core/ledger.py` | 金币流水账：每次真实转手的付款方、收款方、金额与渠道，有上限并计数丢弃的条目 |
 | `src/aiverse_server/core/events.py` | 事件队列：可扩展的事件种类（`EventPayload` 及其发送、同意、拒绝钩子），发送、答复、撤回与收件箱查询 |
 | `src/aiverse_server/core/orders.py` | 交易所的订单、成交与挂单簿模型，挂单预留的金币与物品 |
@@ -218,7 +218,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/economy/joint_purchase.py` | 合买地块：提议事件 `JointPurchase`（对方出多少钱、拿多少份，提议人的那份预留），同意时两人各付镇上、地块归提议人，预留的钱统计 |
 | `src/aiverse_server/economy/land.py` | 地块：网格、按离地图中央远近定价、购买，地图中央 `town_centre` |
 | `src/aiverse_server/economy/portals.py` | 传送门与线路（[虚拟设施](../aiverse-client/docs/design/facilities.md)第 5 步）：线路提议事件 `LinkProposal`、`link_portals`、居民传送 `teleport`（过路费按份额分给两端的持有人）、有效距离 `effective_distance`（线路让偏远地块离中央更近，备用，流量暂不用）、数量与间距上限 |
-| `src/aiverse_server/economy/visitors.py` | 脚本访客（[虚拟设施](../aiverse-client/docs/design/facilities.md)第 7 步的第一部分）：200 个访客从地图中央入口进来，每趟 30% 是工作用户（先去工作空间再去展示着游戏的游戏厅，带钱包，入场费见 `admissions.py`），其余是游客，按带随机项的偏好（内容份数、走路时间、拥挤度）依次逛 2～4 个展示着内容的广告位再离开，走传送门由自己选；路过和停留够 4 秒的算一次展示，累计到各地块 `Crowd.views`，由赞助商付钱；`Traffic` 统计此刻经过某处的人数；随机用种子加编号的哈希，不用有状态的随机数 |
+| `src/aiverse_server/economy/visitors.py` | 脚本访客（[虚拟设施](../aiverse-client/docs/design/facilities.md)第 7 步）：200 个访客（都是游客）从地图中央入口进来，按带随机项的偏好（内容份数、走路时间、拥挤度）依次逛 2～4 个展示着内容的广告位再离开；每趟有 30% 走一条大致的工作路线（工作游客，除此之外和其他游客没有区别）：先去工作空间再去展示着游戏的游戏厅，不逛广告位，入场费见 `admissions.py`；走传送门由自己选；路过和停留够 4 秒的算一次展示，累计到各地块 `Crowd.views`，由赞助商付钱；`Traffic` 统计此刻经过某处的人数；随机用种子加编号的哈希，不用有状态的随机数 |
 | `src/aiverse_server/economy/admissions.py` | 入场费（第 7 步第三部分）：工作空间 4、游戏厅 6 金币每人的价 `FEES`，`admit` 在门口收费，`pay_admissions` 在付款日整枚硬币地按份额付给持有人（零头留到下次，渠道 `visitors`），`next_admission_payday` |
 | `src/aiverse_server/economy/sponsors.py` | 赞助商（第 7 步第二部分）：三个赞助商 `default_sponsors`，每 30 秒的付款日 `pay_sponsors`（出价高的先买、预算不够按同一比例缩水、按份额分给持有人，渠道 `sponsors`），预算充值与上限，付款日 `latest_payday`、下一个付款日 `next_payday` |
 | `src/aiverse_server/economy/trade.py` | 交易事件：购买报价 `PurchaseOffer` 与出售报价 `SaleOffer`，条款校验、预留与互换 |
@@ -289,7 +289,7 @@ uv run aiverse-server --agent r1=llm --agent r2=llm
 
 ## 经济报告
 
-世界里有一本金币流水账（`core/ledger.py`）：金币每次真实转手都记一条，包括游戏时间、付款方、收款方、金额、渠道，买物品时还记物品和数量。系统一方记为 `system`。渠道包括 `offer`（报价成交）、`contract_payment`、`contract_forfeit`（押金赔给买方）、`information`、`exchange`（交易所成交）、`land`（向镇上买地块）、`sponsors`（赞助商按展示付给广告位，按份额分给地块的持有人，每人一条，见 `economy/sponsors.py`）、`visitors`（工作用户付给工作空间和游戏厅的入场费，在付款日按份额分给持有人，见 `economy/admissions.py`）、`shares`（转让地块份额的价款，见 `economy/shares.py`）、`toll`（传送的过路费，付给两端地块的持有人，见 `economy/portals.py`）。预留和退回（报价、合约托管、挂单）不记。流水账最多保留 20000 条，超出时丢掉最早的并计数。
+世界里有一本金币流水账（`core/ledger.py`）：金币每次真实转手都记一条，包括游戏时间、付款方、收款方、金额、渠道，买物品时还记物品和数量。系统一方记为 `system`。渠道包括 `offer`（报价成交）、`contract_payment`、`contract_forfeit`（押金赔给买方）、`information`、`exchange`（交易所成交）、`land`（向镇上买地块）、`sponsors`（赞助商按展示付给广告位，按份额分给地块的持有人，每人一条，见 `economy/sponsors.py`）、`visitors`（走工作路线的游客付给工作空间和游戏厅的入场费，在付款日按份额分给持有人，见 `economy/admissions.py`）、`shares`（转让地块份额的价款，见 `economy/shares.py`）、`toll`（传送的过路费，付给两端地块的持有人，见 `economy/portals.py`）。预留和退回（报价、合约托管、挂单）不记。流水账最多保留 20000 条，超出时丢掉最早的并计数。
 
 对局结束时，命令行入口在日志目录写 `summary.json`，并在控制台打印几行摘要（`game/economy_report.py`）。主要字段：
 

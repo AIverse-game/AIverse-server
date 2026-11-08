@@ -1,18 +1,18 @@
-"""Visitors: scripted tourists and workers who walk the map, so that where the traffic goes is up
-to the layout of the town and not fixed beforehand.
+"""Visitors: scripted tourists who walk the map, so that where the traffic goes is up to the
+layout of the town and not fixed beforehand.
 
 There are `VISITOR_COUNT` of them, each standing for more and more people as the game goes on,
-`visitor_weight`. A visitor comes in through the entrance, the middle of the map, and on each
-trip is a tourist or, with probability `WORKER_SHARE`, a worker. A tourist makes a few stops at
-ad slots showing content. A worker goes to a workspace and then to a game hall showing games,
-paying the fee at each door out of its purse for the trip, see `admissions.py`: an errand with
-nowhere to go, or a fee it cannot pay, is skipped, and with none left it leaves. Then the visitor
-walks back out and stays away a while before coming again. Nothing about it is stored beyond
-where it set off from and to, and when: where it is in between is worked out from that,
-`visitor_position`, and something happens only when a walk or a stay ends, `advance_crowd`, at
-the times `next_visit` gives.
+`visitor_weight`. A visitor comes in through the entrance, the middle of the map, and makes a
+few stops at ad slots showing content. On `ROUTE_SHARE` of the trips the visitor is a working
+tourist: it differs from the others in nothing but a rough route, to a workspace and then to a game
+hall showing games, instead of the ad slots, paying the system-set fee at each door, see
+`admissions.py`. A stop with nowhere to go on the route is skipped, and with none left the visitor
+leaves. Then the visitor walks back out and stays away a while before coming again. Nothing
+about it is stored beyond where it set off from and to, and when: where it is in between is
+worked out from that, `visitor_position`, and something happens only when a walk or a stay
+ends, `advance_crowd`, at the times `next_visit` gives.
 
-Where to next, `_head_for`: among the facilities of the kind it needs (for a tourist the ad
+Where to next, `_head_for`: among the facilities of the kind it needs (for the others the ad
 slots showing content that it has not been counted at lately), it picks by a multinomial logit,
 so every facility has a chance but better ones more. The utility is `APPEAL` times the log of one
 plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`), less
@@ -25,7 +25,7 @@ seeing the visitor roams to a random spot nearby and looks again.
 Choices are random but the dice are not stateful: each is a hash of the crowd's seed, the
 visitor, its trip, its step and what is being chosen, so the same game plays out the same way.
 
-A visitor, whichever kind, counts as having seen a slot when it spends at least
+A visitor, on whatever route, counts as having seen a slot when it spends at least
 `MIN_VIEW_SECONDS` within `VIEW_RADIUS` of it, standing there or passing by on the way to
 somewhere else, and is not counted at the same slot again for
 `SEEN_FOR` game seconds, even on a later trip. The count is made when the walk ends, judging
@@ -78,15 +78,9 @@ DWELL: dict[str, tuple[float, float]] = {
 }
 """Game seconds a visitor stays at a facility of each kind, least and most."""
 
-WORKER_SHARE = 0.3
-"""Share of trips made by workers, who go to a workspace and then a game hall; the rest are
-tourists, who look at ad slots."""
-
-MIN_PURSE = 6.0
-MAX_PURSE = 14.0
-"""Coins one person of a worker has to spend on a trip, least and most; with the fees in
-`admissions.py` a worker can always afford the workspace but only some can afford the game
-hall afterwards."""
+ROUTE_SHARE = 0.3
+"""Share of trips that follow the working route, to a workspace and then a game hall, instead
+of looking at ad slots."""
 
 WORKSPACE_PIECES = 1
 """A workspace shows no content, so it draws visitors as an ad slot showing this many pieces
@@ -123,10 +117,6 @@ slot."""
 
 CROWD_CAPACITY = 8
 """Visitors a slot can take before it crowds; more make it less attractive, in proportion."""
-
-
-_SLACK = 1e-9
-"""Slack for comparing a purse with a fee."""
 
 
 def new_crowd(count: int = VISITOR_COUNT, seed: int = 0) -> Crowd:
@@ -266,9 +256,8 @@ def _step(
     now = visitor.until
     seed = world.crowd.seed
     if visitor.phase == "away":
-        worker = _dice(seed, visitor, "kind") < WORKER_SHARE
+        working = _dice(seed, visitor, "route") < ROUTE_SHARE
         stops = MIN_STOPS + int(_dice(seed, visitor, "stops") * (MAX_STOPS - MIN_STOPS + 1))
-        purse = MIN_PURSE + _dice(seed, visitor, "purse") * (MAX_PURSE - MIN_PURSE)
         arrived = replace(
             visitor,
             phase="staying",
@@ -279,10 +268,8 @@ def _step(
             stop=None,
             trip=visitor.trip + 1,
             step=0,
-            kind="worker" if worker else "tourist",
-            errands=("workspace", "game_hall") if worker else (),
-            purse=purse if worker else 0.0,
-            stops_left=0 if worker else stops,
+            route=("workspace", "game_hall") if working else (),
+            stops_left=0 if working else stops,
         )
         return _head_for(world, arrived, now, town, heading), {}, None
     if visitor.phase == "staying":
@@ -305,9 +292,7 @@ def _step(
         stays = replace(here, phase="staying", until=now + dwell)
         if kind == "ad":
             return replace(stays, stops_left=visitor.stops_left - 1), gained, None
-        # The fee was affordable when the visitor chose, and nothing else spends its purse.
-        fee = FEES[kind or ""]
-        return replace(stays, purse=max(visitor.purse - fee, 0.0)), gained, visitor.stop
+        return stays, gained, visitor.stop
     if visitor.goal == "exit":
         gap = MIN_AWAY + _dice(seed, visitor, "away") * (MAX_AWAY - MIN_AWAY)
         return replace(here, phase="away", until=now + gap, stop=None), gained, None
@@ -322,21 +307,21 @@ def _head_for(
     heading: Counter[str],
 ) -> Visitor:
     """Send the visitor, standing at `visitor.target`, to the next place it picks, to the
-    entrance when it has had enough, or roaming when a tourist finds nothing to see. A worker
-    goes to a facility for each errand it has, skipping those with nowhere to go."""
+    entrance when it has had enough, or roaming when it finds no ad slot to see. A visitor on a
+    route goes to a facility for each stop on it, skipping those with nowhere to go."""
     here = visitor.target
     router = Router(world, here)
     goal: Goal = "exit"
     stop: str | None = None
     target = town_centre(world.map.size)
-    errands = visitor.errands
-    if visitor.kind == "worker":
-        left = list(errands)
+    rest = visitor.route
+    if rest:
+        left = list(rest)
         while left and stop is None:
             picked = _pick(world, visitor, left.pop(0), town, heading, router, now)
             if picked is not None:
                 goal, (stop, target) = "place", picked
-        errands = tuple(left)
+        rest = tuple(left)
     elif visitor.stops_left > 0:
         picked = _pick(world, visitor, "ad", town, heading, router, now)
         if picked is None:
@@ -356,7 +341,7 @@ def _head_for(
         via=route.via,
         goal=goal,
         stop=stop,
-        errands=errands,
+        route=rest,
         step=visitor.step + 1,
         seen=tuple((parcel_id, until) for parcel_id, until in visitor.seen if until > now),
     )
@@ -373,15 +358,13 @@ def _pick(
 ) -> tuple[str, Position] | None:
     """The facility of `kind` the visitor chooses, with its centre, by the logit of the module
     docstring; None when there is nothing it can go to. An ad slot it was counted at lately is
-    out, and so is a workspace or game hall whose fee its purse cannot pay."""
+    out."""
     seed = world.crowd.seed
     recent = {parcel_id for parcel_id, until in visitor.seen if until > now}
     best: float | None = None
     chosen: tuple[str, Position] | None = None
     for parcel_id, (centre, pieces) in sorted(town.places[kind].items()):
         if kind == "ad" and parcel_id in recent:
-            continue
-        if kind != "ad" and visitor.purse + _SLACK < FEES[kind]:
             continue
         seconds = router.to(centre).distance / VISITOR_SPEED
         utility = (

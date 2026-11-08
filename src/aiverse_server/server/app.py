@@ -305,8 +305,8 @@ class Game:
             except Exception:
                 logger.exception("handling the end of the game failed")
         # The visitors walk on all the time and nothing shows them, so a step of theirs alone,
-        # which also takes the fees workers pay at the doors, is not news. Paying the fees out
-        # at a payday changes coins, and so is.
+        # which also takes the fees working tourists pay at the doors, is not news. Paying the
+        # fees out at a payday changes coins, and so is.
         news = replace(after, crowd=timed.crowd, admissions=timed.admissions)
         if after is not timed and news != timed:
             self.broadcast_world()

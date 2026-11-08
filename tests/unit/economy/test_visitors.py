@@ -34,8 +34,8 @@ from aiverse_server.residents.walking import WALK_SPEED
 
 @pytest.fixture(autouse=True)
 def tourists_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The tests here are about tourists unless they say otherwise, see `test_workers.py`."""
-    monkeypatch.setattr(visitors, "WORKER_SHARE", 0.0)
+    """Tourists look at ad slots here; the working route is tested in `test_working_tourists.py`."""
+    monkeypatch.setattr(visitors, "ROUTE_SHARE", 0.0)
 
 
 ENTRANCE = Position(50, 50)

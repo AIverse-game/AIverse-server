@@ -19,11 +19,9 @@ Goal = Literal["place", "wander", "exit"]
 workspace to work in or a game hall to play in; to roam to a random spot because nothing was
 worth seeing; or to leave through the entrance."""
 
-Kind = Literal["tourist", "worker"]
-"""A tourist looks at ad slots; a worker goes to a workspace and then a game hall."""
-
-Errand = Literal["workspace", "game_hall"]
-"""What a worker needs, in the order it goes."""
+RouteStop = Literal["workspace", "game_hall"]
+"""A kind of facility on a rough route: the working route goes to a workspace and then a game
+hall."""
 
 
 @dataclass(frozen=True)
@@ -49,14 +47,11 @@ class Visitor:
     stop: str | None = None
     """The parcel of the facility the visitor is on its way to or standing at; None unless `goal`
     is `place`."""
-    kind: Kind = "tourist"
-    """What the visitor does on this trip, chosen as it comes in."""
-    errands: tuple[Errand, ...] = ()
-    """The facilities a worker still has to go to on this trip, in order; the one it is on its
-    way to or at is not in it. Empty for a tourist."""
-    purse: float = 0.0
-    """Coins a worker still has to spend on this trip, for one person: admission fees come out of
-    it, and a facility it cannot pay is not visited. 0 for a tourist."""
+    route: tuple[RouteStop, ...] = ()
+    """The rough route the visitor follows on this trip, if it has one: the kinds of facility it
+    still means to go to, in order; the one it is on its way to or at is not in it. A visitor
+    without a route is an ordinary tourist who looks at ad slots; one with a route differs in
+    nothing else."""
     trip: int = 0
     """Visits to town so far, counting this one; with `step` it gives the dice of each choice
     their own seed."""
@@ -75,12 +70,6 @@ class Visitor:
             raise ValueError(f"unknown visitor goal {self.goal!r}")
         if (self.goal == "place") != (self.stop is not None):
             raise ValueError("a visitor has a stop exactly when it is going to a place")
-        if self.kind not in ("tourist", "worker"):
-            raise ValueError(f"unknown visitor kind {self.kind!r}")
-        if self.kind == "tourist" and (self.errands or self.purse):
-            raise ValueError("a tourist has no errands and no purse")
-        if not (math.isfinite(self.purse) and self.purse >= 0):
-            raise ValueError(f"visitor {self.id} has a purse of {self.purse!r}")
         times = (self.until, self.departs_at, *(until for _, until in self.seen))
         if not all(math.isfinite(time) for time in times):
             raise ValueError(f"visitor {self.id} has a time that is not finite")

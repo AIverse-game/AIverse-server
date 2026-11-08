@@ -141,10 +141,10 @@ def test_a_world_refuses_fees_for_a_parcel_nobody_owns() -> None:
         replace(WORLD, admissions=AdmissionBook(unpaid=(("L1-1", 1.0),)))
 
 
-def test_workers_who_go_in_earn_the_owner_coins_from_outside_the_town(
+def test_working_tourists_who_go_in_earn_the_owner_coins_from_outside_the_town(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(visitors, "WORKER_SHARE", 1.0)
+    monkeypatch.setattr(visitors, "ROUTE_SHARE", 1.0)
     world = replace(WORLD, crowd=new_crowd(60, seed=2))
 
     after = settle_due(replace(world, time=600.0))
