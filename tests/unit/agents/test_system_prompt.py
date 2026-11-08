@@ -2,14 +2,18 @@ from aiverse_server.agents.system_prompt import system_prompt
 from aiverse_server.agents.tools import TOOLS
 from aiverse_server.core.land import AD_SLOT_CAPACITY
 from aiverse_server.core.world import NOTE_LENGTH_LIMIT
+from aiverse_server.economy.admissions import FEES
 from aiverse_server.economy.ads import CONTENT_LIFETIME
 from aiverse_server.economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
+    GAME_WORKLOAD,
     ON_DEMAND_PRICE,
     SUBSCRIPTION_PRICE,
+    VENUE_WORKLOAD,
 )
 from aiverse_server.economy.sponsors import PAY_PERIOD
+from aiverse_server.economy.visitors import ROUTE_SHARE
 
 
 def test_the_prompt_tells_a_model_that_thinking_time_is_game_time() -> None:
@@ -42,6 +46,29 @@ def test_the_prompt_says_sponsors_pay_ad_slots_for_the_views_they_get() -> None:
     assert "sponsors pay ad slots for the views they get" in prompt
     assert "A slot showing nothing\ndraws no visitors and earns nothing" in prompt
     assert "buy_parcel" in prompt
+
+
+def test_the_prompt_names_door_fees_as_a_second_source_of_coins() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert "Coins come into the world two ways" in prompt
+    assert f"pay {FEES['workspace']} and {FEES['game_hall']} coins a person" in prompt
+
+
+def test_the_prompt_says_an_empty_ad_slot_earns_nothing_even_beside_a_path() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert "an empty slot earns nothing even beside a busy path" in prompt
+
+
+def test_the_prompt_explains_venues_with_the_game_constants() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert f"{VENUE_WORKLOAD:g} workload" in prompt
+    assert f"{ROUTE_SHARE:.0%} of the trips are tourists" in prompt
+    assert f"make_content content=game, {GAME_WORKLOAD:g} workload" in prompt
+    assert "A game hall draws nobody until it shows games" in prompt
+    assert f"games go stale after {CONTENT_LIFETIME:g}s like ads" in prompt
 
 
 def test_the_prompt_explains_content_with_the_game_constants() -> None:

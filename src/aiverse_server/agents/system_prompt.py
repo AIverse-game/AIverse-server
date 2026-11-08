@@ -11,12 +11,14 @@ from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
+    GAME_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
     ON_DEMAND_PRICE,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
+    VENUE_WORKLOAD,
     job_seconds,
     on_demand_cost,
 )
@@ -24,7 +26,7 @@ from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
 from ..economy.land import PARCEL_SIZE, plots
 from ..economy.sponsors import PAY_PERIOD
-from ..economy.visitors import VISITOR_COUNT
+from ..economy.visitors import MIN_VIEW_SECONDS, ROUTE_SHARE, VIEW_RADIUS, VISITOR_COUNT
 from ..game.layout import BLOCK_CELLS, BLOCKS, MAP_SIZE, create_default_world
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
@@ -48,6 +50,9 @@ def system_prompt(
     content_own_s = job_seconds(CONTENT_WORKLOAD, "self")
     content_hired_s = job_seconds(CONTENT_WORKLOAD, "on_demand")
     content_hired_coins = on_demand_cost(CONTENT_WORKLOAD)
+    venue_own_s = job_seconds(VENUE_WORKLOAD, "self")
+    venue_hired_s = job_seconds(VENUE_WORKLOAD, "on_demand")
+    venue_hired_coins = on_demand_cost(VENUE_WORKLOAD)
     grid = BLOCKS * BLOCK_CELLS
     cells = BLOCK_CELLS * BLOCK_CELLS
     for_sale = [square.price for square in plots(create_default_world()) if not square.lobby]
@@ -56,7 +61,8 @@ def system_prompt(
 at game end. Only coins count; land and items are worth nothing at the end.
 
 The state of the world
-- Coins come into the world one way: sponsors pay ad slots for the views they get, see below.
+- Coins come into the world two ways: sponsors pay ad slots for the views they get, and
+tourists on a working route pay a fee at the door of workspaces and game halls, see below.
 Coins also change hands between residents, and leave you when you buy land or compute. Spend
 them only on something that can plausibly bring more back; spending nothing is allowed.
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Walking is a
@@ -87,7 +93,10 @@ from when you put it in, then it goes stale and is gone; keep supplying it. Ever
 {PAY_PERIOD:g}s the sponsors pay for the people who saw ad slots since the last payday: the
 land observation lists them with the price each pays per person and its budget, and when the
 budgets run short every slot is paid for the same share of its views. A slot showing nothing
-draws no visitors and earns nothing. Each of your slots shows the people who saw it, and what
+draws no visitors and earns nothing: building one is no income by itself, and an empty slot
+earns nothing even beside a busy path. A slot that shows content also counts the people who
+spend {MIN_VIEW_SECONDS:g}s within {VIEW_RADIUS:g} units of it on their way elsewhere, say
+across a bridge between islands. Each of your slots shows the people who saw it, and what
 it was paid at the last payday.
 - The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
@@ -99,13 +108,19 @@ running of it. It is bought when they accept; if someone buys it first, withdraw
 - {VISITOR_COUNT} scripted visitors come in at the middle of the map, go to ad slots showing
 content, more to ones with more pieces and nearer to them, fewer to crowded ones, then leave and
 come again; each stands for more people as the game goes on. Near a slot is enough to see it.
+Some trips are the working route instead, see build_venue.
 The land observation shows how many people are passing each parcel now.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
-- build_venue builds a game hall (shows games, make_content content=game) or a workspace. Some
-visitors are tourists on a rough working route: they go to a workspace, then to a game hall
-showing games, and pay a fee at each door, {FEES["workspace"]} and {FEES["game_hall"]} coins a
-person. The fees are paid to the holders at paydays, with the sponsors' pay. A game hall showing
-no games draws nobody.
+- build_venue builds a game hall or a workspace on a parcel of yours, like an ad slot but
+dearer: {VENUE_WORKLOAD:g} workload, {venue_own_s:g}s on your own compute, {venue_hired_s:g}s and
+{venue_hired_coins} coins on a hired node. A venue earns from a fee at its door, not from
+sponsors: {ROUTE_SHARE:.0%} of the trips are tourists on a rough working route, to a workspace
+and then to a game hall showing games, who pay {FEES["workspace"]} and {FEES["game_hall"]} coins a
+person; a stop with nowhere to go is skipped, so either venue earns on its own. The fees are paid
+to the holders at paydays, with the sponsors' pay. A workspace needs no content. A game hall
+draws nobody until it shows games (make_content content=game, {GAME_WORKLOAD:g} workload, then
+place_content); games go stale after {CONTENT_LIFETIME:g}s like ads, so keep supplying them.
+The other trips only visit ad slots, so a venue never draws those people.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units or privately to one resident anywhere; at most
