@@ -3,7 +3,7 @@ from aiverse_server.agents.tools import TOOLS
 from aiverse_server.core.land import AD_SLOT_CAPACITY
 from aiverse_server.core.world import NOTE_LENGTH_LIMIT
 from aiverse_server.economy.admissions import FEES
-from aiverse_server.economy.ads import CONTENT_LIFETIME
+from aiverse_server.economy.ads import CONTENT_LIFETIME, GAME_ITEM
 from aiverse_server.economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -13,7 +13,12 @@ from aiverse_server.economy.compute import (
     VENUE_WORKLOAD,
 )
 from aiverse_server.economy.sponsors import PAY_PERIOD
-from aiverse_server.economy.visitors import ROUTE_SHARE
+from aiverse_server.economy.visitors import (
+    MIN_VIEW_SECONDS,
+    ROUTE_SHARE,
+    SEEN_FOR,
+    VIEW_RADIUS,
+)
 
 
 def test_the_prompt_tells_a_model_that_thinking_time_is_game_time() -> None:
@@ -69,6 +74,19 @@ def test_the_prompt_explains_venues_with_the_game_constants() -> None:
     assert f"make_content content=game, {GAME_WORKLOAD:g} workload" in prompt
     assert "A game hall draws nobody until it shows games" in prompt
     assert f"games go stale after {CONTENT_LIFETIME:g}s like ads" in prompt
+
+
+def test_the_prompt_says_how_close_and_how_long_a_passer_by_must_be_to_count() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert f"spend {MIN_VIEW_SECONDS:g}s within {VIEW_RADIUS:g} units of it" in prompt
+    assert f"counts again at a slot only after {SEEN_FOR:g}s" in prompt
+
+
+def test_the_prompt_says_a_game_is_its_own_item_no_ad_slot_can_show() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert f"its own item, {GAME_ITEM!r}; an ad slot cannot show it" in prompt
 
 
 def test_the_prompt_explains_content_with_the_game_constants() -> None:

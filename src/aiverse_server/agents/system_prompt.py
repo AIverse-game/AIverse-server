@@ -7,7 +7,7 @@ the observation carries the current state and prices.
 from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
 from ..economy.admissions import FEES
-from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME
+from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -26,7 +26,13 @@ from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
 from ..economy.land import PARCEL_SIZE, plots
 from ..economy.sponsors import PAY_PERIOD
-from ..economy.visitors import MIN_VIEW_SECONDS, ROUTE_SHARE, VIEW_RADIUS, VISITOR_COUNT
+from ..economy.visitors import (
+    MIN_VIEW_SECONDS,
+    ROUTE_SHARE,
+    SEEN_FOR,
+    VIEW_RADIUS,
+    VISITOR_COUNT,
+)
 from ..game.layout import BLOCK_CELLS, BLOCKS, MAP_SIZE, create_default_world
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
@@ -96,7 +102,8 @@ budgets run short every slot is paid for the same share of its views. A slot sho
 draws no visitors and earns nothing: building one is no income by itself, and an empty slot
 earns nothing even beside a busy path. A slot that shows content also counts the people who
 spend {MIN_VIEW_SECONDS:g}s within {VIEW_RADIUS:g} units of it on their way elsewhere, say
-across a bridge between islands. Each of your slots shows the people who saw it, and what
+across a bridge between islands, and the same person counts again at a slot only after
+{SEEN_FOR:g}s. Each of your slots shows the people who saw it, and what
 it was paid at the last payday.
 - The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
@@ -107,8 +114,8 @@ price for a number of shares, you pay the rest at once and keep the other shares
 running of it. It is bought when they accept; if someone buys it first, withdraw.
 - {VISITOR_COUNT} scripted visitors come in at the middle of the map, go to ad slots showing
 content, more to ones with more pieces and nearer to them, fewer to crowded ones, then leave and
-come again; each stands for more people as the game goes on. Near a slot is enough to see it.
-Some trips are the working route instead, see build_venue.
+come again; each stands for more people as the game goes on. Passing close by is not enough
+on its own, see the passers-by above. Some trips are the working route instead, see build_venue.
 The land observation shows how many people are passing each parcel now.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
 - build_venue builds a game hall or a workspace on a parcel of yours, like an ad slot but
@@ -119,7 +126,8 @@ and then to a game hall showing games, who pay {FEES["workspace"]} and {FEES["ga
 person; a stop with nowhere to go is skipped, so either venue earns on its own. The fees are paid
 to the holders at paydays, with the sponsors' pay. A workspace needs no content. A game hall
 draws nobody until it shows games (make_content content=game, {GAME_WORKLOAD:g} workload, then
-place_content); games go stale after {CONTENT_LIFETIME:g}s like ads, so keep supplying them.
+place_content); games go stale after {CONTENT_LIFETIME:g}s like ads, so keep supplying
+them. A game is its own item, {GAME_ITEM!r}; an ad slot cannot show it.
 The other trips only visit ad slots, so a venue never draws those people.
 
 Deals and information
