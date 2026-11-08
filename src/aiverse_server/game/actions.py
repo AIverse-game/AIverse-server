@@ -582,8 +582,7 @@ def _offer_joint_purchase(world: World, action: OfferJointPurchase) -> World:
     square = plot_at(world, here)
     payload = JointPurchase(square.col, square.row, action.partner_pays, action.partner_shares)
     try:
-        # One must stand in the block to propose buying it, not on a road beside it.
-        check_for_sale(world, square, here)
+        check_for_sale(world, square)
         return send_event(world, action.resident_id, action.partner_id, payload)[0]
     except (EventError, InventoryError, SharesError, LandError) as error:
         raise ActionRejected(error.code, error.message) from error

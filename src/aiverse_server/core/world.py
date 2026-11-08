@@ -453,10 +453,8 @@ class WorldMap:
     size: float
     block_cells: int = 1
     """Parcels along each side of a block, the unit land is bought in; 3 makes a block of 3 x 3
-    parcels. The default 1 makes every parcel its own block."""
-    road: float = 0.0
-    """Width of the road between blocks and around the map's edge, which belongs to no parcel;
-    0 leaves no roads. Needs `block_cells` above 1."""
+    parcels. The default 1 makes every parcel its own block. The client may draw gaps and roads
+    between blocks, but they take no map units: one block ends where the next begins."""
     block_price_factor: int = 1
     """What the price of a block is multiplied by, on top of its place on the map."""
     lobby: bool = False
@@ -468,10 +466,6 @@ class WorldMap:
             raise ValueError(f"map size must be a positive finite number, got {self.size}")
         if type(self.block_cells) is not int or self.block_cells < 1:
             raise ValueError(f"block_cells must be an integer >= 1, got {self.block_cells!r}")
-        if not (math.isfinite(self.road) and self.road >= 0):
-            raise ValueError(f"road must be a finite number >= 0, got {self.road}")
-        if self.road and self.block_cells == 1:
-            raise ValueError("roads need blocks of more than one parcel")
         if type(self.block_price_factor) is not int or self.block_price_factor < 1:
             raise ValueError(
                 f"block_price_factor must be an integer >= 1, got {self.block_price_factor!r}"

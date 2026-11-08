@@ -12,13 +12,13 @@ from .observation import Observation
 from .tools import ResidentTools
 
 TOUR = (
-    (57.0, 57.0),
-    (129.0, 57.0),
-    (129.0, 129.0),
-    (57.0, 129.0),
+    (45.0, 45.0),
+    (105.0, 45.0),
+    (105.0, 105.0),
+    (45.0, 105.0),
 )
 """Spots to visit, in order: the middles of the four blocks diagonally next to the lobby, on
-the default map of size 186."""
+the default map of size 150."""
 
 
 class ScriptedBrain:

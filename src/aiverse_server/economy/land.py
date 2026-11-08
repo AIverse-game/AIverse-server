@@ -2,25 +2,24 @@
 
 The map is cut into a grid of `PARCEL_SIZE` squares, counted by column and row from the
 north-west corner. Land is bought in blocks of `map.block_cells` x `map.block_cells` parcels,
-which all become the buyer's at once; facilities are built on single parcels. Roads between
-blocks, `map.road` wide, belong to no parcel. The spawn lobby in the middle of the map, if the
-map has one, is a block nobody can buy. A resident standing inside a block nobody owns can buy
-it for coins. Land costs more the nearer it lies to the centre of the map, where visitors come
-in, see `visitors.py`. Parcels stay their owner's for the whole game, even after the owner
-leaves; nothing is paid back for them at the end.
+which all become the buyer's at once; facilities are built on single parcels. Blocks touch;
+any roads between them are only drawn by the client and take no map units. The spawn lobby in
+the middle of the map, if the map has one, is a block nobody can buy. A resident standing inside
+a block nobody owns can buy it for coins. Land costs more the nearer it lies to the centre of
+the map, where visitors come in, see `visitors.py`. Parcels stay their owner's for the whole
+game, even after the owner leaves; nothing is paid back for them at the end.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
 """
 
-import bisect
 import functools
 import math
 from dataclasses import dataclass, replace
 from typing import Literal
 
 from ..core.inventory import take_coins
-from ..core.land import Parcel, parcel_id
+from ..core.land import Parcel, parcel_id, parse_parcel_id
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import Position, World, WorldMap
 
@@ -65,38 +64,18 @@ class Plot:
         return parcel_id(self.col, self.row)
 
 
-@dataclass(frozen=True)
-class _Axis:
-    """Where the parcels lie along one side of the map."""
-
-    starts: tuple[float, ...]
-    ends: tuple[float, ...]
-
-    def index(self, value: float) -> int:
-        """The parcel whose span holds `value`, or the nearest one when it is on a road."""
-        return min(max(bisect.bisect_right(self.starts, value) - 1, 0), len(self.starts) - 1)
-
-    def on_road(self, value: float) -> bool:
-        index = self.index(value)
-        return not self.starts[index] <= value <= self.ends[index]
-
-
 def grid_size(world: World) -> int:
-    """Parcels along each side of the map; without roads, a strip narrower than a parcel at
-    the east and south edges belongs to the last column and row."""
-    return len(_axis(world.map).starts)
+    """Parcels along each side of the map; a strip narrower than a parcel at the east and
+    south edges belongs to the last column and row."""
+    return max(int(world.map.size // PARCEL_SIZE), 1)
 
 
 def plot_at(world: World, position: Position) -> Plot:
-    """The grid square `position` lies in; on a road, the nearest one."""
-    axis = _axis(world.map)
-    return plot(world, axis.index(position.x), axis.index(position.y))
-
-
-def on_road(world: World, position: Position) -> bool:
-    """Whether `position` lies on a road, outside every parcel."""
-    axis = _axis(world.map)
-    return axis.on_road(position.x) or axis.on_road(position.y)
+    """The grid square `position` lies in."""
+    last = grid_size(world) - 1
+    col = min(int(position.x // PARCEL_SIZE), last)
+    row = min(int(position.y // PARCEL_SIZE), last)
+    return plot(world, col, row)
 
 
 def block_of(world: World, col: int, row: int) -> tuple[tuple[int, int], ...]:
@@ -104,6 +83,16 @@ def block_of(world: World, col: int, row: int) -> tuple[tuple[int, int], ...]:
     cells = world.map.block_cells
     first_col, first_row = col // cells * cells, row // cells * cells
     return tuple((first_col + dc, first_row + dr) for dr in range(cells) for dc in range(cells))
+
+
+def block_parcels(world: World, parcel_id_: str) -> tuple[Parcel, ...]:
+    """The parcels of the block holding the parcel `parcel_id_`, which someone owns; empty if
+    the id names no parcel or the block is nobody's."""
+    cell = parse_parcel_id(parcel_id_)
+    if cell is None or not 0 <= max(cell) < grid_size(world):
+        return ()
+    cells = set(block_of(world, *cell))
+    return tuple(p for p in world.parcels if (p.col, p.row) in cells)
 
 
 def plot(world: World, col: int, row: int) -> Plot:
@@ -117,7 +106,7 @@ def plot(world: World, col: int, row: int) -> Plot:
 
 def parcel_centre(world_map: WorldMap, col: int, row: int) -> Position:
     """Centre of the grid square at `col`, `row` on `world_map`."""
-    count = len(_axis(world_map).starts)
+    count = max(int(world_map.size // PARCEL_SIZE), 1)
     if not 0 <= col < count or not 0 <= row < count:
         raise ValueError(f"no parcel at column {col}, row {row}")
     return _layout(world_map)[row * count + col].centre
@@ -157,25 +146,25 @@ def buy_parcel(world: World, resident_id: str) -> World:
     if resident is None:
         raise LandError("unknown_resident", f"no resident with id {resident_id!r}")
     square = plot_at(world, resident.position)
-    check_for_sale(world, square, resident.position)
+    check_for_sale(world, square)
     world = take_coins(world, resident_id, square.price)
     world = record_transfer(world, resident_id, SYSTEM, square.price, "land")
     return add_block(world, square.col, square.row, resident_id)
 
 
 def for_sale_at(world: World, position: Position) -> Plot | None:
-    """The unowned, buyable land `position` stands on, or None on a road, in the lobby or on
-    land that is owned."""
+    """The unowned, buyable land `position` stands on, or None in the lobby or on land that is
+    owned."""
     square = plot_at(world, position)
-    if square.lobby or square.owner_id is not None or on_road(world, position):
+    if square.lobby or square.owner_id is not None:
         return None
     return square
 
 
-def check_for_sale(world: World, square: Plot, position: Position | None = None) -> None:
-    """Raise `LandError` unless the block of `square` can be bought: it is not the lobby, not
-    already owned, and `position`, if given, is not on a road."""
-    if square.lobby or (position is not None and on_road(world, position)):
+def check_for_sale(world: World, square: Plot) -> None:
+    """Raise `LandError` unless the block of `square` can be bought: it is not the lobby and
+    not already owned."""
+    if square.lobby:
         raise LandError("not_for_sale", f"{square.id} is not land for sale")
     if square.owner_id is not None:
         raise LandError("parcel_owned", f"parcel {square.id} already belongs to {square.owner_id}")
@@ -195,45 +184,32 @@ def add_block(
 
 
 @functools.lru_cache(maxsize=8)
-def _axis(world_map: WorldMap) -> _Axis:
-    cells, road = world_map.block_cells, world_map.road
-    if cells == 1:
-        count = max(int(world_map.size // PARCEL_SIZE), 1)
-        starts = tuple(i * PARCEL_SIZE for i in range(count))
-        ends = tuple(start + PARCEL_SIZE for start in starts[:-1]) + (world_map.size,)
-        return _Axis(starts, ends)
-    block = cells * PARCEL_SIZE
-    blocks = int((world_map.size - road) // (block + road))
-    if blocks < 1:
-        raise ValueError(f"a map of side {world_map.size:g} has no room for a block")
-    if world_map.lobby and blocks % 2 == 0:
-        raise ValueError("a lobby needs an odd number of blocks along each side")
-    starts = tuple(
-        road + b * (block + road) + k * PARCEL_SIZE for b in range(blocks) for k in range(cells)
-    )
-    return _Axis(starts, tuple(start + PARCEL_SIZE for start in starts))
-
-
-@functools.lru_cache(maxsize=8)
 def _layout(world_map: WorldMap) -> tuple[Plot, ...]:
     """Every grid square without owners, row by row; worked out once per map, since every
     observation asks for it."""
-    town = town_centre(world_map.size)
-    axis = _axis(world_map)
-    count = len(axis.starts)
+    size = world_map.size
+    town = town_centre(size)
+    count = max(int(size // PARCEL_SIZE), 1)
     cells = world_map.block_cells
-    middle = count // cells // 2
+    blocks = count // cells
+    if world_map.lobby and blocks % 2 == 0:
+        raise ValueError("a lobby needs an odd number of blocks along each side")
+    middle = blocks // 2
+
+    def span(first: int, last: int) -> tuple[float, float]:
+        """Where parcels `first` to `last` of a side lie; the last parcel reaches the edge."""
+        return first * PARCEL_SIZE, size if last == count - 1 else (last + 1) * PARCEL_SIZE
+
     squares = []
     for row in range(count):
         for col in range(count):
-            centre = Position(
-                (axis.starts[col] + axis.ends[col]) / 2, (axis.starts[row] + axis.ends[row]) / 2
-            )
+            left, right = span(col, col)
+            top, bottom = span(row, row)
+            centre = Position((left + right) / 2, (top + bottom) / 2)
             first_col, first_row = col // cells * cells, row // cells * cells
-            block_centre = Position(
-                (axis.starts[first_col] + axis.ends[first_col + cells - 1]) / 2,
-                (axis.starts[first_row] + axis.ends[first_row + cells - 1]) / 2,
-            )
+            block_left, block_right = span(first_col, first_col + cells - 1)
+            block_top, block_bottom = span(first_row, first_row + cells - 1)
+            block_centre = Position((block_left + block_right) / 2, (block_top + block_bottom) / 2)
             price = _price(block_centre, town) * world_map.block_price_factor
             lobby = world_map.lobby and (col // cells, row // cells) == (middle, middle)
             squares.append(Plot(col, row, centre, price, None, lobby))

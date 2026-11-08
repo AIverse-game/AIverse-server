@@ -716,7 +716,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         )
 
     squares = plots(world)
-    # Where one stands is shown if it is owned or for sale, not on a road or in the lobby.
+    # Where one stands is shown if it is owned or for sale, not in the lobby.
     standing_on = plot_at(world, here)
     square_here = (
         standing_on

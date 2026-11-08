@@ -2,6 +2,7 @@
 live in economy/land.py and economy/compute.py."""
 
 import math
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -130,3 +131,11 @@ class Link:
 def parcel_id(col: int, row: int) -> str:
     """How residents name a parcel, such as `L7-3` for column 7, row 3."""
     return f"L{col}-{row}"
+
+
+def parse_parcel_id(text: str) -> tuple[int, int] | None:
+    """The column and row a parcel id names, or None if `text` is not one."""
+    # Only the canonical spelling: no leading zeros, no non-ASCII digits, nothing so long that
+    # turning it into an integer fails. Other spellings would name a parcel without being its id.
+    match = re.fullmatch(r"L(0|[1-9][0-9]{0,5})-(0|[1-9][0-9]{0,5})", text, re.ASCII)
+    return (int(match[1]), int(match[2])) if match else None

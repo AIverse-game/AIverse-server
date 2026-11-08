@@ -556,11 +556,12 @@ TOOLS = (
     ),
     ToolSpec(
         "offer_shares",
-        f"Offer another resident shares of a parcel, out of its {PARCEL_SHARES}. The holders of "
-        "a parcel's shares split what its facility earns in proportion, at every payday, "
-        "whoever built it. Use it to pay for work or share a parcel with a partner. Nothing "
+        f"Offer another resident shares of a block, out of its {PARCEL_SHARES}; name any parcel "
+        "of the block and the same shares of all its parcels change hands. The holders of "
+        "a block's shares split what its facilities earn in proportion, at every payday, "
+        "whoever built them. Use it to pay for work or share a block with a partner. Nothing "
         "moves until they accept and pay, and you keep earning on the shares until then. "
-        "Whoever bought the parcel still alone builds on it and stocks it with content.",
+        "Whoever bought the block still alone builds on it and stocks it with content.",
         OfferSharesArgs,
     ),
     ToolSpec(

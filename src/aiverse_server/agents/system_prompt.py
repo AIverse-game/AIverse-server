@@ -22,10 +22,10 @@ from ..economy.compute import (
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
-from ..economy.land import LAND_PRICE_CENTRE, LAND_PRICE_EDGE, PARCEL_SIZE
+from ..economy.land import PARCEL_SIZE, plots
 from ..economy.sponsors import PAY_PERIOD
 from ..economy.visitors import VISITOR_COUNT
-from ..game.layout import BLOCK_CELLS, BLOCK_PRICE_FACTOR, BLOCKS, MAP_SIZE, ROAD_WIDTH
+from ..game.layout import BLOCK_CELLS, BLOCKS, MAP_SIZE, create_default_world
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.speech import HEARING_RADIUS
@@ -50,8 +50,8 @@ def system_prompt(
     content_hired_coins = on_demand_cost(CONTENT_WORKLOAD)
     grid = BLOCKS * BLOCK_CELLS
     cells = BLOCK_CELLS * BLOCK_CELLS
-    block_low = LAND_PRICE_EDGE * BLOCK_PRICE_FACTOR
-    block_high = LAND_PRICE_CENTRE * BLOCK_PRICE_FACTOR
+    for_sale = [square.price for square in plots(create_default_world()) if not square.lobby]
+    block_low, block_high = min(for_sale), max(for_sale)
     prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
 at game end. Only coins count; land and items are worth nothing at the end.
 
@@ -63,10 +63,10 @@ them only on something that can plausibly bring more back; spending nothing is a
 straight line at {WALK_SPEED:g} units/s and costs time only. You are busy until you arrive and
 cannot act except to speak, cancel orders, handle compute and content or leave.
 - The map is a {grid} x {grid} grid of {PARCEL_SIZE:g}-unit parcels, id L<col>-<row>, laid out
-in blocks of {BLOCK_CELLS} x {BLOCK_CELLS} parcels with a road of {ROAD_WIDTH:g} units between them.
+in blocks of {BLOCK_CELLS} x {BLOCK_CELLS} parcels.
 Land is bought a whole block at a time: standing in a free block, buy_parcel buys all {cells} of its
 parcels from the town for {block_low}-{block_high} coins, dearer nearer the middle of the map.
-Roads cannot be bought, nor can the lobby, the middle block where everyone starts. A block stays
+The lobby, the middle block where everyone starts, cannot be bought. A block stays
 yours; it earns only through ad slots, workspaces or game halls built on its parcels, one to a
 parcel.
 - Compute is a speed: a job of W workload takes W / rate seconds. Your own compute is free,

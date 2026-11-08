@@ -17,15 +17,15 @@ from aiverse_server.core.world import Position
 from aiverse_server.game.layout import create_default_world
 from aiverse_server.server.app import Game
 
-# The block around (57, 57): a parcel there costs 1,510, and a block five times that.
-BLOCK_PRICE = 7_550
+# The block around (45, 45): a parcel there costs 1,760, and a block five times that.
+BLOCK_PRICE = 8_800
 
 
 def game_in_town() -> Game:
     world = create_default_world()
     world = replace(
         world,
-        residents=(replace(world.residents[0], position=Position(57, 57)), *world.residents[1:]),
+        residents=(replace(world.residents[0], position=Position(45, 45)), *world.residents[1:]),
     )
     return Game(world, clock=lambda: 0)
 
