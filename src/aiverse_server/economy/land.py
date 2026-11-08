@@ -2,8 +2,8 @@
 
 The map is cut into a grid of `PARCEL_SIZE` squares, counted by column and row from the
 north-west corner. A resident standing inside a parcel nobody owns can buy it for coins. Land
-costs more the nearer it lies to the centre of the map, where visitors gather, see
-`footfall.py`. Parcels stay their owner's for the whole game, even after the owner leaves;
+costs more the nearer it lies to the centre of the map, where visitors come in, see
+`visitors.py`. Parcels stay their owner's for the whole game, even after the owner leaves;
 nothing is paid back for them at the end.
 
 Like the rest of the world, every function returns a new world and leaves its argument

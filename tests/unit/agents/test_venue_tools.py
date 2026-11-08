@@ -142,7 +142,7 @@ def test_the_observation_shows_the_hall_its_games_and_what_venues_and_games_cost
     seen = look(game, "a")
 
     hall = next(parcel for parcel in seen.land.mine if parcel.id == "L7-7")
-    assert (hall.facility, hall.content_goes_stale_in, hall.income_per_payday) == (
+    assert (hall.facility, hall.content_goes_stale_in, hall.income_last_payday) == (
         "game_hall",
         (CONTENT_LIFETIME - 100.0,),
         0,

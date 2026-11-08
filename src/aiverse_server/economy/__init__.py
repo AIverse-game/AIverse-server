@@ -1,1 +1,1 @@
-"""The economy: land, footfall, compute, ad slots, the exchange, trade offers and contracts."""
+"""The economy: land, visitors, sponsors, compute, ad slots, the exchange, offers and contracts."""

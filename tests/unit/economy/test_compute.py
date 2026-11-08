@@ -7,7 +7,7 @@ from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import CONTENT_ITEM, payday_after
+from aiverse_server.economy.ads import CONTENT_ITEM
 from aiverse_server.economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -59,7 +59,7 @@ def facility(world: World, parcel_id: str) -> Facility | None:
 
 def new_ad(built_at: float) -> Facility:
     """An ad slot that has just been finished at `built_at`, showing nothing."""
-    return Facility("ad", built_at, (), payday_after(built_at))
+    return Facility("ad", built_at)
 
 
 def test_the_resident_s_own_compute_builds_an_ad_slot_slowly_and_for_free() -> None:

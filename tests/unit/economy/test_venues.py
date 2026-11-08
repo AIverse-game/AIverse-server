@@ -8,15 +8,7 @@ import pytest
 from aiverse_server.core.inventory import coin_balance, store_item
 from aiverse_server.core.land import AD_SLOT_CAPACITY, Facility, Parcel
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import (
-    CONTENT_ITEM,
-    CONTENT_LIFETIME,
-    GAME_ITEM,
-    PAY_PERIOD,
-    next_payday,
-    pay_visitors,
-    slot_income,
-)
+from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
 from aiverse_server.economy.compute import (
     GAME_WORKLOAD,
     NODE_RATE,
@@ -36,7 +28,7 @@ from aiverse_server.game.clock import next_due, settle_due
 
 # a owns L7-7 at the middle of the 150 map with an ad slot, a game hall on L2-2, and L7-8 and
 # L1-1 bare. b owns L3-3 bare. Both are rich.
-AD = Facility("ad", 0.0, (), PAY_PERIOD)
+AD = Facility("ad", 0.0)
 HALL = Facility("game_hall", 0.0)
 WORLD = World(
     map=WorldMap(size=150),
@@ -195,29 +187,11 @@ def test_a_game_hall_holds_no_more_than_an_ad_slot_does() -> None:
     assert full.value.code == "slot_full"
 
 
-def test_a_game_hall_earns_nothing_and_is_never_a_payday() -> None:
+def test_a_game_hall_earns_nothing_and_never_wakes_the_clock() -> None:
     world = stocked(game=1)
     placed = perform(at(world, 10.0), PlaceContent("a", "L2-2"))
 
-    paid = at(placed, 2 * PAY_PERIOD)
+    paid = at(placed, 120.0)
 
     assert coin_balance(paid, "a") == 5_000
-    assert pay_visitors(placed) == placed
-    assert next_payday(placed) is None
     assert next_due(placed) is None
-
-
-def test_a_game_hall_does_not_take_a_share_of_a_neighbouring_ad_slots_footfall() -> None:
-    # L7-7 and L7-8 are neighbours, so an ad slot on one would share with a slot on the other.
-    slot = Facility("ad", 0.0, (CONTENT_LIFETIME,), PAY_PERIOD)
-    lone = replace(WORLD, parcels=(Parcel(7, 7, "a", slot),))
-    beside_hall = replace(lone, parcels=(*lone.parcels, Parcel(7, 8, "a", HALL)))
-    beside_hall = replace(
-        beside_hall,
-        parcels=(
-            beside_hall.parcels[0],
-            Parcel(7, 8, "a", Facility("game_hall", 0.0, (CONTENT_LIFETIME,))),
-        ),
-    )
-
-    assert slot_income(beside_hall, beside_hall.parcels[0]) == slot_income(lone, lone.parcels[0])

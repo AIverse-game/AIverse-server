@@ -24,7 +24,8 @@ A visitor counts as having seen a slot when it spends at least `MIN_VIEW_SECONDS
 `VIEW_RADIUS` of it, standing there or passing by, and is not counted at the same slot again for
 `SEEN_FOR` game seconds, even on a later trip. The count is made when the walk ends, judging
 by the slots showing content then, and adds the people the visitor
-stands for to the views of the slot's parcel, `Crowd.views`. Nothing is paid for them yet.
+stands for to the views of the slot's parcel, `Crowd.views`, which the sponsors pay for, see
+`sponsors.py`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched.
@@ -107,6 +108,43 @@ def new_crowd(count: int = VISITOR_COUNT, seed: int = 0) -> Crowd:
             Visitor(number, "away", entry, Position(0.0, 0.0), Position(0.0, 0.0), trip=0)
         )
     return Crowd(seed=seed, visitors=tuple(visitors))
+
+
+TRAFFIC_REACH = 20.0
+"""Distance within which a visitor counts as passing a spot, in `people_near`."""
+
+
+class Traffic:
+    """How many people pass spots on the map right now, with the visitors' positions worked out
+    and sorted into squares of `TRAFFIC_REACH` once, for asking about many spots."""
+
+    def __init__(self, world: World) -> None:
+        self._weight = visitor_weight(world.time)
+        self._squares: dict[tuple[int, int], list[Position]] = {}
+        for visitor in world.crowd.visitors:
+            there = visitor_position(visitor, world.time)
+            if there is not None:
+                square = (int(there.x // TRAFFIC_REACH), int(there.y // TRAFFIC_REACH))
+                self._squares.setdefault(square, []).append(there)
+
+    def near(self, centre: Position) -> float:
+        """People passing `centre`: the visitors on the map within `TRAFFIC_REACH` of it, each
+        standing for `visitor_weight` of them. Where the traffic is follows from where the
+        visitors choose to go, so it moves with the layout of the town."""
+        column, row = int(centre.x // TRAFFIC_REACH), int(centre.y // TRAFFIC_REACH)
+        count = 0
+        for x in (column - 1, column, column + 1):
+            for y in (row - 1, row, row + 1):
+                count += sum(
+                    math.dist((there.x, there.y), (centre.x, centre.y)) <= TRAFFIC_REACH
+                    for there in self._squares.get((x, y), ())
+                )
+        return count * self._weight
+
+
+def people_near(world: World, centre: Position) -> float:
+    """People passing a spot right now, see `Traffic`."""
+    return Traffic(world).near(centre)
 
 
 def visitor_weight(time: float) -> float:

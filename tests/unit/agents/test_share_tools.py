@@ -9,14 +9,14 @@ from aiverse_server.agents.tool_selection import (
 )
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.land import PARCEL_SHARES, Facility, Parcel
+from aiverse_server.core.sponsors import SponsorBook
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import CONTENT_ITEM, PAY_PER_FOOTFALL, PAY_PERIOD
-from aiverse_server.economy.footfall import footfall
+from aiverse_server.economy.ads import CONTENT_ITEM
 from aiverse_server.server.app import Game
 
 # a bought L7-7, a slot in the middle of the 150 map that shows one piece of content, and L1-1,
 # which is bare; b and c own nothing.
-SLOT = Facility("ad", 0.0, (500.0,), PAY_PERIOD)
+SLOT = Facility("ad", 0.0, (500.0,))
 WORLD = World(
     map=WorldMap(size=150),
     residents=(
@@ -25,6 +25,7 @@ WORLD = World(
         Resident("c", "丙", "#778899", Position(30, 80), coins=5_000),
     ),
     parcels=(Parcel(7, 7, "a", SLOT), Parcel(1, 1, "a")),
+    sponsors=SponsorBook(last_paid=(("L7-7", 20),)),
 )
 
 
@@ -85,12 +86,12 @@ def test_the_observation_shows_who_holds_a_parcel_and_what_each_is_paid() -> Non
     mine = next(p for p in look(game, "a").land.mine if p.id == "L7-7")
     stake = look(game, "b").land.stakes[0]
 
-    total = round(footfall(game.world, Position(75, 75)) * PAY_PER_FOOTFALL)
+    total = 20
     assert mine.id == "L7-7" and mine.shares == {"a": 60, "b": 40}
-    assert mine.income_per_payday == total
-    assert mine.my_cut_per_payday + stake.my_cut_per_payday == total
+    assert mine.income_last_payday == total
+    assert mine.my_cut_last_payday + stake.my_cut_last_payday == total
     assert (stake.id, stake.owner, stake.my_shares) == ("L7-7", "a", 40)
-    assert (stake.shares, stake.content, stake.income_per_payday) == (mine.shares, 1, total)
+    assert (stake.shares, stake.content, stake.income_last_payday) == (mine.shares, 1, total)
     assert look(game, "c").land.stakes == ()
     assert '"stakes":[{"id":"L7-7"' in to_json(look(game, "b"))
 
@@ -102,11 +103,11 @@ def test_a_pending_offer_shows_to_both_sides_with_what_the_shares_would_earn() -
     to_b = look(game, "b")
     from_a = look(game, "a")
 
-    total = round(footfall(game.world, Position(75, 75)) * PAY_PER_FOOTFALL)
+    total = 20
     (offer,) = to_b.share_offers_to_me
     assert (offer.event_id, offer.from_id, offer.to_id) == (1, "a", "b")
     assert (offer.parcel, offer.shares, offer.price) == ("L7-7", 50, 300)
-    assert offer.cut_per_payday == total * 50 // PARCEL_SHARES
+    assert offer.cut_last_payday == total * 50 // PARCEL_SHARES
     assert from_a.my_share_offers == to_b.share_offers_to_me
     assert (to_b.my_share_offers, from_a.share_offers_to_me) == ((), ())
     assert (to_b.offers_to_me, to_b.information_offers_to_me) == ((), ())
@@ -148,4 +149,4 @@ def test_the_owner_who_sold_everything_is_still_shown_the_parcel_as_theirs() -> 
 
     mine = next(p for p in look(game, "a").land.mine if p.id == "L7-7")
 
-    assert (mine.id, mine.shares, mine.my_cut_per_payday) == ("L7-7", {"b": 100}, 0)
+    assert (mine.id, mine.shares, mine.my_cut_last_payday) == ("L7-7", {"b": 100}, 0)

@@ -1,11 +1,14 @@
 """Buying land through the agent tools, and what the observation tells a model about land."""
 
+from dataclasses import replace
+
 from aiverse_server.agents.observation import Observation, observe
 from aiverse_server.agents.tool_selection import last_request_tool_names, selected_tool_names
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.land import Parcel
+from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.footfall import footfall, visitors
+from aiverse_server.economy.sponsors import default_sponsors
 from aiverse_server.server.app import Game
 
 # a stands in the free parcel L5-3 north of the middle of the map with plenty of coins; b has
@@ -36,28 +39,40 @@ def look(game: Game, resident_id: str) -> Observation:
     return observe(game.world, resident_id, perception, game.remaining())
 
 
-def test_the_observation_prices_the_parcel_underfoot_and_shows_its_footfall() -> None:
-    game = make_game()
+def standing(number: int, x: float, y: float) -> Visitor:
+    """A visitor in town standing at (x, y) for a long while."""
+    spot = Position(x, y)
+    return Visitor(number, "staying", 1_000.0, spot, spot)
+
+
+def test_the_observation_prices_the_parcel_underfoot_and_counts_the_people_passing_it() -> None:
+    crowd = Crowd(visitors=(standing(0, 55, 35), standing(1, 60, 38), standing(2, 5, 95)))
+    game = make_game(replace(WORLD, crowd=crowd, sponsors=default_sponsors()))
 
     seen = look(game, "a")
 
     here = seen.land.here
     assert here is not None
     assert (here.id, here.price, here.owner) == ("L5-3", 2_540, None)
-    # 84.2 visitors this far out, plus a standing there.
-    assert here.footfall == footfall(game.world, here.centre)
-    assert round(here.footfall, 1) == 94.2
-    assert seen.land.visitors_now == visitors(0.0)
+    # Two of the three visitors are within reach; each stands for one person at the start.
+    assert here.people_near == 2.0
+    assert [(s.name, s.price_per_view) for s in seen.land.sponsors] == [
+        ("星河饮品", 2.4),
+        ("云端出行", 1.8),
+        ("拾光书店", 1.2),
+    ]
 
 
-def test_the_best_free_parcels_come_first_by_footfall() -> None:
-    game = make_game()
+def test_the_best_free_parcels_come_first_by_the_people_passing() -> None:
+    crowd = Crowd(visitors=(standing(0, 55, 35), standing(1, 85, 85), standing(2, 86, 84)))
+    game = make_game(replace(WORLD, crowd=crowd))
 
     best = look(game, "b").land.best_free
 
-    footfalls = [parcel.footfall for parcel in best]
+    passing = [parcel.people_near for parcel in best]
     assert len(best) == 5
-    assert footfalls == sorted(footfalls, reverse=True)
+    assert passing == sorted(passing, reverse=True)
+    assert passing[0] == 2.0
     assert all(parcel.owner is None for parcel in best)
 
 

@@ -23,7 +23,7 @@ from ..core.events import Event, pending_for, pending_from
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES, Parcel
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
-from ..economy.ads import CONTENT_LIFETIME, PAY_PERIOD, expected_income
+from ..economy.ads import CONTENT_LIFETIME
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -38,7 +38,6 @@ from ..economy.compute import (
 )
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
-from ..economy.footfall import footfall, visitors
 from ..economy.joint_purchase import JointPurchase, reserved_purchase_coins
 from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot, plot_at, plots, town_centre
 from ..economy.portals import (
@@ -49,7 +48,9 @@ from ..economy.portals import (
     links_of,
 )
 from ..economy.shares import ShareOffer, split_income
+from ..economy.sponsors import BUDGET_CAP_SECONDS, PAY_PERIOD
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins
+from ..economy.visitors import Traffic, people_near
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
 from ..residents.perception import Perception
@@ -156,9 +157,9 @@ class ParcelView:
     price: int
     """Coins it costs from the town; what its owner paid if it is owned."""
     owner: str | None
-    footfall: float
-    """Visitors and residents passing its centre now; more where it is nearer the middle of the
-    map."""
+    people_near: float
+    """People passing its centre now, as the scripted visitors happen to be there: it follows the
+    layout of the town, and a visitor stands for more people as the game goes on."""
     distance: float
     walk_seconds: float
     facility: str | None = None
@@ -173,7 +174,7 @@ class ParcelView:
 class MyParcelView:
     id: str
     centre: Position
-    footfall: float
+    people_near: float
     distance: float
     walk_seconds: float
     facility: str | None = None
@@ -183,17 +184,16 @@ class MyParcelView:
     content_goes_stale_in: tuple[float, ...] = ()
     """Seconds until each piece of content its ad slot or game hall shows goes stale, soonest
     first."""
-    income_per_payday: int = 0
-    """Coins its ad slot would be paid at the next payday as things stand: its footfall, shared
-    with the neighbouring slots showing content, times the pieces shown."""
+    income_last_payday: int = 0
+    """Coins its ad slot was paid at the last payday that had views to pay for, for the people
+    who saw it since the one before; 0 for a slot paid nothing then."""
     shares: dict[str, int] = field(default_factory=dict)
     """Who holds the parcel's shares and how many of the 100; the income is paid out by them."""
-    my_cut_per_payday: int = 0
-    """The part of `income_per_payday` that goes to the resident."""
+    my_cut_last_payday: int = 0
+    """The part of `income_last_payday` that went to the resident."""
     people_seen: float = 0.0
     """People the scripted visitors have counted as seeing its ad slot so far this game, see
-    `economy/visitors.py`; nothing is paid for them yet, and the footfall above is a stand-in
-    for what they will be."""
+    `economy/visitors.py`; the sponsors pay for them at paydays, see `LandView.sponsors`."""
 
 
 @dataclass(frozen=True)
@@ -208,8 +208,8 @@ class StakeView:
     facility: str | None
     content: int
     """Pieces of content its ad slot shows now."""
-    income_per_payday: int
-    my_cut_per_payday: int
+    income_last_payday: int
+    my_cut_last_payday: int
 
 
 @dataclass(frozen=True)
@@ -291,8 +291,8 @@ class PortalView:
     parcel: str
     owner: str
     centre: Position
-    footfall: float
-    """Visitors and residents passing its centre now."""
+    people_near: float
+    """People passing its centre now."""
     lines: tuple[LineView, ...]
 
 
@@ -331,23 +331,37 @@ class LinkProposalView:
 
 
 @dataclass(frozen=True)
+class SponsorView:
+    name: str
+    price_per_view: float
+    """Coins it pays for one person who saw an ad slot."""
+    budget_per_second: float
+    """Coins its budget fills with each second."""
+    budget_now: int
+    """What it could spend at once; the budget stops filling at `BUDGET_CAP_SECONDS` of its
+    rate."""
+
+
+@dataclass(frozen=True)
 class LandView:
     parcel_size: float
     grid: int
     """Parcels along each side; ids are `L<col>-<row>` from the north-west corner."""
-    visitors_now: float
-    """Visitors at the middle of the map now; they grow as the game goes on."""
     slot_capacity: int
     """Pieces of content an ad slot shows at once."""
     content_lasts: float
     """Seconds a piece of content is shown for once put in a slot."""
     pay_period: float
     """Seconds between paydays, which fall at multiples of it."""
+    sponsors: tuple[SponsorView, ...]
+    """Who pays for views of ad slots; at a payday the sponsors who pay most buy the views of
+    all slots first, and when their budgets run short every slot is paid for the same share of
+    its views."""
     here: ParcelView | None
     """The parcel the resident stands in; None while walking."""
     mine: tuple[MyParcelView, ...]
     best_free: tuple[ParcelView, ...]
-    """Free parcels with the most footfall now, best first."""
+    """Free parcels with the most people passing now, best first."""
     stakes: tuple[StakeView, ...] = ()
     """Parcels of other residents of which the resident holds shares, and so is paid."""
 
@@ -405,8 +419,8 @@ class ShareOfferView:
     shares: int
     price: int
     """Coins for all the shares; 0 when they are given away."""
-    cut_per_payday: int
-    """What the shares would be paid at the next payday as things stand, whoever holds them."""
+    cut_last_payday: int
+    """What the shares were paid at the last payday that paid the slot, whoever holds them."""
 
 
 @dataclass(frozen=True)
@@ -416,8 +430,8 @@ class JointPurchaseView:
     to_id: str
     parcel: str
     centre: Position
-    footfall: float
-    """Visitors and residents passing the parcel's centre now."""
+    people_near: float
+    """People passing the parcel's centre now."""
     price: int
     """What the parcel costs from the town."""
     from_pays: int
@@ -672,6 +686,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         if job.owner_id == resident_id and job.parcel_id is not None
     }
     facilities = {parcel.id: parcel for parcel in world.parcels if parcel.facility}
+    traffic = Traffic(world)
     owned = {parcel.id: parcel for parcel in world.parcels}
 
     def view(square: Plot) -> ParcelView:
@@ -680,7 +695,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             square.centre,
             square.price,
             square.owner_id,
-            footfall(world, square.centre),
+            traffic.near(square.centre),
             _distance(here, square.centre),
             walk_seconds(here, square.centre),
             built.get(square.id),
@@ -693,7 +708,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
     best = sorted(
         (square for square in squares if square.owner_id is None),
         key=lambda square: (
-            -footfall(world, square.centre),
+            -traffic.near(square.centre),
             square.price,
             _distance(here, square.centre),
         ),
@@ -701,16 +716,16 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
     return LandView(
         parcel_size=PARCEL_SIZE,
         grid=grid_size(world),
-        visitors_now=visitors(world.time),
         slot_capacity=AD_SLOT_CAPACITY,
         content_lasts=CONTENT_LIFETIME,
         pay_period=PAY_PERIOD,
+        sponsors=_sponsor_views(world),
         here=view(plot_at(world, here)) if standing else None,
         mine=tuple(
             MyParcelView(
                 square.id,
                 square.centre,
-                footfall(world, square.centre),
+                traffic.near(square.centre),
                 _distance(here, square.centre),
                 walk_seconds(here, square.centre),
                 built.get(square.id),
@@ -742,8 +757,8 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
 
 
 def _income(world: World, parcel: Parcel | None) -> int:
-    """Coins the ad slot on `parcel` is paid at its next payday as things stand, 0 without."""
-    return expected_income(world, parcel) if parcel is not None else 0
+    """Coins the ad slot on `parcel` was paid at the last payday with views, 0 without."""
+    return world.sponsors.last_paid_to(parcel.id) if parcel is not None else 0
 
 
 def _cut(world: World, parcel: Parcel | None, resident_id: str) -> int:
@@ -751,6 +766,20 @@ def _cut(world: World, parcel: Parcel | None, resident_id: str) -> int:
     if parcel is None:
         return 0
     return dict(split_income(parcel, _income(world, parcel))).get(resident_id, 0)
+
+
+def _sponsor_views(world: World) -> tuple[SponsorView, ...]:
+    book = world.sponsors
+    elapsed = world.time - book.topped_up_at
+    return tuple(
+        SponsorView(
+            sponsor.name,
+            sponsor.price,
+            sponsor.rate,
+            round(min(sponsor.funds + sponsor.rate * elapsed, sponsor.rate * BUDGET_CAP_SECONDS)),
+        )
+        for sponsor in book.sponsors
+    )
 
 
 def _goes_stale_in(world: World, parcel: Parcel | None) -> tuple[float, ...]:
@@ -924,7 +953,7 @@ def _share_offers(world: World, events: tuple[Event, ...]) -> tuple[ShareOfferVi
                 parcel=offer.parcel_id,
                 shares=offer.shares,
                 price=offer.price,
-                cut_per_payday=_income(world, parcel) * offer.shares // PARCEL_SHARES,
+                cut_last_payday=_income(world, parcel) * offer.shares // PARCEL_SHARES,
             )
         )
     return tuple(views)
@@ -945,7 +974,9 @@ def _transport_view(
             lines.append(
                 LineView(far.id, far.owner_id, plot(world, far.col, far.row).centre, line.toll)
             )
-        return PortalView(parcel.id, parcel.owner_id, centre, footfall(world, centre), tuple(lines))
+        return PortalView(
+            parcel.id, parcel.owner_id, centre, people_near(world, centre), tuple(lines)
+        )
 
     portals = [p for p in world.parcels if p.facility is not None and p.facility.kind == "portal"]
     town = town_centre(world.map.size)
@@ -1016,7 +1047,7 @@ def _joint_purchases(world: World, events: tuple[Event, ...]) -> tuple[JointPurc
                 to_id=event.recipient_id,
                 parcel=square.id,
                 centre=square.centre,
-                footfall=footfall(world, square.centre),
+                people_near=people_near(world, square.centre),
                 price=square.price,
                 from_pays=proposal.proposer_pays(world),
                 to_pays=proposal.partner_pays,

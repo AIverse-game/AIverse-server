@@ -5,6 +5,7 @@ Every match uses the same map and residents.
 
 from ..core.world import Position, Resident, World, WorldMap
 from ..economy.land import town_centre
+from ..economy.sponsors import default_sponsors
 from ..economy.visitors import new_crowd
 
 MAP_SIZE = 150.0
@@ -34,4 +35,9 @@ DEFAULT_RESIDENTS = (
 
 
 def create_default_world() -> World:
-    return World(map=WorldMap(size=MAP_SIZE), residents=DEFAULT_RESIDENTS, crowd=new_crowd())
+    return World(
+        map=WorldMap(size=MAP_SIZE),
+        residents=DEFAULT_RESIDENTS,
+        crowd=new_crowd(),
+        sponsors=default_sponsors(),
+    )

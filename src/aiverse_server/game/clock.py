@@ -1,7 +1,7 @@
 """Game time: what falls due as `World.time` moves on.
 
 Walks and compute jobs end at a set game time, subscribed nodes run out, visitors finish a
-walk or a stay, ad slots are paid at fixed times, contracts lapse at one and orders expire.
+walk or a stay, the sponsors pay at fixed times, contracts lapse at one and orders expire.
 The server's clock (`app.Game.tick`) moves `World.time` on as real time passes, calls
 `settle_due` to finish what has ended, and waits until `next_due` to look again; tests set the
 time themselves to skip ahead. Ending the game on time is the caller's part, see
@@ -11,10 +11,10 @@ time themselves to skip ahead. Ending the game on time is the caller's part, see
 from dataclasses import replace
 
 from ..core.world import World
-from ..economy.ads import next_payday, pay_visitors
 from ..economy.compute import expire_nodes, finish_jobs, next_compute_due
 from ..economy.contracts import expire_contracts, next_expiry
 from ..economy.exchange import expire_orders, next_order_expiry
+from ..economy.sponsors import next_payday, pay_sponsors
 from ..economy.visitors import advance_crowd, next_visit
 from ..residents.perception import record_activity
 from ..residents.walking import finish_walks, next_arrival
@@ -23,7 +23,7 @@ from ..residents.walking import finish_walks, next_arrival
 def settle_due(world: World) -> World:
     """Bring in the walkers who have arrived by `world.time`, logged for others nearby to
     notice, finish the compute jobs that are done, drop the nodes that ran out, move the
-    visitors on, pay the ad slots their visitors, end the contracts that have lapsed and
+    visitors on, pay the ad slots their views, end the contracts that have lapsed and
     withdraw the orders that have expired. Returns `world` itself when nothing is due."""
     target = world.time
     after = world
@@ -31,12 +31,12 @@ def settle_due(world: World) -> World:
         timed = replace(after, time=due)
         arrived = record_activity(timed, finish_walks(timed))
         built = expire_nodes(finish_jobs(arrived))
-        after = expire_orders(expire_contracts(pay_visitors(advance_crowd(built))))
+        after = expire_orders(expire_contracts(pay_sponsors(advance_crowd(built))))
     return world if after is world else replace(after, time=target)
 
 
 def next_due(world: World) -> float | None:
-    """Game time when the earliest walk, compute job or node, visitor's step, ad slot payment,
+    """Game time when the earliest walk, compute job or node, visitor's step, payday,
     contract or order expiry is due, or None when there is none."""
     due = (
         next_arrival(world),

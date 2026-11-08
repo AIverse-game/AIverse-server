@@ -45,7 +45,7 @@ from ..core.inventory import store_item, take_coins
 from ..core.land import Facility, FacilityKind, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
-from .ads import CONTENT_ITEM, GAME_ITEM, payday_after
+from .ads import CONTENT_ITEM, GAME_ITEM
 from .portals import MAX_PORTALS, portal_count
 
 SELF_RATE = 1.0
@@ -104,11 +104,12 @@ BUILD_JOB: dict[VenueKind, JobKind] = {
 }
 MAKE_JOB: dict[ContentKind, JobKind] = {"ad": "make_content", "game": "make_game"}
 BUILT_BY: dict[JobKind, FacilityKind] = {
+    "build_ad": "ad",
     "build_portal": "portal",
     "build_game_hall": "game_hall",
     "build_workspace": "workspace",
 }
-"""The facility each building job other than `build_ad` leaves."""
+"""The facility each building job leaves."""
 
 ON_DEMAND_PRICE = 3
 """Coins per unit of workload of a job on a node hired for it alone."""
@@ -334,10 +335,7 @@ def finish_jobs(world: World) -> World:
             item = CONTENT_ITEM if job.kind == "make_content" else GAME_ITEM
             world = store_item(world, job.owner_id, item)
             continue
-        if job.kind == "build_ad":
-            built = Facility("ad", world.time, (), payday_after(world.time))
-        else:
-            built = Facility(BUILT_BY[job.kind], world.time)
+        built = Facility(BUILT_BY[job.kind], world.time)
         parcels = tuple(
             replace(parcel, facility=built) if parcel.id == job.parcel_id else parcel
             for parcel in world.parcels

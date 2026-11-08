@@ -29,7 +29,7 @@ def me(game: Game, resident_id: str) -> Resident:
 
 def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_earn_from_an_ad_slot_on_it() -> None:
     """Plays a fast-forwarded game: each round every bot acts, then the clock jumps to the
-    next walk that ends."""
+    next thing that falls due, at least 2 seconds on."""
 
     async def scenario() -> None:
         clock = FakeClock()
@@ -40,7 +40,8 @@ def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_earn_from_an_ad_slot_on
                 if not me(game, resident_id).left:
                     await brain.take_turn(look(game, resident_id), ResidentTools(game, resident_id))
             due = next_due(game.world)
-            clock.now = min(due if due is not None else clock.now + 5, 600)
+            # The visitors' steps are due many times a second; the bots need not look at each.
+            clock.now = min(max(due if due is not None else clock.now + 5, clock.now + 2), 600)
             game.tick()
         owners = [parcel.owner_id for parcel in game.world.parcels]
         assert all(not resident.left for resident in game.world.residents)
@@ -49,10 +50,10 @@ def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_earn_from_an_ad_slot_on
         # Every parcel got its ad slot from its owner's own compute, which costs nothing.
         assert all(parcel.facility is not None for parcel in game.world.parcels)
         assert game.world.compute.jobs == ()
-        # They keep their slots stocked with content from their own compute, and visitors pay
+        # They keep their slots stocked with content from their own compute, and sponsors pay
         # for it: more than the land cost the owners.
         assert all(parcel.facility.contents for parcel in game.world.parcels if parcel.facility)
-        paid = sum(t.amount for t in game.world.ledger.transfers if t.channel == "visitors")
+        paid = sum(t.amount for t in game.world.ledger.transfers if t.channel == "sponsors")
         spent = sum(t.amount for t in game.world.ledger.transfers if t.channel == "land")
         assert spent > 0 and paid > 0
         for parcel in game.world.parcels:

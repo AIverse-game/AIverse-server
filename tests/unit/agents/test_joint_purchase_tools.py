@@ -9,7 +9,7 @@ from aiverse_server.agents.tool_selection import (
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.land import Parcel
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.footfall import footfall
+from aiverse_server.economy.visitors import people_near
 from aiverse_server.server.app import Game
 
 # A 10 x 10 grid of parcels, L5-3 costing 2540. a stands in it, b is far away, c is walking.
@@ -83,7 +83,7 @@ def test_the_observation_shows_the_proposal_to_both_and_counts_the_set_aside_coi
         1_000,
         40,
     )
-    assert offer.footfall == footfall(game.world, offer.centre)
+    assert offer.people_near == people_near(game.world, offer.centre)
     assert from_a.my_joint_purchases == to_b.joint_purchases_to_me
     assert (to_b.my_joint_purchases, from_a.joint_purchases_to_me) == ((), ())
     assert from_a.me.coins == 5_000 - 1_540 and from_a.me.coins_in_offers == 1_540

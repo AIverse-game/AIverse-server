@@ -5,9 +5,12 @@ import pytest
 from aiverse_server.core.inventory import coin_balance, store_item
 from aiverse_server.core.land import PARCEL_SHARES, Facility, Parcel
 from aiverse_server.core.ledger import SYSTEM
+from aiverse_server.core.sponsors import Sponsor, SponsorBook
+from aiverse_server.core.visitors import Crowd
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import CONTENT_ITEM, PAY_PERIOD, slot_income
+from aiverse_server.economy.ads import CONTENT_ITEM
 from aiverse_server.economy.shares import MAX_PENDING_PER_PAIR, split_income
+from aiverse_server.economy.sponsors import PAY_PERIOD
 from aiverse_server.game.actions import (
     ActionRejected,
     LeaveGame,
@@ -30,8 +33,8 @@ def held(world: World, parcel_id: str) -> dict[str, int]:
 
 
 # a bought L7-7, in the middle of the 150 map, and its ad slot shows two pieces of content that
-# stay fresh for the whole test, to be paid at the first payday; c has nothing to do with it.
-SLOT = Facility("ad", 0.0, (10_000.0, 10_001.0), PAY_PERIOD)
+# stay fresh for the whole test; c has nothing to do with it.
+SLOT = Facility("ad", 0.0, (10_000.0, 10_001.0))
 WORLD = store_item(
     World(
         map=WorldMap(size=150),
@@ -76,18 +79,22 @@ def test_income_is_split_by_shares_and_the_leftover_goes_to_the_biggest_fraction
     assert sum(part for _, part in split) == income
 
 
-def test_every_holder_is_paid_their_part_of_what_visitors_pay_the_slot() -> None:
+def test_every_holder_is_paid_their_part_of_what_the_sponsors_pay_the_slot() -> None:
     sold = perform(offer(WORLD, 40, 0), RespondToEvent("b", 1, True))
-    total = slot_income(replace(sold, time=PAY_PERIOD), sold.parcels[0])
+    sold = replace(
+        sold,
+        crowd=Crowd(views=(("L7-7", 5.0),)),
+        sponsors=SponsorBook((Sponsor(0, "s", 1.0, 1_000.0),)),
+    )
+    total = 5
 
     paid = settle_due(replace(sold, time=PAY_PERIOD))
 
     gains = {h: coin_balance(paid, h) - coin_balance(sold, h) for h in ("a", "b", "c")}
-    assert total >= 3
     assert gains["a"] + gains["b"] == total
     assert gains["b"] in (total * 40 // 100, total * 40 // 100 + 1)
     assert gains["c"] == 0
-    ledger = [t for t in paid.ledger.transfers if t.channel == "visitors"]
+    ledger = [t for t in paid.ledger.transfers if t.channel == "sponsors"]
     assert sorted((t.payer, t.payee, t.amount) for t in ledger) == [
         (SYSTEM, "a", gains["a"]),
         (SYSTEM, "b", gains["b"]),
@@ -97,6 +104,11 @@ def test_every_holder_is_paid_their_part_of_what_visitors_pay_the_slot() -> None
 def test_a_holder_who_has_left_the_game_is_still_paid() -> None:
     sold = perform(offer(WORLD, 40, 0), RespondToEvent("b", 1, True))
     gone = perform(sold, LeaveGame("b"))
+    gone = replace(
+        gone,
+        crowd=Crowd(views=(("L7-7", 5.0),)),
+        sponsors=SponsorBook((Sponsor(0, "s", 1.0, 1_000.0),)),
+    )
 
     paid = settle_due(replace(gone, time=PAY_PERIOD))
 

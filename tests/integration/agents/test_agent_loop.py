@@ -261,7 +261,7 @@ def test_the_loop_wakes_when_a_compute_job_finishes_even_while_walking() -> None
 
 def test_the_loop_wakes_when_a_content_job_finishes_and_not_when_the_content_is_placed() -> None:
     async def scenario() -> None:
-        world = replace(WORLD, parcels=(Parcel(5, 5, "a", Facility("ad", 0.0, (), 30.0)),))
+        world = replace(WORLD, parcels=(Parcel(5, 5, "a", Facility("ad", 0.0)),))
         game, clock = make_game(world)
         game.act(MakeContent("a", "on_demand"))
         brain = Recorder()
@@ -285,7 +285,7 @@ def test_the_loop_wakes_for_finished_content_even_after_other_content_went_stale
     async def scenario() -> None:
         # One piece shows until 3 s; the job finishes at 6 s, so the count of content falls and
         # rises again by the same amount.
-        slot = Facility("ad", 0.0, (3.0,), 30.0)
+        slot = Facility("ad", 0.0, (3.0,))
         game, clock = make_game(replace(WORLD, parcels=(Parcel(5, 5, "a", slot),)))
         game.act(MakeContent("a", "on_demand"))
         game.act(MoveTo("a", Position(90, 90)))

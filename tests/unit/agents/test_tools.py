@@ -171,7 +171,7 @@ def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -
     arguments = {
         "buyer_id": "b",
         "summary": "a cheap parcel",
-        "content": "parcel L9-9 near (95, 95) is cheap and busy",
+        "content": "the plot Zeta-9 near (95, 95) is cheap and busy",
         "price": 150,
     }
 
@@ -183,9 +183,9 @@ def test_selling_information_shows_the_buyer_only_the_summary_until_they_pay() -
     assert offered.ok and accepted.ok
     [offer] = before.information_offers_to_me
     assert (offer.from_id, offer.summary, offer.price) == ("a", "a cheap parcel", 150)
-    assert "L9-9" not in json.dumps(asdict(before))
+    assert "Zeta-9" not in json.dumps(asdict(before))
     assert me(game, "a").coins == 5150 and me(game, "b").coins == 4850
-    assert "L9-9" in me(game, "b").memory.long_term[0].text
+    assert "Zeta-9" in me(game, "b").memory.long_term[0].text
     assert me(game, "a").memory == WORLD.residents[0].memory
 
 
@@ -196,7 +196,7 @@ def test_the_seller_sees_their_own_information_offer_without_the_content() -> No
         {
             "buyer_id": "b",
             "summary": "a cheap parcel",
-            "content": "parcel L9-9 is cheap",
+            "content": "the plot Zeta-9 is cheap",
             "price": 150,
         },
     )
@@ -205,7 +205,7 @@ def test_the_seller_sees_their_own_information_offer_without_the_content() -> No
 
     [offer] = seen.my_information_offers
     assert (offer.to_id, offer.summary, offer.price) == ("b", "a cheap parcel", 150)
-    assert "L9-9" not in json.dumps(asdict(seen))
+    assert "Zeta-9" not in json.dumps(asdict(seen))
 
 
 @pytest.mark.parametrize(

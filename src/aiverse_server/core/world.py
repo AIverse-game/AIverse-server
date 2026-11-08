@@ -16,6 +16,7 @@ from .events import EventQueue
 from .land import Link, Parcel
 from .ledger import Ledger
 from .orders import OrderBook
+from .sponsors import SponsorBook
 from .visitors import Crowd
 
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
@@ -490,6 +491,8 @@ class World:
     crowd: Crowd = Crowd()
     """The scripted visitors walking the map and the views they have given the ad slots, see
     `visitors.py`."""
+    sponsors: SponsorBook = SponsorBook()
+    """Who pays for those views and what they were paid, see `sponsors.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -550,6 +553,9 @@ class World:
         for parcel_id, _ in self.crowd.views:
             if parcel_id not in owners:
                 raise ValueError(f"views of {parcel_id}, which nobody owns")
+        for parcel_id, _ in (*self.sponsors.settled, *self.sponsors.last_paid):
+            if parcel_id not in owners:
+                raise ValueError(f"sponsors dealt with {parcel_id}, which nobody owns")
         for node in self.compute.nodes:
             if node.owner_id not in ids or node.owner_id in left or self.ended:
                 raise ValueError(f"node {node.id} outlives its game or resident")

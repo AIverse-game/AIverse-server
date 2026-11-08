@@ -4,12 +4,12 @@ from dataclasses import replace
 
 from aiverse_server.agents.observation import observe
 from aiverse_server.core.land import Facility, Parcel
+from aiverse_server.core.sponsors import Sponsor, SponsorBook
 from aiverse_server.core.visitors import Crowd
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import PAY_PERIOD
 from aiverse_server.residents.perception import begin_turn
 
-SLOT = Facility("ad", 0.0, (500.0,), PAY_PERIOD)
+SLOT = Facility("ad", 0.0, (500.0,))
 WORLD = World(
     map=WorldMap(size=150),
     residents=(Resident("a", "甲", "#112233", Position(75, 75), coins=5_000),),
@@ -28,3 +28,15 @@ def test_a_resident_is_told_how_many_people_have_seen_each_of_their_slots() -> N
 
     assert seen_on(seen) == {"L7-7": 12.3, "L1-1": 0.0}
     assert seen_on(WORLD) == {"L7-7": 0.0, "L1-1": 0.0}
+
+
+def test_a_resident_is_told_who_pays_for_views_and_how_much_budget_each_has_now() -> None:
+    sponsors = SponsorBook((Sponsor(0, "甲方", 2.0, 1.5, funds=10.0),), topped_up_at=100.0)
+    world = replace(WORLD, sponsors=sponsors, time=120.0)
+
+    perception = begin_turn(world, "a")[1]
+    land = observe(world, "a", perception, 600).land
+
+    (view,) = land.sponsors
+    assert (view.name, view.price_per_view, view.budget_per_second) == ("甲方", 2.0, 1.5)
+    assert view.budget_now == 40  # 10 left and 20 s at 1.5

@@ -12,21 +12,17 @@ from aiverse_server.agents.tool_selection import (
 )
 from aiverse_server.agents.tools import TOOLS, ResidentTools
 from aiverse_server.core.land import AD_SLOT_CAPACITY, Facility, Parcel
+from aiverse_server.core.sponsors import Sponsor, SponsorBook
+from aiverse_server.core.visitors import Crowd
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import (
-    CONTENT_ITEM,
-    CONTENT_LIFETIME,
-    PAY_PER_FOOTFALL,
-    PAY_PERIOD,
-    payday_after,
-)
+from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME
 from aiverse_server.economy.compute import CONTENT_WORKLOAD, on_demand_cost
-from aiverse_server.economy.footfall import footfall
+from aiverse_server.economy.sponsors import PAY_PERIOD
 from aiverse_server.server.app import Game
 
 # a owns L7-7 with an ad slot at the middle of the 150 map and carries two pieces of content;
 # b owns nothing and carries none.
-SLOT = Facility("ad", 0.0, (), PAY_PERIOD)
+SLOT = Facility("ad", 0.0)
 WORLD = World(
     map=WorldMap(size=150),
     residents=(
@@ -100,21 +96,23 @@ def test_a_generative_node_cannot_render_and_a_missing_node_id_is_refused() -> N
     )
 
 
-def test_content_goes_into_the_slot_and_the_slot_is_paid_by_the_footfall() -> None:
+def test_content_goes_into_the_slot_and_the_slot_is_paid_for_the_views_it_gets() -> None:
     game, clock = make_game()
     tools = ResidentTools(game, "a")
 
     placed = tools.place_content("L7-7")
+    game.world = replace(
+        game.world,
+        crowd=Crowd(views=(("L7-7", 10.0),)),
+        sponsors=SponsorBook((Sponsor(0, "s", 2.0, 1_000.0),)),
+    )
     clock.now = PAY_PERIOD
     game.tick()
 
-    expected = round(
-        footfall(replace(game.world, time=PAY_PERIOD), Position(75, 75)) * PAY_PER_FOOTFALL
-    )
     assert (placed.ok, placed.message) == (True, "the ad slot on L7-7 now shows 1")
     assert game.world.residents[0].inventory.count(CONTENT_ITEM) == 1
-    assert game.world.residents[0].coins == 5_000 + expected
-    assert tools.status()["coins"] == 5_000 + expected
+    assert game.world.residents[0].coins == 5_000 + 20
+    assert tools.status()["coins"] == 5_000 + 20
 
 
 def test_placing_is_refused_for_a_foreign_bare_or_full_slot_or_without_content() -> None:
@@ -131,9 +129,7 @@ def test_placing_is_refused_for_a_foreign_bare_or_full_slot_or_without_content()
             replace(WORLD.residents[0], inventory=Inventory(((CONTENT_ITEM, 1),))),
             WORLD.residents[1],
         ),
-        parcels=(
-            Parcel(7, 7, "a", Facility("ad", 0.0, (CONTENT_LIFETIME,) * AD_SLOT_CAPACITY, 30.0)),
-        ),
+        parcels=(Parcel(7, 7, "a", Facility("ad", 0.0, (CONTENT_LIFETIME,) * AD_SLOT_CAPACITY)),),
     )
     full = ResidentTools(make_game(crowded)[0], "a").place_content("L7-7")
 
@@ -148,35 +144,26 @@ def test_placing_is_refused_for_a_foreign_bare_or_full_slot_or_without_content()
 def test_the_observation_shows_each_slots_content_and_income() -> None:
     game, clock = make_game()
     ResidentTools(game, "a").place_content("L7-7")
+    game.world = replace(
+        game.world,
+        crowd=Crowd(views=(("L7-7", 10.0),)),
+        sponsors=SponsorBook(last_paid=(("L7-7", 20),)),
+    )
     clock.now = 100.0
 
     seen = look(game, "a")
 
     slot = next(parcel for parcel in seen.land.mine if parcel.id == "L7-7")
     assert slot.content_goes_stale_in == (CONTENT_LIFETIME - 100.0,)
-    assert slot.income_per_payday == round(
-        footfall(game.world, Position(75, 75)) * PAY_PER_FOOTFALL
-    )
+    assert (slot.income_last_payday, slot.my_cut_last_payday, slot.people_seen) == (20, 20, 10.0)
     bare = next(parcel for parcel in seen.land.mine if parcel.id == "L1-1")
-    assert (bare.content_goes_stale_in, bare.income_per_payday) == ((), 0)
+    assert (bare.content_goes_stale_in, bare.income_last_payday) == ((), 0)
     assert (seen.land.slot_capacity, seen.land.content_lasts, seen.land.pay_period) == (
         AD_SLOT_CAPACITY,
         CONTENT_LIFETIME,
         PAY_PERIOD,
     )
     assert '"content":[{"source":"self"' in to_json(seen)
-
-
-def test_the_expected_income_leaves_out_content_gone_stale_before_the_payday() -> None:
-    game, clock = make_game()
-    ResidentTools(game, "a").place_content("L7-7")
-    clock.now = CONTENT_LIFETIME - 10.0
-
-    seen = look(game, "a")
-
-    slot = next(parcel for parcel in seen.land.mine if parcel.id == "L7-7")
-    assert slot.content_goes_stale_in == (10.0,)
-    assert slot.income_per_payday == 0
 
 
 def test_the_observation_lists_content_jobs_without_a_parcel() -> None:
@@ -192,18 +179,6 @@ def test_the_observation_lists_content_jobs_without_a_parcel() -> None:
         ("on_demand", 6.0),
         ("subscription", 6.0),
     ]
-
-
-def test_an_ad_slot_just_finished_is_paid_from_the_next_payday() -> None:
-    game, clock = make_game()
-    tools = ResidentTools(game, "a")
-    tools.build_ad("L1-1", "on_demand")
-    clock.now = 47.0
-
-    game.tick()
-
-    built = next(p.facility for p in game.world.parcels if p.id == "L1-1")
-    assert built is not None and built.next_pay_at == payday_after(12.0)
 
 
 def test_content_is_offered_to_anyone_and_placing_to_those_with_content_and_room() -> None:
@@ -222,7 +197,7 @@ def test_placing_is_not_offered_without_content_or_with_every_slot_full() -> Non
     stocked = World(
         WORLD.map,
         WORLD.residents,
-        parcels=(Parcel(7, 7, "a", Facility("ad", 0.0, (500.0,) * AD_SLOT_CAPACITY, 30.0)),),
+        parcels=(Parcel(7, 7, "a", Facility("ad", 0.0, (500.0,) * AD_SLOT_CAPACITY)),),
     )
 
     without = selected_tool_names(look(make_game(empty_handed)[0], "a"))

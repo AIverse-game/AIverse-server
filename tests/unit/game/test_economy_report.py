@@ -26,11 +26,11 @@ def resident(id: str, coins: int) -> Resident:
     return Resident(id, id.upper(), "#123456", Position(1, 1), coins=coins)
 
 
-# a earns from visitors, b buys posters and information from a, both buy land, c does nothing.
+# a earns from sponsors, b buys posters and information from a, both buy land, c does nothing.
 POSTER = "poster"
 
 TRANSFERS = (
-    Transfer(10, SYSTEM, "a", 600, "visitors"),
+    Transfer(10, SYSTEM, "a", 600, "sponsors"),
     Transfer(20, "b", "a", 300, "offer", POSTER, 20),
     Transfer(30, "b", "a", 100, "offer", POSTER, 5),
     Transfer(40, "b", "a", 30, "information"),
@@ -57,7 +57,7 @@ def test_channels_total_their_transfers_and_coins() -> None:
 
     assert {name: (t.transfers, t.coins) for name, t in channels.items()} == {
         "land": (2, 312),
-        "visitors": (1, 600),
+        "sponsors": (1, 600),
         "offer": (2, 400),
         "information": (1, 30),
     }
@@ -74,7 +74,7 @@ def test_prices_weigh_each_trade_by_its_quantity() -> None:
 def test_each_resident_has_income_and_spending_by_channel() -> None:
     a, b, c = economy_report(WORLD).residents
 
-    assert a.income == {"visitors": 600, "offer": 400, "information": 30}
+    assert a.income == {"sponsors": 600, "offer": 400, "information": 30}
     assert a.spending == {"land": 300}
     assert b.spending == {"land": 12, "offer": 400, "information": 30}
     assert a.income_concentration == pytest.approx((600**2 + 400**2 + 30**2) / 1030**2)

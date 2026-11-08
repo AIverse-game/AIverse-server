@@ -13,11 +13,14 @@ from aiverse_server.economy.visitors import (
     MIN_DWELL,
     MIN_STOPS,
     SEEN_FOR,
+    TRAFFIC_REACH,
     VISITOR_COUNT,
     VISITOR_SPEED,
+    Traffic,
     advance_crowd,
     new_crowd,
     next_visit,
+    people_near,
     visitor_position,
     visitor_weight,
 )
@@ -31,7 +34,7 @@ PORTAL = Facility("portal", 0.0)
 
 def slot(col: int, row: int, pieces: int = 1) -> Parcel:
     """An ad slot showing `pieces` pieces of content that stay fresh for a long while."""
-    return Parcel(col, row, "a", Facility("ad", 0.0, (CONTENT_LIFETIME * 10,) * pieces, 30.0))
+    return Parcel(col, row, "a", Facility("ad", 0.0, (CONTENT_LIFETIME * 10,) * pieces))
 
 
 def world_of(*parcels: Parcel, crowd: Crowd | None = None) -> World:
@@ -390,6 +393,29 @@ def test_the_default_world_has_a_crowd_that_has_not_come_in_yet() -> None:
     assert len(world.crowd.visitors) == VISITOR_COUNT
     assert all(v.phase == "away" for v in world.crowd.visitors)
     assert all(0 < v.until <= 120.0 for v in world.crowd.visitors)
+
+
+def test_the_people_passing_a_spot_are_the_visitors_on_the_map_within_reach() -> None:
+    near = visitor(id=0, phase="staying", until=99.0, at=Position(50, 50), target=Position(50, 50))
+    edge = replace(near, id=1, at=Position(50 + TRAFFIC_REACH, 50), target=Position(70, 50))
+    far = replace(near, id=2, at=Position(50 + TRAFFIC_REACH + 1, 50), target=Position(71, 50))
+    gone = visitor(id=3, until=99.0)
+    world = world_of(crowd=crowd_of(near, edge, far, gone))
+
+    assert people_near(world, Position(50, 50)) == 2.0
+    assert people_near(replace(world, time=1_200.0), Position(50, 50)) == 2 * 2.0
+
+
+def test_traffic_counts_visitors_in_the_next_square_over_and_answers_for_many_spots() -> None:
+    across = visitor(phase="staying", until=99.0, at=Position(39.9, 30), target=Position(39.9, 30))
+    world = world_of(crowd=crowd_of(across))
+
+    traffic = Traffic(world)
+
+    # The visitor lies in the square 20..40 and the spot in 40..60, 20.1 apart in x ...
+    assert traffic.near(Position(40.1, 30)) == 1.0
+    assert traffic.near(Position(60.5, 30)) == 0.0
+    assert traffic.near(Position(40.1, 30)) == people_near(world, Position(40.1, 30))
 
 
 def test_visitors_walk_as_fast_as_residents() -> None:

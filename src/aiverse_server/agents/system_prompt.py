@@ -6,13 +6,7 @@ the observation carries the current state and prices.
 
 from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
-from ..economy.ads import (
-    CONTENT_ITEM,
-    CONTENT_LIFETIME,
-    PAY_PER_FOOTFALL,
-    PAY_PERIOD,
-    SHARE_REACH,
-)
+from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -27,15 +21,9 @@ from ..economy.compute import (
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
-from ..economy.footfall import (
-    FOOTFALL_FLOOR,
-    FOOTFALL_REACH,
-    RESIDENT_FOOTFALL,
-    RESIDENT_REACH,
-    VISITOR_GROWTH_SECONDS,
-    VISITORS_AT_START,
-)
 from ..economy.land import LAND_PRICE_CENTRE, LAND_PRICE_EDGE, PARCEL_SIZE
+from ..economy.sponsors import PAY_PERIOD
+from ..economy.visitors import VISITOR_COUNT
 from ..game.layout import MAP_SIZE
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
@@ -64,7 +52,7 @@ def system_prompt(
 at game end. Only coins count; land and items are worth nothing at the end.
 
 The state of the world
-- Coins come into the world one way: visitors pay ad slots that show content, see below.
+- Coins come into the world one way: sponsors pay ad slots for the views they get, see below.
 Coins also change hands between residents, and leave you when you buy land or compute. Spend
 them only on something that can plausibly bring more back; spending nothing is allowed.
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Walking is a
@@ -89,10 +77,11 @@ coins on a hired node. It joins your items, and you may sell it on the exchange 
 and contract, or put it in an ad slot of your own with place_content.
 - An ad slot shows up to {AD_SLOT_CAPACITY} pieces of content, each for {CONTENT_LIFETIME:g}s
 from when you put it in, then it goes stale and is gone; keep supplying it. Every
-{PAY_PERIOD:g}s the town pays each slot showing content: the parcel's footfall, shared equally
-with other slots showing content within {SHARE_REACH:g} units, times the pieces shown, times
-{PAY_PER_FOOTFALL:g}. A slot showing nothing earns nothing. The land observation gives each of
-your slots' income at the next payday.
+{PAY_PERIOD:g}s the sponsors pay for the people who saw ad slots since the last payday: the
+land observation lists them with the price each pays per person and its budget, and when the
+budgets run short every slot is paid for the same share of its views. A slot showing nothing
+draws no visitors and earns nothing. Each of your slots shows the people who saw it, and what
+it was paid at the last payday.
 - The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
@@ -100,10 +89,10 @@ Only the buyer of a parcel builds on it and puts content in it, whoever holds it
 - To buy a parcel together, stand in it and joint_buy_parcel to a partner: they pay part of the
 price for a number of shares, you pay the rest at once and keep the other shares and the
 running of it. It is bought when they accept; if someone buys it first, withdraw.
-- Visitors come to the middle of the map: {VISITORS_AT_START:g} at the start, +{VISITORS_AT_START:g}
-per {VISITOR_GROWTH_SECONDS / 60:g} min, thinning to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g}
-units, plus {RESIDENT_FOOTFALL:g} for each resident standing within {RESIDENT_REACH:g}. The
-land observation shows each parcel's footfall.
+- {VISITOR_COUNT} scripted visitors come in at the middle of the map, go to ad slots showing
+content, more to ones with more pieces and nearer to them, fewer to crowded ones, then leave and
+come again; each stands for more people as the game goes on. Near a slot is enough to see it.
+The land observation shows how many people are passing each parcel now.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
 - build_venue builds a game hall (shows games, make_content content=game) or a workspace. Neither
 earns yet.

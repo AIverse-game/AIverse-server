@@ -31,7 +31,7 @@ WORLD = World(
         Parcel(0, 0, "a", facility=PORTAL),
         Parcel(9, 9, "a", facility=PORTAL),
         Parcel(5, 5, "a"),
-        Parcel(2, 7, "a", facility=Facility("ad", 0.0, (), 30.0)),
+        Parcel(2, 7, "a", facility=Facility("ad", 0.0)),
         Parcel(9, 0, "b", facility=PORTAL),
     ),
 )
@@ -164,7 +164,7 @@ def test_the_observation_lists_portals_lines_and_where_the_resident_stands() -> 
     assert [portal.parcel for portal in seen.others] == ["L9-0"]
 
 
-def test_a_line_does_not_change_the_footfall_the_observation_shows() -> None:
+def test_a_line_does_not_change_the_people_the_observation_counts_there_now() -> None:
     near = Parcel(5, 4, "b", facility=PORTAL)
     unlinked = replace(WORLD, parcels=(*WORLD.parcels, near))
     linked = replace(unlinked, links=(Link("L0-0", "L5-4", 5),))
@@ -173,7 +173,7 @@ def test_a_line_does_not_change_the_footfall_the_observation_shows() -> None:
     after = look(make_game(linked), "a").transport
 
     assert before is not None and after is not None
-    assert after.mine[0].footfall == before.mine[0].footfall
+    assert after.mine[0].people_near == before.mine[0].people_near
 
 
 def test_the_observation_has_no_portal_here_while_walking_or_in_an_ordinary_parcel() -> None:

@@ -6,9 +6,7 @@ from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import MAX_TOLL, Facility, Link, Parcel
 from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import pay_visitors
 from aiverse_server.economy.compute import PORTAL_WORKLOAD, SELF_RATE
-from aiverse_server.economy.footfall import footfall
 from aiverse_server.economy.portals import (
     MAX_LINKS_PER_PORTAL,
     MAX_PORTALS,
@@ -16,6 +14,7 @@ from aiverse_server.economy.portals import (
     effective_distance,
 )
 from aiverse_server.economy.shares import MAX_PENDING_PER_PAIR
+from aiverse_server.economy.sponsors import next_payday, pay_sponsors
 from aiverse_server.game.actions import (
     ActionRejected,
     BuildAd,
@@ -113,7 +112,8 @@ def test_a_portal_shows_no_content_and_is_never_paid() -> None:
         perform(world, PlaceContent("a", "L0-0"))
 
     assert raised.value.code == "no_content_facility"
-    assert pay_visitors(world) == world
+    assert pay_sponsors(world) == world
+    assert next_payday(world) is None
 
 
 def test_two_portals_of_one_resident_are_linked_at_once() -> None:
@@ -409,11 +409,10 @@ def test_a_line_never_makes_a_spot_farther_and_only_helps_next_to_a_portal() -> 
     assert effective_distance(linked, Position(95, 5)) == effective_distance(WORLD, Position(95, 5))
 
 
-def test_footfall_ignores_lines_since_visitors_are_not_simulated_yet() -> None:
+def test_a_line_shortens_the_effective_distance_of_a_spot_near_its_far_end() -> None:
     linked = link(WORLD, "L0-0", "L5-4")
-    spot = Position(5, 22)  # 17 from the resident in L0-0, so no resident adds to it
+    spot = Position(5, 22)
 
-    assert footfall(linked, spot) == footfall(WORLD, spot)
     assert effective_distance(linked, spot) < effective_distance(WORLD, spot)
 
 
@@ -440,11 +439,9 @@ def test_a_line_is_stored_with_its_ends_in_order_and_needs_two_different_parcels
         Link("L0-0", "L0-0", 3)
 
 
-def test_a_portal_cannot_hold_content_or_have_a_payday() -> None:
+def test_a_portal_cannot_hold_content() -> None:
     with pytest.raises(ValueError, match="shows no content"):
         Facility("portal", 0.0, (100.0,))
-    with pytest.raises(ValueError, match="never paid"):
-        Facility("portal", 0.0, (), 30.0)
 
 
 def test_a_line_cannot_be_proposed_to_a_resident_who_left() -> None:

@@ -17,9 +17,7 @@ Lines do two things.
 - `effective_distance` is how far a spot on the map is from the middle of it once the lines
   are counted: walk to a portal, take its lines for nothing, and walk on from the portal of
   the network that lies nearest the middle, or simply walk straight if that is shorter. Nothing
-  uses it. The placeholder footfall formula, see `footfall.py`, deliberately goes by the
-  straight distance, since it assumes where visitors go instead of simulating them and would
-  assume they take the lines.
+  uses it now that the visitors walk by `Router`; it is kept for the layout of the map.
 - `Router` gives the same for a walk from one spot to another: the shorter of walking straight
   and walking to the nearest portal of a network, coming out at once at the portal of it
   nearest the goal. The scripted visitors, see `visitors.py`, walk by it and take the lines

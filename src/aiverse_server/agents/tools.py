@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 from ..core.compute import JobSource, NodeKind
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
-from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM, PAY_PERIOD
+from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -47,6 +47,7 @@ from ..economy.compute import (
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
 from ..economy.portals import MAX_LINKS_PER_PORTAL, MAX_PORTALS, MIN_LINK_DISTANCE
+from ..economy.sponsors import PAY_PERIOD
 from ..game.actions import (
     Action,
     ActionRejected,
@@ -484,7 +485,7 @@ TOOLS = (
         f"node hired for it ({on_demand_cost(VENUE_WORKLOAD)} coins), or on one of your "
         "subscribed generative nodes. A game hall shows games (make_content with content "
         f"game, then place_content), up to {AD_SLOT_CAPACITY} for {CONTENT_LIFETIME:g} s each. "
-        "Neither venue earns anything yet: they wait for visitors who are not in the game.",
+        "Neither venue earns anything yet: visitors do not go to them.",
         BuildVenueArgs,
     ),
     ToolSpec(
@@ -493,8 +494,8 @@ TOOLS = (
         "the line is drawn at once; when the other belongs to someone else they are asked, and "
         "it is drawn if they accept. The portals must be at least "
         f"{MIN_LINK_DISTANCE:g} units apart and a portal ends at most {MAX_LINKS_PER_PORTAL} "
-        "lines. A line lets residents teleport between the two portals for the toll; it does "
-        "not change how many visitors pass any parcel.",
+        "lines. A line lets residents teleport between the two portals for the toll. Visitors "
+        "may also use it, free, when it shortens their walk to a slot.",
         LinkPortalsArgs,
     ),
     ToolSpec(
@@ -521,8 +522,8 @@ TOOLS = (
         f"Put one piece of {CONTENT_ITEM!r} you carry into the ad slot on one of your parcels, "
         f"or of {GAME_ITEM!r} into a game hall, from anywhere. A facility shows up to "
         f"{AD_SLOT_CAPACITY} pieces; each is shown for {CONTENT_LIFETIME:g} s from now and then "
-        f"goes stale. Every {PAY_PERIOD:g} s the town pays an ad slot by its footfall and the "
-        "pieces it shows; a game hall is not paid yet.",
+        f"goes stale. Every {PAY_PERIOD:g} s the sponsors pay an ad slot for the people who saw "
+        "it, and more pieces draw more visitors; a game hall is not paid yet.",
         PlaceContentArgs,
     ),
     ToolSpec(

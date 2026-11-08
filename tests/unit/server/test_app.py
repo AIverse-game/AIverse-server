@@ -5,9 +5,12 @@ import pytest
 
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.tools import ResidentTools
+from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.game.actions import ActionRejected, MoveTo
+from aiverse_server.game.clock import next_due
+from aiverse_server.game.layout import create_default_world
 from aiverse_server.game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from aiverse_server.server.app import Game, Outbox, create_app
 
@@ -270,3 +273,30 @@ def test_a_step_of_the_visitors_alone_is_not_broadcast_but_a_walk_arriving_is() 
     assert quiet
     assert watcher.state is not None
     assert me(game, "a").walking is None
+
+
+def coins_paid_by_sponsors(late: float) -> int:
+    """Plays 300 game seconds of the default world with three busy ad slots, the clock always
+    waking `late` seconds after the moment the game asked for."""
+    slot = Facility("ad", 0.0, (10_000.0,) * 3)
+    world = replace(
+        create_default_world(),
+        parcels=(Parcel(7, 7, "r1", slot), Parcel(7, 8, "r2", slot), Parcel(6, 6, "r3", slot)),
+    )
+    game, clock = make_game(world, duration=1_000)
+    while clock.now < 300.0:
+        due = next_due(game.world)
+        clock.now = min((due if due is not None else clock.now + 30.0) + late, 300.0)
+        game.tick()
+    return sum(t.amount for t in game.world.ledger.transfers if t.channel == "sponsors")
+
+
+def test_the_sponsors_are_paid_at_every_payday_however_late_the_clock_wakes() -> None:
+    on_time = coins_paid_by_sponsors(0.0)
+
+    slightly_late = coins_paid_by_sponsors(0.002)
+    late = coins_paid_by_sponsors(0.05)
+
+    assert on_time > 0
+    assert slightly_late > on_time * 0.9
+    assert late > on_time * 0.9
