@@ -139,7 +139,7 @@ def test_placing_is_refused_for_a_foreign_bare_or_full_slot_or_without_content()
 
     assert (foreign.code, bare.code, none.code, full.code) == (
         "not_your_parcel",
-        "no_ad_slot",
+        "no_content_facility",
         "not_your_parcel",
         "slot_full",
     )

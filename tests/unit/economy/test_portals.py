@@ -112,7 +112,7 @@ def test_a_portal_shows_no_content_and_is_never_paid() -> None:
     with pytest.raises(ActionRejected) as raised:
         perform(world, PlaceContent("a", "L0-0"))
 
-    assert raised.value.code == "no_ad_slot"
+    assert raised.value.code == "no_content_facility"
     assert pay_visitors(world) == world
 
 
@@ -441,7 +441,7 @@ def test_a_line_is_stored_with_its_ends_in_order_and_needs_two_different_parcels
 
 
 def test_a_portal_cannot_hold_content_or_have_a_payday() -> None:
-    with pytest.raises(ValueError, match="never paid"):
+    with pytest.raises(ValueError, match="shows no content"):
         Facility("portal", 0.0, (100.0,))
     with pytest.raises(ValueError, match="never paid"):
         Facility("portal", 0.0, (), 30.0)

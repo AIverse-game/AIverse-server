@@ -28,10 +28,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 from ..core.compute import JobSource, NodeKind
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
-from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, PAY_PERIOD
+from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM, PAY_PERIOD
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
+    GAME_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
@@ -39,6 +40,7 @@ from ..economy.compute import (
     PORTAL_WORKLOAD,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
+    VENUE_WORKLOAD,
     job_seconds,
     on_demand_cost,
 )
@@ -50,6 +52,7 @@ from ..game.actions import (
     ActionRejected,
     BuildAd,
     BuildPortal,
+    BuildVenue,
     BuyNode,
     BuyParcel,
     CancelContract,
@@ -116,8 +119,8 @@ class JointBuyParcelArgs(_Args):
 class BuyNodeArgs(_Args):
     kind: Literal["generative", "render"] = Field(
         default="generative",
-        description="generative: builds facilities (build_ad, build_portal); render: makes content "
-        "(make_content).",
+        description="generative: builds facilities (build_ad, build_portal, build_venue); render: "
+        "makes content (make_content).",
     )
     seconds: StrictInt = Field(
         description=f"How long the subscription lasts, {NODE_SECONDS[0]} to {NODE_SECONDS[1]} "
@@ -151,6 +154,20 @@ class BuildPortalArgs(_Args):
     )
 
 
+class BuildVenueArgs(_Args):
+    kind: Literal["game_hall", "workspace"] = Field(description="Which venue to build.")
+    parcel_id: str = Field(description="id of one of your parcels with no facility and no job.")
+    source: Literal["self", "on_demand", "subscription"] = Field(
+        description="self: your own compute, free; on_demand: a node hired for this job, "
+        "paid now; subscription: one of your generative nodes, named in node_id."
+    )
+    node_id: StrictInt | None = Field(
+        default=None,
+        description="id of one of your idle generative nodes in compute.my_nodes; only with "
+        "source subscription.",
+    )
+
+
 class LinkPortalsArgs(_Args):
     parcel_id: str = Field(description="id of one of your parcels with a portal.")
     other_parcel_id: str = Field(
@@ -170,6 +187,11 @@ class TeleportArgs(_Args):
 
 
 class MakeContentArgs(_Args):
+    content: Literal["ad", "game"] = Field(
+        default="ad",
+        description=f"ad: a piece of {CONTENT_ITEM!r} for an ad slot; game: a piece of "
+        f"{GAME_ITEM!r} for a game hall.",
+    )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
         "paid now; subscription: one of your render nodes, named in node_id."
@@ -182,7 +204,9 @@ class MakeContentArgs(_Args):
 
 
 class PlaceContentArgs(_Args):
-    parcel_id: str = Field(description="id of one of your parcels with an ad slot.")
+    parcel_id: str = Field(
+        description="id of one of your parcels with an ad slot, or a game hall for games."
+    )
 
 
 class SayArgs(_Args):
@@ -419,7 +443,7 @@ TOOLS = (
     ToolSpec(
         "buy_node",
         "Subscribe to a compute node for a stretch of time, from anywhere, even while walking. "
-        "A generative node builds ad slots and portals (build_ad, build_portal), a render "
+        "A generative node builds facilities (build_ad, build_portal, build_venue), a render "
         "node makes content (make_content). It is yours until it runs out and does one job at "
         "a time at "
         f"{NODE_RATE:g} workload per second, {NODE_RATE / SELF_RATE:g} times your own compute; "
@@ -452,6 +476,18 @@ TOOLS = (
         BuildPortalArgs,
     ),
     ToolSpec(
+        "build_venue",
+        "Start building a game hall or a workspace on one of your parcels, from anywhere, even "
+        "while walking; it appears when the job ends. It takes "
+        f"{VENUE_WORKLOAD:g} workload: {job_seconds(VENUE_WORKLOAD, 'self'):g} s on your own "
+        f"compute (free, one job at a time), {job_seconds(VENUE_WORKLOAD, 'on_demand'):g} s on a "
+        f"node hired for it ({on_demand_cost(VENUE_WORKLOAD)} coins), or on one of your "
+        "subscribed generative nodes. A game hall shows games (make_content with content "
+        f"game, then place_content), up to {AD_SLOT_CAPACITY} for {CONTENT_LIFETIME:g} s each. "
+        "Neither venue earns anything yet: they wait for visitors who are not in the game.",
+        BuildVenueArgs,
+    ),
+    ToolSpec(
         "link_portals",
         "Join one of your portals to another with a line, from anywhere. When both are yours "
         "the line is drawn at once; when the other belongs to someone else they are asked, and "
@@ -470,21 +506,23 @@ TOOLS = (
     ),
     ToolSpec(
         "make_content",
-        "Render one piece of ad content, from anywhere, even while walking; it joins the items "
-        "you carry when the job ends, and you may sell it or put it in an ad slot. It takes "
-        f"{CONTENT_WORKLOAD:g} workload: {job_seconds(CONTENT_WORKLOAD, 'self'):g} s on your own "
-        f"compute (free, one job at a time), {job_seconds(CONTENT_WORKLOAD, 'on_demand'):g} s on "
-        f"a node hired for it ({on_demand_cost(CONTENT_WORKLOAD)} coins), or on one of your "
-        "subscribed render nodes. Content is the item "
-        f"{CONTENT_ITEM!r}.",
+        "Render one piece of content, from anywhere, even while walking; it joins the items "
+        "you carry when the job ends, and you may sell it or put it in a matching facility of "
+        f"yours. An ad ({CONTENT_ITEM!r}, for an ad slot) takes {CONTENT_WORKLOAD:g} workload: "
+        f"{job_seconds(CONTENT_WORKLOAD, 'self'):g} s on your own compute (free, one job at a "
+        f"time), {job_seconds(CONTENT_WORKLOAD, 'on_demand'):g} s on a node hired for it "
+        f"({on_demand_cost(CONTENT_WORKLOAD)} coins), or on one of your subscribed render nodes. "
+        f"A game ({GAME_ITEM!r}, for a game hall) takes {GAME_WORKLOAD:g}: "
+        f"{job_seconds(GAME_WORKLOAD, 'self'):g} s, {on_demand_cost(GAME_WORKLOAD)} coins hired.",
         MakeContentArgs,
     ),
     ToolSpec(
         "place_content",
         f"Put one piece of {CONTENT_ITEM!r} you carry into the ad slot on one of your parcels, "
-        f"from anywhere. A slot shows up to {AD_SLOT_CAPACITY} pieces; each is shown for "
-        f"{CONTENT_LIFETIME:g} s from now and then goes stale. Every {PAY_PERIOD:g} s the town "
-        "pays the slot by its footfall and the pieces it shows.",
+        f"or of {GAME_ITEM!r} into a game hall, from anywhere. A facility shows up to "
+        f"{AD_SLOT_CAPACITY} pieces; each is shown for {CONTENT_LIFETIME:g} s from now and then "
+        f"goes stale. Every {PAY_PERIOD:g} s the town pays an ad slot by its footfall and the "
+        "pieces it shows; a game hall is not paid yet.",
         PlaceContentArgs,
     ),
     ToolSpec(
@@ -652,6 +690,18 @@ class ResidentTools:
             arguments["node_id"] = node_id
         return self.call("build_portal", arguments)
 
+    def build_venue(
+        self,
+        parcel_id: str,
+        kind: Literal["game_hall", "workspace"],
+        source: JobSource,
+        node_id: int | None = None,
+    ) -> ToolResult:
+        arguments: dict[str, Any] = {"parcel_id": parcel_id, "kind": kind, "source": source}
+        if node_id is not None:
+            arguments["node_id"] = node_id
+        return self.call("build_venue", arguments)
+
     def link_portals(self, parcel_id: str, other_parcel_id: str, toll: int) -> ToolResult:
         arguments = {"parcel_id": parcel_id, "other_parcel_id": other_parcel_id, "toll": toll}
         return self.call("link_portals", arguments)
@@ -659,8 +709,13 @@ class ResidentTools:
     def teleport(self, to_parcel_id: str) -> ToolResult:
         return self.call("teleport", {"to_parcel_id": to_parcel_id})
 
-    def make_content(self, source: JobSource, node_id: int | None = None) -> ToolResult:
-        arguments: dict[str, Any] = {"source": source}
+    def make_content(
+        self,
+        source: JobSource,
+        node_id: int | None = None,
+        content: Literal["ad", "game"] = "ad",
+    ) -> ToolResult:
+        arguments: dict[str, Any] = {"source": source, "content": content}
         if node_id is not None:
             arguments["node_id"] = node_id
         return self.call("make_content", arguments)
@@ -755,6 +810,12 @@ class ResidentTools:
                 job = self.game.world.compute.jobs[-1]
                 seconds = job.ends_at - job.started_at
                 return f"job {job.id}: portal on {job.parcel_id} ready in {seconds:g} s"
+            case BuildVenueArgs():
+                act(BuildVenue(me, args.parcel_id, args.kind, args.source, args.node_id))
+                job = self.game.world.compute.jobs[-1]
+                seconds = job.ends_at - job.started_at
+                name = args.kind.replace("_", " ")
+                return f"job {job.id}: {name} on {job.parcel_id} ready in {seconds:g} s"
             case LinkPortalsArgs():
                 lines = len(self.game.world.links)
                 act(LinkPortals(me, args.parcel_id, args.other_parcel_id, args.toll))
@@ -765,15 +826,18 @@ class ResidentTools:
                 act(Teleport(me, args.to_parcel_id))
                 return f"arrived at {args.to_parcel_id}"
             case MakeContentArgs():
-                act(MakeContent(me, args.source, args.node_id))
+                act(MakeContent(me, args.source, args.node_id, args.content))
                 job = self.game.world.compute.jobs[-1]
                 seconds = job.ends_at - job.started_at
-                return f"job {job.id}: a piece of content ready in {seconds:g} s"
+                what = "a piece of content" if args.content == "ad" else "a game"
+                return f"job {job.id}: {what} ready in {seconds:g} s"
             case PlaceContentArgs():
                 act(PlaceContent(me, args.parcel_id))
                 parcel = next(p for p in self.game.world.parcels if p.id == args.parcel_id)
                 shown = len(parcel.facility.contents) if parcel.facility else 0
-                return f"the ad slot on {args.parcel_id} now shows {shown}"
+                hall = parcel.facility is not None and parcel.facility.kind == "game_hall"
+                where = "game hall" if hall else "ad slot"
+                return f"the {where} on {args.parcel_id} now shows {shown}"
             case SayArgs():
                 act(Say(me, args.text, args.to))
             case OfferToBuyArgs():

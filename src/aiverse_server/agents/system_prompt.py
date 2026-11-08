@@ -82,13 +82,11 @@ generative node builds ad slots, a render node makes content. You may hold {MAX_
 job still running when its node runs out carries on at your own speed.
 - build_ad starts an ad slot on a parcel of yours from anywhere. It is {AD_WORKLOAD:g} workload:
 {own_s:g}s on your own compute, {hired_s:g}s and {hired_coins} coins on a hired node. You need not
-stay: walk, talk and trade meanwhile, and it appears when the job ends. The compute
-observation lists your jobs and nodes.
+stay: walk, talk and trade meanwhile, and it appears when the job ends.
 - make_content renders one piece of content, the item {CONTENT_ITEM!r}, for {CONTENT_WORKLOAD:g}
 workload: {content_own_s:g}s on your own compute, {content_hired_s:g}s and {content_hired_coins}
 coins on a hired node. It joins your items, and you may sell it on the exchange or by offer
-and contract, or put it in an ad slot of your own with place_content. You need no land to make
-and sell it.
+and contract, or put it in an ad slot of your own with place_content.
 - An ad slot shows up to {AD_SLOT_CAPACITY} pieces of content, each for {CONTENT_LIFETIME:g}s
 from when you put it in, then it goes stale and is gone; keep supplying it. Every
 {PAY_PERIOD:g}s the town pays each slot showing content: the parcel's footfall, shared equally
@@ -98,8 +96,7 @@ your slots' income at the next payday.
 - The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
-Only the buyer of a parcel builds on it and puts content in it, whoever holds its shares. Land
-stakes lists parcels of others you hold shares of.
+Only the buyer of a parcel builds on it and puts content in it, whoever holds its shares.
 - To buy a parcel together, stand in it and joint_buy_parcel to a partner: they pay part of the
 price for a number of shares, you pay the rest at once and keep the other shares and the
 running of it. It is bought when they accept; if someone buys it first, withdraw.
@@ -108,6 +105,8 @@ per {VISITOR_GROWTH_SECONDS / 60:g} min, thinning to {FOOTFALL_FLOOR:.0%} at {FO
 units, plus {RESIDENT_FOOTFALL:g} for each resident standing within {RESIDENT_REACH:g}. The
 land observation shows each parcel's footfall.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
+- build_venue builds a game hall (shows games, make_content content=game) or a workspace. Neither
+earns yet.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units or privately to one resident anywhere; at most

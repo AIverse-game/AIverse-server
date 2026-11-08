@@ -109,7 +109,7 @@ def test_a_slot_shows_only_so_much_and_stale_content_makes_room() -> None:
         (PlaceContent("a", "L9-9"), "not_your_parcel"),
         (PlaceContent("nobody", "L7-7"), "unknown_resident"),
         (PlaceContent("a", "L1-0"), "not_your_parcel"),
-        (PlaceContent("b", "L1-0"), "no_ad_slot"),
+        (PlaceContent("b", "L1-0"), "no_content_facility"),
         (PlaceContent("b", "L7-8"), "not_enough_items"),
     ],
 )

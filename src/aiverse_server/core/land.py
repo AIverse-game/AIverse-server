@@ -5,20 +5,24 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-FacilityKind = Literal["ad", "portal"]
-"""What a facility is: an ad slot, which earns from the content it shows, or a portal, which
-earns nothing itself but joins parcels into a transport network, see `economy/portals.py`.
-Other kinds come with the designs that need them, see the client repository's
-docs/design/facilities.md."""
+FacilityKind = Literal["ad", "portal", "game_hall", "workspace"]
+"""What a facility is: an ad slot, which earns from the content it shows; a portal, which
+earns nothing itself but joins parcels into a transport network, see `economy/portals.py`; or
+a game hall or a workspace, venues for the visitors of a later design that earn nothing yet,
+see `economy/ads.py`. Other kinds come with the designs that need them, see the client
+repository's docs/design/facilities.md."""
 
-FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal")
+FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal", "game_hall", "workspace")
+
+CONTENT_KINDS: tuple[FacilityKind, ...] = ("ad", "game_hall")
+"""The facilities that show content: an ad slot shows ads, a game hall games."""
 
 MAX_TOLL = 1_000
 """Most coins one trip through a link may cost."""
 
 
 AD_SLOT_CAPACITY = 5
-"""Pieces of content an ad slot shows at once."""
+"""Pieces of content an ad slot, or a game hall, shows at once."""
 
 PARCEL_SHARES = 100
 """Shares every parcel is cut into. Its facility's income is paid to the holders in proportion
@@ -32,16 +36,19 @@ class Facility:
     """Game time it was finished, see `World.time`."""
     contents: tuple[float, ...] = ()
     """The content shown in it, as the game times when each piece goes stale, soonest first;
-    pieces that have gone stale may linger until the facility is next paid, see
+    pieces that have gone stale may linger until the facility is next paid or stocked, see
     `economy/ads.py`."""
     next_pay_at: float = 0.0
-    """Game time the town next pays it for the content it shows, see `economy/ads.py`."""
+    """Game time the town next pays it for the content it shows, see `economy/ads.py`; only ad
+    slots are paid."""
 
     def __post_init__(self) -> None:
         if self.kind not in FACILITY_KINDS:
             raise ValueError(f"unknown facility kind {self.kind!r}")
-        if self.kind != "ad" and (self.contents or self.next_pay_at):
-            raise ValueError(f"a {self.kind} shows no content and is never paid for it")
+        if self.kind not in CONTENT_KINDS and self.contents:
+            raise ValueError(f"a {self.kind} shows no content")
+        if self.kind != "ad" and self.next_pay_at:
+            raise ValueError(f"a {self.kind} is never paid for what it shows")
         if not math.isfinite(self.built_at) or self.built_at < 0:
             raise ValueError(f"facility built at {self.built_at!r}")
         if len(self.contents) > AD_SLOT_CAPACITY:

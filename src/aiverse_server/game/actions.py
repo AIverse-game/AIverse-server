@@ -30,9 +30,12 @@ from ..economy.ads import AdsError, AdsErrorCode, place_content
 from ..economy.compute import (
     ComputeError,
     ComputeErrorCode,
+    ContentKind,
+    VenueKind,
     buy_node,
     start_build_ad,
     start_build_portal,
+    start_build_venue,
     start_make_content,
 )
 from ..economy.contracts import (
@@ -288,6 +291,19 @@ class BuildPortal:
 
 
 @dataclass(frozen=True)
+class BuildVenue:
+    """Start building a game hall or a workspace, `kind`, on the resident's own bare parcel
+    `parcel_id`, on the same sources as `BuildAd`, see `compute.py`. It appears when the job
+    ends."""
+
+    resident_id: str
+    parcel_id: str
+    kind: VenueKind
+    source: JobSource
+    node_id: int | None = None
+
+
+@dataclass(frozen=True)
 class LinkPortals:
     """Join the resident's portal on `parcel_id` to the portal on `other_parcel_id` with a
     line costing `toll` per trip, from anywhere, see `portals.py`. When both portals are the
@@ -319,12 +335,14 @@ class MakeContent:
     resident_id: str
     source: JobSource
     node_id: int | None = None
+    content: ContentKind = "ad"
+    """An ad for an ad slot, or a game for a game hall."""
 
 
 @dataclass(frozen=True)
 class PlaceContent:
-    """Put one piece of content they carry into the ad slot on the resident's own parcel
-    `parcel_id`, from anywhere, see `ads.py`."""
+    """Put one piece of content they carry into the ad slot or game hall on the resident's own
+    parcel `parcel_id`, from anywhere, see `ads.py`."""
 
     resident_id: str
     parcel_id: str
@@ -381,6 +399,7 @@ Action = (
     | BuyNode
     | BuildAd
     | BuildPortal
+    | BuildVenue
     | LinkPortals
     | Teleport
     | MakeContent
@@ -402,6 +421,7 @@ def perform(world: World, action: Action) -> World:
             | BuyNode
             | BuildAd
             | BuildPortal
+            | BuildVenue
             | LinkPortals
             | MakeContent
             | PlaceContent,
@@ -480,6 +500,18 @@ def _carry_out(world: World, action: Action) -> World:
                 )
             except (ComputeError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
+        case BuildVenue():
+            try:
+                return start_build_venue(
+                    world,
+                    action.resident_id,
+                    action.parcel_id,
+                    action.kind,
+                    action.source,
+                    action.node_id,
+                )
+            except (ComputeError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
         case LinkPortals():
             return _link_portals(world, action)
         case Teleport():
@@ -489,7 +521,9 @@ def _carry_out(world: World, action: Action) -> World:
                 raise ActionRejected(error.code, error.message) from error
         case MakeContent():
             try:
-                return start_make_content(world, action.resident_id, action.source, action.node_id)
+                return start_make_content(
+                    world, action.resident_id, action.source, action.node_id, action.content
+                )
             except (ComputeError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
         case PlaceContent():

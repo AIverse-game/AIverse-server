@@ -1,10 +1,16 @@
-"""Ad slots: the content shown in them and what visitors pay for it.
+"""Ad slots and game halls: the content shown in them and what visitors pay for it.
 
-Content is an item, `CONTENT_ITEM`, made by render jobs, see `compute.py`, and carried,
-traded and sold like any other. A resident puts a piece into an ad slot on their own parcel,
-`place_content`, where it is shown for `CONTENT_LIFETIME` game seconds and then goes stale;
-the clock starts when it is put in, so a piece in hand never spoils. A slot shows at most
-`AD_SLOT_CAPACITY` pieces at once.
+Content is an item made by render jobs, see `compute.py`, and carried, traded and sold like
+any other. Each facility that shows content takes its own kind: `CONTENT_ITEM` for ad slots,
+`GAME_ITEM` for game halls, see `ITEM_FOR`. A resident puts a piece into the matching
+facility on their own parcel, `place_content`, where it is shown for `CONTENT_LIFETIME` game
+seconds and then goes stale; the clock starts when it is put in, so a piece in hand never
+spoils. A facility shows at most `AD_SLOT_CAPACITY` pieces at once.
+
+A game hall shows games but earns nothing yet: visitors, who would pay it, come with a later
+design, see the client repository's docs/design/facilities.md. A workspace shows nothing and
+earns nothing either, see `compute.py`; both are only built for now. The rest of this module,
+payment and footfall sharing, is about ad slots alone.
 
 Every `PAY_PERIOD` game seconds, at multiples of it, the town pays each slot showing content,
 `pay_visitors`: the footfall at the slot, see `footfall.py`, shared with the other slots
@@ -22,7 +28,7 @@ from dataclasses import replace
 from typing import Literal
 
 from ..core.inventory import add_coins, take_item
-from ..core.land import AD_SLOT_CAPACITY, Facility, Parcel
+from ..core.land import AD_SLOT_CAPACITY, Facility, FacilityKind, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
 from .footfall import footfall
@@ -31,6 +37,12 @@ from .shares import split_income
 
 CONTENT_ITEM = "ad_content"
 """The item kind of content for an ad slot."""
+
+GAME_ITEM = "game_content"
+"""The item kind of a game, the content for a game hall."""
+
+ITEM_FOR: dict[FacilityKind, str] = {"ad": CONTENT_ITEM, "game_hall": GAME_ITEM}
+"""The item kind each facility that shows content takes."""
 
 CONTENT_LIFETIME = 300.0
 """Game seconds a piece of content is shown for once it is put in a slot."""
@@ -46,7 +58,7 @@ SHARE_REACH = 20.0
 parcels are 10 apart, so a slot shares with the neighbours around it and with those a parcel
 further along a row or column, but not with the ones a knight's move away."""
 
-AdsErrorCode = Literal["unknown_resident", "not_your_parcel", "no_ad_slot", "slot_full"]
+AdsErrorCode = Literal["unknown_resident", "not_your_parcel", "no_content_facility", "slot_full"]
 
 
 class AdsError(Exception):
@@ -62,22 +74,30 @@ def shown(facility: Facility, time: float) -> int:
 
 
 def place_content(world: World, resident_id: str, parcel_id: str) -> World:
-    """Put one piece of the resident's content into the ad slot on their parcel `parcel_id`,
-    from anywhere. `InventoryError` when they carry none."""
+    """Put one piece of the resident's content into the ad slot or game hall on their parcel
+    `parcel_id`, from anywhere: the kind of content the facility takes, see `ITEM_FOR`.
+    `InventoryError` when they carry none."""
     if not any(resident.id == resident_id for resident in world.residents):
         raise AdsError("unknown_resident", f"no resident with id {resident_id!r}")
     parcel = next((p for p in world.parcels if p.id == parcel_id), None)
     if parcel is None or parcel.owner_id != resident_id:
         raise AdsError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     facility = parcel.facility
-    if facility is None or facility.kind != "ad":
-        raise AdsError("no_ad_slot", f"parcel {parcel_id} has no ad slot")
+    if facility is None or facility.kind not in ITEM_FOR:
+        raise AdsError(
+            "no_content_facility", f"parcel {parcel_id} has no ad slot or game hall to show it"
+        )
     fresh = tuple(stale_at for stale_at in facility.contents if stale_at > world.time)
     if len(fresh) >= AD_SLOT_CAPACITY:
-        raise AdsError("slot_full", f"the ad slot on {parcel_id} already shows {len(fresh)}")
-    world = take_item(world, resident_id, CONTENT_ITEM)
+        raise AdsError(
+            "slot_full", f"the {facility.kind} on {parcel_id} already shows {len(fresh)}"
+        )
+    world = take_item(world, resident_id, ITEM_FOR[facility.kind])
     # A slot that showed nothing was not being paid, so it starts again from the next payday.
-    next_pay_at = facility.next_pay_at if fresh else payday_after(world.time)
+    # A game hall is not paid at all.
+    next_pay_at = facility.next_pay_at
+    if facility.kind == "ad" and not fresh:
+        next_pay_at = payday_after(world.time)
     stocked = replace(
         facility, contents=(*fresh, world.time + CONTENT_LIFETIME), next_pay_at=next_pay_at
     )
@@ -141,6 +161,7 @@ def next_payday(world: World) -> float | None:
         parcel.facility.next_pay_at
         for parcel in world.parcels
         if parcel.facility is not None
+        and parcel.facility.kind == "ad"
         and any(stale_at > parcel.facility.next_pay_at for stale_at in parcel.facility.contents)
     ]
     return min(paydays, default=None)
@@ -161,7 +182,9 @@ def _slots(world: World) -> list[Parcel]:
     return [
         parcel
         for parcel in world.parcels
-        if parcel.facility is not None and shown(parcel.facility, world.time) > 0
+        if parcel.facility is not None
+        and parcel.facility.kind == "ad"
+        and shown(parcel.facility, world.time) > 0
     ]
 
 

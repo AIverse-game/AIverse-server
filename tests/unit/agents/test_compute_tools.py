@@ -289,10 +289,10 @@ def test_the_last_request_offers_compute_by_the_live_world() -> None:
     assert "build_ad" in poor and "buy_node" not in poor
 
 
-def test_discovering_the_compute_group_reveals_both_tools() -> None:
+def test_discovering_the_compute_group_reveals_its_tools() -> None:
     names: set[str] = set()
 
     reply = discover_tools({"group": "compute"}, names)
 
-    assert names == set(TOOL_GROUPS["compute"]) == {"buy_node", "build_ad"}
+    assert names == set(TOOL_GROUPS["compute"]) == {"buy_node", "build_ad", "build_venue"}
     assert '"ok":true' in reply

@@ -20,10 +20,10 @@ from ..core.inventory import add_coins, store_item, take_coins, take_item
 from ..core.ledger import record_transfer
 from ..core.orders import FILL_LIMIT, Fill, Order, OrderBook, Side
 from ..core.world import Resident, World
-from .ads import CONTENT_ITEM
+from .ads import CONTENT_ITEM, GAME_ITEM
 
-EXCHANGE_ITEMS: tuple[str, ...] = (CONTENT_ITEM,)
-"""Items with an order book: content for ad slots, so far."""
+EXCHANGE_ITEMS: tuple[str, ...] = (CONTENT_ITEM, GAME_ITEM)
+"""Items with an order book: content for ad slots, and games for game halls."""
 
 MAX_ORDERS = 8
 """Resting orders one resident may have at a time; with that many, only an order that fills

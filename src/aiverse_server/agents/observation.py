@@ -27,10 +27,12 @@ from ..economy.ads import CONTENT_LIFETIME, PAY_PERIOD, expected_income
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
+    GAME_WORKLOAD,
     MAX_NODES,
     NODE_SECONDS,
     PORTAL_WORKLOAD,
     SUBSCRIPTION_PRICE,
+    VENUE_WORKLOAD,
     job_seconds,
     on_demand_cost,
 )
@@ -164,7 +166,7 @@ class ParcelView:
     building_ends_in: float | None = None
     """Seconds until the resident's own job on it finishes; None without one."""
     content: int = 0
-    """Pieces of content its ad slot shows now."""
+    """Pieces of content its ad slot or game hall shows now."""
 
 
 @dataclass(frozen=True)
@@ -179,7 +181,8 @@ class MyParcelView:
     building_ends_in: float | None = None
     """Seconds until the job building on it finishes; None without one."""
     content_goes_stale_in: tuple[float, ...] = ()
-    """Seconds until each piece of content its ad slot shows goes stale, soonest first."""
+    """Seconds until each piece of content its ad slot or game hall shows goes stale, soonest
+    first."""
     income_per_payday: int = 0
     """Coins its ad slot would be paid at the next payday as things stand: its footfall, shared
     with the neighbouring slots showing content, times the pieces shown."""
@@ -256,8 +259,12 @@ class ComputeView:
     """Time and coins for an ad slot on each source."""
     portal: tuple[AdOption, ...]
     """Time and coins for a portal on each source."""
+    venue: tuple[AdOption, ...]
+    """Time and coins for a game hall or a workspace on each source."""
     content: tuple[AdOption, ...]
-    """Time and coins for a piece of content on each source."""
+    """Time and coins for a piece of ad content on each source."""
+    game: tuple[AdOption, ...]
+    """Time and coins for a game, the content of a game hall, on each source."""
     node_coins_per_second: int
     node_seconds: tuple[int, int]
     """Least and most seconds one subscription lasts."""
@@ -799,6 +806,7 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
             ),
             AdOption("subscription", job_seconds(PORTAL_WORKLOAD, "subscription"), 0),
         ),
+        venue=_options(VENUE_WORKLOAD),
         content=(
             AdOption("self", job_seconds(CONTENT_WORKLOAD, "self"), 0),
             AdOption(
@@ -808,9 +816,18 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
             ),
             AdOption("subscription", job_seconds(CONTENT_WORKLOAD, "subscription"), 0),
         ),
+        game=_options(GAME_WORKLOAD),
         node_coins_per_second=SUBSCRIPTION_PRICE,
         node_seconds=NODE_SECONDS,
         max_nodes=MAX_NODES,
+    )
+
+
+def _options(workload: float) -> tuple[AdOption, ...]:
+    return (
+        AdOption("self", job_seconds(workload, "self"), 0),
+        AdOption("on_demand", job_seconds(workload, "on_demand"), on_demand_cost(workload)),
+        AdOption("subscription", job_seconds(workload, "subscription"), 0),
     )
 
 

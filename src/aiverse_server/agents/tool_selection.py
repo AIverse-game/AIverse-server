@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..economy.ads import CONTENT_ITEM
+from ..economy.ads import ITEM_FOR
 from ..economy.compute import MAX_NODES, NODE_SECONDS, subscription_cost
 from ..economy.land import plot_at
 from .observation import Observation
@@ -17,7 +17,7 @@ from .tools import TOOLS, ResidentTools
 
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "land": ("buy_parcel", "joint_buy_parcel"),
-    "compute": ("buy_node", "build_ad"),
+    "compute": ("buy_node", "build_ad", "build_venue"),
     "content": ("make_content", "place_content"),
     "transport": ("build_portal", "link_portals", "teleport"),
     "exchange": ("place_order", "cancel_order"),
@@ -75,6 +75,7 @@ def selected_tool_names(observation: Observation) -> set[str]:
         for parcel in observation.land.mine
     ):
         names.add("build_ad")
+        names.add("build_venue")
     if (
         len(compute.my_nodes) < compute.max_nodes
         and me.coins >= compute.node_seconds[0] * compute.node_coins_per_second
@@ -85,8 +86,9 @@ def selected_tool_names(observation: Observation) -> set[str]:
         len(transport.mine) >= 2 or (transport.mine and transport.others)
     ):
         names.add("link_portals")
-    if me.items.get(CONTENT_ITEM) and any(
-        parcel.facility == "ad"
+    if any(
+        parcel.facility in ITEM_FOR
+        and me.items.get(ITEM_FOR[parcel.facility])
         and len(parcel.content_goes_stale_in) < observation.land.slot_capacity
         for parcel in observation.land.mine
     ):
@@ -146,12 +148,16 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         for parcel in world.parcels
     ):
         names.add("build_ad")
+        names.add("build_venue")
     if sum(node.owner_id == me.id for node in book.nodes) < MAX_NODES and me.coins >= (
         subscription_cost(NODE_SECONDS[0])
     ):
         names.add("buy_node")
-    if me.inventory.count(CONTENT_ITEM) and any(
-        parcel.owner_id == me.id and parcel.facility is not None and parcel.facility.kind == "ad"
+    if any(
+        parcel.owner_id == me.id
+        and parcel.facility is not None
+        and parcel.facility.kind in ITEM_FOR
+        and me.inventory.count(ITEM_FOR[parcel.facility.kind])
         for parcel in world.parcels
     ):
         names.add("place_content")

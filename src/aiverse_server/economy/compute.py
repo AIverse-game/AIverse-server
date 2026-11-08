@@ -15,11 +15,11 @@ as long as they are still in the game. There are three sources:
   the speed of one's own compute, without using up the resident's own one-job-at-a-time slot.
 
 Nodes have a kind, and a job needs a node of its kind: generative nodes build facilities,
-render nodes make content. There are three jobs. `build_ad` builds an ad slot, and
-`build_portal` a portal, see `portals.py`, on a parcel the resident owns, wherever the
-resident is. `make_content` renders one piece of content, an item
-the resident then carries, see `ads.py`. Several content jobs may run at once, each on a source
-of its own.
+render nodes make content. There are six jobs. `build_ad` builds an ad slot, `build_portal`
+a portal, see `portals.py`, and `build_game_hall` and `build_workspace` the two venues, on a
+parcel the resident owns, wherever the resident is. `make_content` renders one piece of
+content for an ad slot and `make_game` one for a game hall, each an item the resident then
+carries, see `ads.py`. Several content jobs may run at once, each on a source of its own.
 
 Compute is bought from the system, so its price leaves the game, and nothing is paid back for
 unused subscriptions, running jobs or facilities when a resident leaves or the game ends.
@@ -31,12 +31,21 @@ untouched; on error nothing changes.
 from dataclasses import replace
 from typing import Literal
 
-from ..core.compute import NODE_KINDS, ComputeBook, Job, JobKind, JobSource, Node, NodeKind
+from ..core.compute import (
+    MAKING_JOBS,
+    NODE_KINDS,
+    ComputeBook,
+    Job,
+    JobKind,
+    JobSource,
+    Node,
+    NodeKind,
+)
 from ..core.inventory import store_item, take_coins
-from ..core.land import Facility, Parcel
+from ..core.land import Facility, FacilityKind, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
-from .ads import CONTENT_ITEM, payday_after
+from .ads import CONTENT_ITEM, GAME_ITEM, payday_after
 from .portals import MAX_PORTALS, portal_count
 
 SELF_RATE = 1.0
@@ -56,18 +65,50 @@ PORTAL_WORKLOAD = 180.0
 """Workload of building a portal: three minutes of one's own compute, 18 seconds of a node.
 Dearer than an ad slot, which earns by itself."""
 
+VENUE_WORKLOAD = 240.0
+"""Workload of building a game hall or a workspace: four minutes of one's own compute, 24 seconds
+of a node. Dearest of the facilities, since a venue is worth more once visitors come."""
+
+GAME_WORKLOAD = 90.0
+"""Workload of rendering a game for a game hall: a minute and a half of one's own compute, 9
+seconds of a node. Dearer than an ad."""
+
+ContentKind = Literal["ad", "game"]
+"""What a content job renders: an ad for an ad slot or a game for a game hall."""
+
+VenueKind = Literal["game_hall", "workspace"]
+"""The facilities `start_build_venue` builds."""
+
 NODE_FOR_JOB: dict[JobKind, NodeKind] = {
     "build_ad": "generative",
     "build_portal": "generative",
+    "build_game_hall": "generative",
+    "build_workspace": "generative",
     "make_content": "render",
+    "make_game": "render",
 }
 """The kind of node a job needs."""
 
 WORKLOADS: dict[JobKind, float] = {
     "build_ad": AD_WORKLOAD,
     "build_portal": PORTAL_WORKLOAD,
+    "build_game_hall": VENUE_WORKLOAD,
+    "build_workspace": VENUE_WORKLOAD,
     "make_content": CONTENT_WORKLOAD,
+    "make_game": GAME_WORKLOAD,
 }
+
+BUILD_JOB: dict[VenueKind, JobKind] = {
+    "game_hall": "build_game_hall",
+    "workspace": "build_workspace",
+}
+MAKE_JOB: dict[ContentKind, JobKind] = {"ad": "make_content", "game": "make_game"}
+BUILT_BY: dict[JobKind, FacilityKind] = {
+    "build_portal": "portal",
+    "build_game_hall": "game_hall",
+    "build_workspace": "workspace",
+}
+"""The facility each building job other than `build_ad` leaves."""
 
 ON_DEMAND_PRICE = 3
 """Coins per unit of workload of a job on a node hired for it alone."""
@@ -88,6 +129,8 @@ ComputeErrorCode = Literal[
     "invalid_seconds",
     "too_many_nodes",
     "unknown_node_kind",
+    "unknown_venue_kind",
+    "unknown_content_kind",
     "not_your_parcel",
     "parcel_built",
     "parcel_busy",
@@ -185,13 +228,39 @@ def start_build_portal(
     return _start_job(world, resident_id, "build_portal", parcel.id, source, node_id)
 
 
+def start_build_venue(
+    world: World,
+    resident_id: str,
+    parcel_id: str,
+    kind: VenueKind,
+    source: JobSource,
+    node_id: int | None = None,
+) -> World:
+    """Start building a game hall or a workspace, `kind`, on the bare parcel `parcel_id` of the
+    resident, as `start_build_ad` does for an ad slot."""
+    _find(world, resident_id)
+    job = BUILD_JOB.get(kind)
+    if job is None:
+        raise ComputeError("unknown_venue_kind", f"no venues of kind {kind!r}")
+    parcel = _bare_parcel(world, resident_id, parcel_id)
+    return _start_job(world, resident_id, job, parcel.id, source, node_id)
+
+
 def start_make_content(
-    world: World, resident_id: str, source: JobSource, node_id: int | None = None
+    world: World,
+    resident_id: str,
+    source: JobSource,
+    node_id: int | None = None,
+    content: ContentKind = "ad",
 ) -> World:
     """Start rendering a piece of content for the resident on `source`, as `start_build_ad`
-    does for an ad slot. The piece joins what they carry when the job ends."""
+    does for an ad slot: an ad, or a game for a game hall. The piece joins what they carry when
+    the job ends."""
     _find(world, resident_id)
-    return _start_job(world, resident_id, "make_content", None, source, node_id)
+    job = MAKE_JOB.get(content)
+    if job is None:
+        raise ComputeError("unknown_content_kind", f"no content of kind {content!r}")
+    return _start_job(world, resident_id, job, None, source, node_id)
 
 
 def _start_job(
@@ -252,8 +321,8 @@ def _start_job(
 
 
 def finish_jobs(world: World) -> World:
-    """Finish every job due by `world.time`, oldest end first: its ad slot or portal appears,
-    or its piece of content joins what its owner carries. The same world when none is due."""
+    """Finish every job due by `world.time`, oldest end first: its facility appears, or its
+    piece of content joins what its owner carries. The same world when none is due."""
     due = sorted(
         (job for job in world.compute.jobs if job.ends_at <= world.time),
         key=lambda job: (job.ends_at, job.id),
@@ -261,13 +330,14 @@ def finish_jobs(world: World) -> World:
     for job in due:
         book = replace(world.compute, jobs=tuple(j for j in world.compute.jobs if j.id != job.id))
         world = replace(world, compute=book)
-        if job.kind == "make_content":
-            world = store_item(world, job.owner_id, CONTENT_ITEM)
+        if job.kind in MAKING_JOBS:
+            item = CONTENT_ITEM if job.kind == "make_content" else GAME_ITEM
+            world = store_item(world, job.owner_id, item)
             continue
         if job.kind == "build_ad":
             built = Facility("ad", world.time, (), payday_after(world.time))
         else:
-            built = Facility("portal", world.time)
+            built = Facility(BUILT_BY[job.kind], world.time)
         parcels = tuple(
             replace(parcel, facility=built) if parcel.id == job.parcel_id else parcel
             for parcel in world.parcels
