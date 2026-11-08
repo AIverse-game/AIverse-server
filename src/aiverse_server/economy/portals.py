@@ -16,10 +16,11 @@ Lines do two things.
   ledger channel `toll`.
 - `effective_distance` is how far a spot on the map is from the middle of it once the lines
   are counted: walk to a portal, take its lines for nothing, and walk on from the portal of
-  the network that lies nearest the middle, or simply walk straight if that is shorter. The
-  footfall at a spot, see `footfall.py`, is worked out from this distance, so a remote parcel
-  next to a portal that is joined to one near the middle gets nearly as many visitors as that
-  one.
+  the network that lies nearest the middle, or simply walk straight if that is shorter. Nothing
+  uses it yet. The placeholder footfall formula, see `footfall.py`, deliberately goes by the
+  straight distance, since it assumes where visitors go instead of simulating them and would
+  assume they take the lines. It is for the visitors of the sponsors-and-visitors step, whose
+  walking times it gives, so that who uses a line is up to them.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -48,8 +49,8 @@ MAX_PORTALS = 4
 """Portals one resident may have, counting those still being built."""
 
 MAX_LINKS_PER_PORTAL = 3
-"""Lines one portal may end. With no limit one portal in the middle could bring the whole map
-to the middle."""
+"""Lines one portal may end. With no limit one portal in the middle could pull the whole map
+to the middle once visitors walk by effective distance."""
 
 MIN_LINK_DISTANCE = 30.0
 """Least distance between the centres of the two parcels of a line, three parcels."""
@@ -212,7 +213,7 @@ def _network(
 ) -> tuple[tuple[Position, float], ...]:
     """Each portal's centre, with the distance from the middle of the map of the portal in its
     network (the portals its lines reach, and theirs in turn) that lies nearest to the middle.
-    Worked out once per layout of portals and lines, since every footfall asks."""
+    Worked out once per layout of portals and lines, since a layout is asked about many times."""
     town = town_centre(size)
     centres = {parcel_id: parcel_centre(size, col, row) for parcel_id, col, row in portals}
     group = {parcel_id: parcel_id for parcel_id in centres}

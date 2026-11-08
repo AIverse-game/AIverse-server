@@ -1,16 +1,15 @@
 """Footfall: how many visitors pass a spot on the map.
 
 Visitors are not simulated one by one. Their number grows as the game goes on, `visitors`, and
-they crowd towards the centre of the map, `footfall`, fewer the farther out a spot lies, counting
-the distance as the lines between portals shorten it, see `portals.py`; residents standing
-nearby add to the crowd. Ad slots showing content are paid by it, see
+they crowd towards the centre of the map, `footfall`, fewer the farther out a spot lies;
+residents standing nearby add to the crowd. Ad slots showing content are paid by it, see
 `ads.py`.
 """
 
 import math
 
 from ..core.world import Position, World
-from .portals import effective_distance
+from .land import town_centre
 
 VISITORS_AT_START = 100.0
 """Footfall at the centre when the game starts."""
@@ -19,9 +18,8 @@ VISITOR_GROWTH_SECONDS = 1_200.0
 """Game seconds over which the visitors grow by another `VISITORS_AT_START`."""
 
 FOOTFALL_REACH = 75.0
-"""Effective distance from the centre, see `portals.effective_distance`, at which the share of
-visitors passing has fallen, in a straight line, from all of them to `FOOTFALL_FLOOR`; it
-stays there farther out."""
+"""Distance from the centre at which the share of visitors passing has fallen, in a straight
+line, from all of them to `FOOTFALL_FLOOR`; it stays there farther out."""
 
 FOOTFALL_FLOOR = 0.25
 """Share of the visitors that pass even the farthest spot."""
@@ -39,7 +37,7 @@ def visitors(time: float) -> float:
 
 def footfall(world: World, centre: Position) -> float:
     """Visitors and residents passing a spot at `centre` right now."""
-    distance = effective_distance(world, centre)
+    distance = _distance(centre, town_centre(world.map.size))
     share = 1 - (1 - FOOTFALL_FLOOR) * min(distance / FOOTFALL_REACH, 1.0)
     standing = sum(
         1

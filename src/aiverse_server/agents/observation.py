@@ -281,7 +281,7 @@ class PortalView:
     owner: str
     centre: Position
     footfall: float
-    """Visitors and residents passing its centre now, lines counted."""
+    """Visitors and residents passing its centre now."""
     lines: tuple[LineView, ...]
 
 

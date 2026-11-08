@@ -457,9 +457,8 @@ TOOLS = (
         "the line is drawn at once; when the other belongs to someone else they are asked, and "
         "it is drawn if they accept. The portals must be at least "
         f"{MIN_LINK_DISTANCE:g} units apart and a portal ends at most {MAX_LINKS_PER_PORTAL} "
-        "lines. A line brings visitors: a spot next to a portal gets the footfall of the "
-        "nearest portal joined to it to the middle of the map. It also lets residents "
-        "teleport between the two for the toll.",
+        "lines. A line lets residents teleport between the two portals for the toll; it does "
+        "not change how many visitors pass any parcel.",
         LinkPortalsArgs,
     ),
     ToolSpec(

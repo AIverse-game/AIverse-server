@@ -107,8 +107,7 @@ running of it. It is bought when they accept; if someone buys it first, withdraw
 per {VISITOR_GROWTH_SECONDS / 60:g} min, thinning to {FOOTFALL_FLOOR:.0%} at {FOOTFALL_REACH:g}
 units, plus {RESIDENT_FOOTFALL:g} for each resident standing within {RESIDENT_REACH:g}. The
 land observation shows each parcel's footfall.
-- Portals (discover_tools: transport) join parcels by lines, drawing visitors;
-teleport crosses one.
+- Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units or privately to one resident anywhere; at most

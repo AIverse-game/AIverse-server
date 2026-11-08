@@ -100,7 +100,7 @@ class Parcel:
 @dataclass(frozen=True)
 class Link:
     """A line between the portals on two parcels, which residents can travel along for `toll`
-    coins and which shortens the distance visitors cover, see `economy/portals.py`."""
+    coins and which shortens the effective distance, see `economy/portals.py`."""
 
     a: str
     b: str

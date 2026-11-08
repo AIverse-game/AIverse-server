@@ -409,16 +409,12 @@ def test_a_line_never_makes_a_spot_farther_and_only_helps_next_to_a_portal() -> 
     assert effective_distance(linked, Position(95, 5)) == effective_distance(WORLD, Position(95, 5))
 
 
-def test_footfall_at_a_remote_spot_follows_the_effective_distance() -> None:
+def test_footfall_ignores_lines_since_visitors_are_not_simulated_yet() -> None:
     linked = link(WORLD, "L0-0", "L5-4")
     spot = Position(5, 22)  # 17 from the resident in L0-0, so no resident adds to it
 
-    straight = effective_distance(WORLD, spot)
-    shortened = effective_distance(linked, spot)
-
-    assert footfall(WORLD, spot) == pytest.approx(100 * (1 - 0.75 * straight / 75))
-    assert footfall(linked, spot) == pytest.approx(100 * (1 - 0.75 * shortened / 75))
-    assert footfall(linked, spot) > footfall(WORLD, spot)
+    assert footfall(linked, spot) == footfall(WORLD, spot)
+    assert effective_distance(linked, spot) < effective_distance(WORLD, spot)
 
 
 def test_the_effective_distance_does_not_change_with_who_is_standing_where() -> None:
