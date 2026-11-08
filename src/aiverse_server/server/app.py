@@ -304,7 +304,9 @@ class Game:
                 self._on_end(after)
             except Exception:
                 logger.exception("handling the end of the game failed")
-        if after is not timed:
+        # The visitors walk on all the time but nothing shows them yet, so a step of theirs alone
+        # is not news.
+        if after is not timed and replace(after, crowd=timed.crowd) != timed:
             self.broadcast_world()
 
     def act(self, action: Action) -> None:

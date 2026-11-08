@@ -190,6 +190,10 @@ class MyParcelView:
     """Who holds the parcel's shares and how many of the 100; the income is paid out by them."""
     my_cut_per_payday: int = 0
     """The part of `income_per_payday` that goes to the resident."""
+    people_seen: float = 0.0
+    """People the scripted visitors have counted as seeing its ad slot so far this game, see
+    `economy/visitors.py`; nothing is paid for them yet, and the footfall above is a stand-in
+    for what they will be."""
 
 
 @dataclass(frozen=True)
@@ -715,6 +719,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
                 _income(world, facilities.get(square.id)),
                 dict(owned[square.id].shares),
                 _cut(world, facilities.get(square.id), resident_id),
+                round(world.crowd.viewed(square.id), 1),
             )
             for square in mine
         ),

@@ -17,10 +17,13 @@ Lines do two things.
 - `effective_distance` is how far a spot on the map is from the middle of it once the lines
   are counted: walk to a portal, take its lines for nothing, and walk on from the portal of
   the network that lies nearest the middle, or simply walk straight if that is shorter. Nothing
-  uses it yet. The placeholder footfall formula, see `footfall.py`, deliberately goes by the
+  uses it. The placeholder footfall formula, see `footfall.py`, deliberately goes by the
   straight distance, since it assumes where visitors go instead of simulating them and would
-  assume they take the lines. It is for the visitors of the sponsors-and-visitors step, whose
-  walking times it gives, so that who uses a line is up to them.
+  assume they take the lines.
+- `Router` gives the same for a walk from one spot to another: the shorter of walking straight
+  and walking to the nearest portal of a network, coming out at once at the portal of it
+  nearest the goal. The scripted visitors, see `visitors.py`, walk by it and take the lines
+  for nothing, so which lines carry traffic is up to their choices.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -206,15 +209,14 @@ def effective_distance(world: World, centre: Position) -> float:
 
 
 @functools.lru_cache(maxsize=32)
-def _network(
+def _components(
     size: float,
     portals: tuple[tuple[str, int, int], ...],
     lines: tuple[tuple[str, str], ...],
-) -> tuple[tuple[Position, float], ...]:
-    """Each portal's centre, with the distance from the middle of the map of the portal in its
-    network (the portals its lines reach, and theirs in turn) that lies nearest to the middle.
-    Worked out once per layout of portals and lines, since a layout is asked about many times."""
-    town = town_centre(size)
+) -> tuple[tuple[Position, str], ...]:
+    """Each portal's centre, with a name for its network (the portals its lines reach, and
+    theirs in turn), the same for all portals of one network. Worked out once per layout of
+    portals and lines, since a layout is asked about many times."""
     centres = {parcel_id: parcel_centre(size, col, row) for parcel_id, col, row in portals}
     group = {parcel_id: parcel_id for parcel_id in centres}
 
@@ -226,11 +228,74 @@ def _network(
 
     for first, second in lines:
         group[root(first)] = root(second)
+    return tuple((there, root(parcel_id)) for parcel_id, there in centres.items())
+
+
+def _layout(world: World) -> tuple[tuple[Position, str], ...]:
+    portals = tuple(
+        sorted(
+            (parcel.id, parcel.col, parcel.row)
+            for parcel in world.parcels
+            if parcel.facility is not None and parcel.facility.kind == "portal"
+        )
+    )
+    lines = tuple(sorted((link.a, link.b) for link in world.links))
+    return _components(world.map.size, portals, lines)
+
+
+@functools.lru_cache(maxsize=32)
+def _network(
+    size: float,
+    portals: tuple[tuple[str, int, int], ...],
+    lines: tuple[tuple[str, str], ...],
+) -> tuple[tuple[Position, float], ...]:
+    """Each portal's centre, with the distance from the middle of the map of the portal in its
+    network that lies nearest to the middle."""
+    town = town_centre(size)
+    components = _components(size, portals, lines)
     nearest: dict[str, float] = {}
-    for parcel_id, there in centres.items():
+    for there, name in components:
         gap = math.dist((there.x, there.y), (town.x, town.y))
-        nearest[root(parcel_id)] = min(nearest.get(root(parcel_id), gap), gap)
-    return tuple((there, nearest[root(parcel_id)]) for parcel_id, there in centres.items())
+        nearest[name] = min(nearest.get(name, gap), gap)
+    return tuple((there, nearest[name]) for there, name in components)
+
+
+@dataclass(frozen=True)
+class Route:
+    """The way a visitor goes from one spot to another."""
+
+    distance: float
+    """Map units walked; the trip through a network is not counted."""
+    via: tuple[Position, Position] | None
+    """The portal to walk to and the one to come out of, when going through a network beats
+    walking straight; None when walking straight is as short."""
+
+
+class Router:
+    """Shortest ways on foot and through the networks of portals from one spot, `start`, to
+    many: it works out once which portal of each network is nearest to `start`. A walker goes
+    through at most one network, since a second one would rarely save anything and the portals
+    of one network are joined by lines already."""
+
+    def __init__(self, world: World, start: Position) -> None:
+        self._start = start
+        self._portals = _layout(world)
+        self._entry: dict[str, tuple[float, Position]] = {}
+        for there, name in self._portals:
+            gap = math.dist((start.x, start.y), (there.x, there.y))
+            if name not in self._entry or gap < self._entry[name][0]:
+                self._entry[name] = (gap, there)
+
+    def to(self, end: Position) -> Route:
+        """The shortest way to `end`. Residents pay a toll for a line, but visitors do not."""
+        best = math.dist((self._start.x, self._start.y), (end.x, end.y))
+        via: tuple[Position, Position] | None = None
+        for there, name in self._portals:
+            gap, entry = self._entry[name]
+            total = gap + math.dist((there.x, there.y), (end.x, end.y))
+            if total < best:
+                best, via = total, (entry, there)
+        return Route(best, via)
 
 
 def _check_link(

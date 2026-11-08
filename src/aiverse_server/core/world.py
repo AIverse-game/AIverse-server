@@ -16,6 +16,7 @@ from .events import EventQueue
 from .land import Link, Parcel
 from .ledger import Ledger
 from .orders import OrderBook
+from .visitors import Crowd
 
 COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
 
@@ -486,6 +487,9 @@ class World:
     """Subscribed nodes and running jobs, see `compute.py`."""
     links: tuple[Link, ...] = ()
     """Lines between portals, see `portals.py`."""
+    crowd: Crowd = Crowd()
+    """The scripted visitors walking the map and the views they have given the ad slots, see
+    `visitors.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -543,6 +547,9 @@ class World:
         for link in self.links:
             if not {link.a, link.b} <= portals:
                 raise ValueError(f"link {link.a}-{link.b} joins a parcel without a portal")
+        for parcel_id, _ in self.crowd.views:
+            if parcel_id not in owners:
+                raise ValueError(f"views of {parcel_id}, which nobody owns")
         for node in self.compute.nodes:
             if node.owner_id not in ids or node.owner_id in left or self.ended:
                 raise ValueError(f"node {node.id} outlives its game or resident")

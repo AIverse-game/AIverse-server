@@ -1,9 +1,11 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 
 from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.tools import ResidentTools
+from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.game.actions import ActionRejected, MoveTo
 from aiverse_server.game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
@@ -29,6 +31,10 @@ class FakeClock:
 def make_game(world: World = WORLD, duration: float = 600) -> tuple[Game, FakeClock]:
     clock = FakeClock()
     return Game(world, duration, clock), clock
+
+
+def the_crowd(game: Game) -> Crowd:
+    return game.world.crowd
 
 
 def me(game: Game, resident_id: str) -> Resident:
@@ -242,3 +248,25 @@ def test_a_failing_end_handler_is_logged_and_the_game_still_ends(
 
     assert game.world.ended
     assert "handling the end of the game failed" in caplog.text
+
+
+def test_a_step_of_the_visitors_alone_is_not_broadcast_but_a_walk_arriving_is() -> None:
+    entrance = Position(50, 50)
+    coming = Visitor(0, "away", 5.0, entrance, entrance)
+    walking = replace(WORLD, crowd=Crowd(visitors=(coming,)))
+    game, clock = make_game(walking)
+    watcher = Outbox()
+    game.watch(watcher)
+
+    clock.now = 10.0
+    game.tick()
+    stepped = the_crowd(game)
+    quiet = watcher.state is None
+    game.act(MoveTo("a", Position(60, 50)))
+    clock.now = 30.0
+    game.tick()
+
+    assert stepped.visitors[0].phase == "walking"
+    assert quiet
+    assert watcher.state is not None
+    assert me(game, "a").walking is None
