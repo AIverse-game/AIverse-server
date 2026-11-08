@@ -25,14 +25,29 @@ from ..agents.runner import TurnRecord
 from ..core.events import Event
 from ..core.orders import Fill
 from ..core.world import COLOR_PATTERN, Position, World
+from ..economy.ads import shown
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
+from ..economy.land import PARCEL_SIZE, grid_size, plots
 from ..economy.trade import PurchaseOffer, SaleOffer
-from ..game.actions import Action, ActionRejected, LeaveGame, MoveTo, RejectionCode, Say
+from ..game.actions import (
+    Action,
+    ActionRejected,
+    BuildAd,
+    BuildPortal,
+    BuildVenue,
+    BuyParcel,
+    LeaveGame,
+    MakeContent,
+    MoveTo,
+    PlaceContent,
+    RejectionCode,
+    Say,
+)
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 23
+PROTOCOL_VERSION = 24
 
 ERROR_MAX_LENGTH = 200
 
@@ -81,8 +96,40 @@ class SayInput(_Message):
     """The one resident spoken to; left out to speak aloud to everyone within earshot."""
 
 
+class BuyParcelInput(_Message):
+    type: Literal["buy_parcel"]
+    resident_id: str
+
+
+class BuildFacilityInput(_Message):
+    type: Literal["build_facility"]
+    resident_id: str
+    parcel_id: str
+    kind: Literal["ad", "portal", "game_hall", "workspace"]
+    source: Literal["self", "on_demand"]
+
+
+class MakeContentInput(_Message):
+    type: Literal["make_content"]
+    resident_id: str
+    content: Literal["ad", "game"]
+    source: Literal["self", "on_demand"]
+
+
+class PlaceContentInput(_Message):
+    type: Literal["place_content"]
+    resident_id: str
+    parcel_id: str
+
+
 ActionInput = Annotated[
-    MoveToInput | LeaveGameInput | SayInput,
+    MoveToInput
+    | LeaveGameInput
+    | SayInput
+    | BuyParcelInput
+    | BuildFacilityInput
+    | MakeContentInput
+    | PlaceContentInput,
     Field(discriminator="type"),
 ]
 
@@ -323,6 +370,37 @@ class ContractView(_Message):
 
 class MapView(_Message):
     size: float
+    parcel_size: float
+    parcel_prices: list[list[int]]
+
+
+class FacilityView(_Message):
+    kind: Literal["ad", "portal", "game_hall", "workspace"]
+    contents: int
+    expires_in: list[float]
+
+
+class ParcelView(_Message):
+    id: str
+    col: int
+    row: int
+    owner_id: str
+    shares: dict[str, int]
+    facility: FacilityView | None = None
+
+
+class JobView(_Message):
+    id: int
+    owner_id: str
+    kind: str
+    parcel_id: str | None = None
+    remaining_seconds: float
+
+
+class ContentView(_Message):
+    viewer_id: str
+    ad_content: int
+    game_content: int
 
 
 class GameView(_Message):
@@ -408,6 +486,9 @@ def _redacted_arguments(value: object, redact: Callable[[str], str]) -> object:
 
 class WorldView(_Message):
     map: MapView
+    parcels: list[ParcelView]
+    jobs: list[JobView]
+    content: ContentView | None = None
     residents: list[ResidentView]
     game: GameView
     exchange: ExchangeView
@@ -508,13 +589,61 @@ def world_view(
         for line in world.speech.entries
         if line.to is None or (viewer is not None and viewer in (line.speaker_id, line.to))
     ]
+    viewed_resident = next((r for r in world.residents if r.id == viewer), None)
+    squares = plots(world)
+    side_count = grid_size(world)
     return WorldView(
         agent_timeline=AgentTimelineView(
             resident_id=viewer, turns=list((agent_turns or {}).get(viewer, ()))
         )
         if viewer is not None
         else None,
-        map=MapView(size=world.map.size),
+        map=MapView(
+            size=world.map.size,
+            parcel_size=PARCEL_SIZE,
+            parcel_prices=[
+                [square.price for square in squares[row * side_count : (row + 1) * side_count]]
+                for row in range(side_count)
+            ],
+        ),
+        parcels=[
+            ParcelView(
+                id=parcel.id,
+                col=parcel.col,
+                row=parcel.row,
+                owner_id=parcel.owner_id,
+                shares=dict(parcel.shares),
+                facility=FacilityView(
+                    kind=parcel.facility.kind,
+                    contents=shown(parcel.facility, world.time),
+                    expires_in=[
+                        stale_at - world.time
+                        for stale_at in parcel.facility.contents
+                        if stale_at > world.time
+                    ],
+                )
+                if parcel.facility is not None
+                else None,
+            )
+            for parcel in world.parcels
+        ],
+        jobs=[
+            JobView(
+                id=job.id,
+                owner_id=job.owner_id,
+                kind=job.kind,
+                parcel_id=job.parcel_id,
+                remaining_seconds=max(job.ends_at - world.time, 0.0),
+            )
+            for job in world.compute.jobs
+        ],
+        content=ContentView(
+            viewer_id=viewer,
+            ad_content=viewed_resident.inventory.count("ad_content"),
+            game_content=viewed_resident.inventory.count("game_content"),
+        )
+        if viewer is not None and viewed_resident is not None
+        else None,
         residents=[
             ResidentView(
                 id=resident.id,
@@ -672,6 +801,18 @@ def to_action(message: ActionMessage) -> Action:
             return LeaveGame(resident_id=action.resident_id)
         case SayInput():
             return Say(resident_id=action.resident_id, text=action.text, to=action.to)
+        case BuyParcelInput():
+            return BuyParcel(resident_id=action.resident_id)
+        case BuildFacilityInput():
+            if action.kind == "ad":
+                return BuildAd(action.resident_id, action.parcel_id, action.source)
+            if action.kind == "portal":
+                return BuildPortal(action.resident_id, action.parcel_id, action.source)
+            return BuildVenue(action.resident_id, action.parcel_id, action.kind, action.source)
+        case MakeContentInput():
+            return MakeContent(action.resident_id, action.source, content=action.content)
+        case PlaceContentInput():
+            return PlaceContent(action.resident_id, action.parcel_id)
 
 
 def to_llm_settings(message: StartAgentMessage) -> LLMSettings:

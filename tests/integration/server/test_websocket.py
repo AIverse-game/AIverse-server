@@ -58,7 +58,19 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
         assert ws.receive_json() == {
             "type": "state",
             "world": {
-                "map": {"size": 50},
+                "map": {
+                    "size": 50,
+                    "parcelSize": 10,
+                    "parcelPrices": [
+                        [2170, 2340, 2410, 2340, 2170],
+                        [2340, 2590, 2710, 2590, 2340],
+                        [2410, 2710, 3000, 2710, 2410],
+                        [2340, 2590, 2710, 2590, 2340],
+                        [2170, 2340, 2410, 2340, 2170],
+                    ],
+                },
+                "parcels": [],
+                "jobs": [],
                 "residents": [
                     {
                         "id": "a",

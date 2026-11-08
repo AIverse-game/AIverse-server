@@ -4,7 +4,8 @@ from typing import Any
 
 import pytest
 
-from aiverse_server.core.land import Parcel
+from aiverse_server.core.compute import ComputeBook, Job
+from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy import exchange as exchange_rules
 from aiverse_server.game.actions import (
@@ -59,6 +60,53 @@ def test_error_details_are_truncated() -> None:
     message = bad_message("x" * 500).message
     assert len(message) == ERROR_MAX_LENGTH
     assert message.endswith("…")
+
+
+def test_facility_state_and_manual_actions_use_authoritative_rules() -> None:
+    world = replace(
+        WORLD,
+        parcels=(Parcel(1, 1, "a", Facility("game_hall", 0, (100.0,))),),
+        compute=ComputeBook(
+            jobs=(Job(1, "a", "make_game", None, "self", None, 1, 91),), next_job_id=2
+        ),
+        time=10,
+    )
+    view = world_view(world, 90).model_dump(by_alias=True, exclude_none=True)
+    assert view["map"]["parcelSize"] == 10
+    assert view["parcels"] == [
+        {
+            "id": "L1-1",
+            "col": 1,
+            "row": 1,
+            "ownerId": "a",
+            "shares": {"a": 100},
+            "facility": {"kind": "game_hall", "contents": 1, "expiresIn": [90.0]},
+        }
+    ]
+    assert view["jobs"] == [
+        {"id": 1, "ownerId": "a", "kind": "make_game", "remainingSeconds": 81.0}
+    ]
+    for payload, expected in (
+        ({"type": "buy_parcel", "residentId": "a"}, "BuyParcel"),
+        (
+            {
+                "type": "build_facility",
+                "residentId": "a",
+                "parcelId": "L1-1",
+                "kind": "game_hall",
+                "source": "self",
+            },
+            "BuildVenue",
+        ),
+        (
+            {"type": "make_content", "residentId": "a", "content": "game", "source": "self"},
+            "MakeContent",
+        ),
+        ({"type": "place_content", "residentId": "a", "parcelId": "L1-1"}, "PlaceContent"),
+    ):
+        message = parse_client_message(json.dumps({"type": "action", "action": payload}))
+        assert isinstance(message, protocol.ActionMessage)
+        assert type(protocol.to_action(message)).__name__ == expected
 
 
 def test_a_parsed_request_keeps_the_key_out_of_its_repr() -> None:
@@ -170,6 +218,9 @@ def test_residents_show_their_public_state_and_no_inventory() -> None:
         "left": False,
         "rank": 1,
     }
+    assert "content" not in shown
+    own = world_view(world, 1, viewer="a").model_dump(by_alias=True, exclude_none=True)
+    assert own["content"] == {"viewerId": "a", "adContent": 0, "gameContent": 0}
 
 
 def test_the_exchange_has_no_books_while_no_item_is_traded(
