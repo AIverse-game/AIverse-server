@@ -345,10 +345,58 @@ def test_a_visitor_takes_a_network_of_portals_when_it_is_shorter_and_comes_out_a
     after = at(world, 1.0)
 
     walker = the_visitor(after)
-    assert walker.via == (Position(5, 55), Position(95, 55))
+    assert walker.legs == (
+        (Position(10, 55), Position(5, 55)),
+        (Position(95, 55), Position(85, 55)),
+    )
     assert walker.until == 1.0 + (5 + 10) / VISITOR_SPEED
     # Once through, it is at the far portal and walks on from there.
     assert visitor_position(walker, walker.until) == Position(85, 55)
+
+
+def test_a_visitor_crosses_to_another_island_only_by_the_bridge() -> None:
+    # Five by five islands on a 150 map: L5-1 (55, 15) is on the island east of the one the
+    # visitor is on, joined to it by a bridge at y = 15, from x = 28 to x = 32.
+    base = replace(world_of(slot(5, 1)), map=WorldMap(size=150, block_cells=3, lobby=True))
+    walk = visitor(
+        phase="staying", until=1.0, at=Position(15, 5), target=Position(15, 5), stops_left=1
+    )
+    world = replace(base, crowd=crowd_of(walk))
+
+    after = at(world, 1.0)
+
+    walker = the_visitor(after)
+    assert walker.legs == (
+        (Position(15, 5), Position(28, 15)),
+        (Position(28, 15), Position(32, 15)),
+        (Position(32, 15), Position(55, 15)),
+    )
+    assert walker.until == 1.0 + (math.hypot(13, 10) + 4 + 23) / VISITOR_SPEED
+    assert visitor_position(walker, walker.until) == Position(55, 15)
+
+
+def test_through_portals_the_walks_to_the_first_and_from_the_last_cross_bridges_too() -> None:
+    # Portals on L0-0 (5, 5) and L14-0 (145, 5), joined. The visitor on the second island walks to
+    # the first portal over the bridge at (28..32, 15); the slot on L12-3 (125, 35) is on the
+    # island south of the second portal's, which it reaches over the bridge at x = 135.
+    islands = WorldMap(size=150, block_cells=3, lobby=True)
+    portals = (Parcel(0, 0, "a", PORTAL), Parcel(14, 0, "a", PORTAL))
+    base = replace(world_of(*portals, slot(12, 3)), map=islands, links=(Link("L0-0", "L14-0", 0),))
+    walk = visitor(
+        phase="staying", until=1.0, at=Position(45, 15), target=Position(45, 15), stops_left=1
+    )
+    world = replace(base, crowd=crowd_of(walk))
+
+    after = at(world, 1.0)
+
+    assert the_visitor(after).legs == (
+        (Position(45, 15), Position(32, 15)),
+        (Position(32, 15), Position(28, 15)),
+        (Position(28, 15), Position(5, 5)),
+        (Position(145, 5), Position(135, 28)),
+        (Position(135, 28), Position(135, 32)),
+        (Position(135, 32), Position(125, 35)),
+    )
 
 
 def test_portals_that_are_not_joined_save_the_visitor_nothing() -> None:
@@ -360,7 +408,7 @@ def test_portals_that_are_not_joined_save_the_visitor_nothing() -> None:
 
     after = at(world, 1.0)
 
-    assert the_visitor(after).via is None
+    assert the_visitor(after).legs == ((Position(10, 55), Position(85, 55)),)
     assert the_visitor(after).until == 1.0 + 75 / VISITOR_SPEED
 
 
@@ -375,7 +423,7 @@ def test_a_visitor_walking_through_portals_sees_the_slots_on_the_stretches_it_wa
         until=(25.0 + 10.0) / VISITOR_SPEED,
         at=Position(30, 55),
         target=Position(85, 55),
-        via=(Position(5, 55), Position(95, 55)),
+        legs=((Position(30, 55), Position(5, 55)), (Position(95, 55), Position(85, 55))),
         goal="exit",
     )
     world = replace(base, crowd=crowd_of(walk))

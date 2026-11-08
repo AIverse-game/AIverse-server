@@ -18,7 +18,8 @@ Lines do two things.
   are counted: walk to a portal, take its lines for nothing, and walk on from the portal of
   the network that lies nearest the middle, or simply walk straight if that is shorter. Nothing
   uses it now that the visitors walk by `Router`; it is kept for the layout of the map.
-- `Router` gives the same for a walk from one spot to another: the shorter of walking straight
+- `Router` gives the same for a walk from one spot to another: the shorter of walking on foot
+  (straight, or across the bridges between islands where the map has them, see `islands.py`)
   and walking to the nearest portal of a network, coming out at once at the portal of it
   nearest the goal. The scripted visitors, see `visitors.py`, walk by it and take the lines
   for nothing, so which lines carry traffic is up to their choices.
@@ -39,6 +40,7 @@ from ..core.inventory import add_coins, take_coins
 from ..core.land import MAX_TOLL, Link, Parcel
 from ..core.ledger import record_transfer
 from ..core.world import Position, WorldMap
+from .islands import walk_from
 from .land import parcel_centre, plot, plot_at, town_centre
 from .shares import MAX_PENDING_PER_PAIR, split_income
 
@@ -264,36 +266,43 @@ class Route:
 
     distance: float
     """Map units walked; the trip through a network is not counted."""
-    via: tuple[Position, Position] | None
-    """The portal to walk to and the one to come out of, when going through a network beats
-    walking straight; None when walking straight is as short."""
+    legs: tuple[tuple[Position, Position], ...]
+    """The straight stretches walked, in order; going through a network of portals leaves a break
+    between the one that ends at the portal walked to and the one that starts at the portal come
+    out of."""
 
 
 class Router:
     """Shortest ways on foot and through the networks of portals from one spot, `start`, to
     many: it works out once which portal of each network is nearest to `start`. A walker goes
     through at most one network, since a second one would rarely save anything and the portals
-    of one network are joined by lines already."""
+    of one network are joined by lines already. On foot a walker keeps to the islands and
+    bridges where the map has them, see `islands.py`."""
 
     def __init__(self, world: World, start: Position) -> None:
-        self._start = start
+        self._map = world.map
+        self._start = walk_from(world.map, start)
         self._portals = _layout(world)
         self._entry: dict[str, tuple[float, Position]] = {}
         for there, name in self._portals:
-            gap = math.dist((start.x, start.y), (there.x, there.y))
+            gap = self._start.distance(there)
             if name not in self._entry or gap < self._entry[name][0]:
                 self._entry[name] = (gap, there)
 
     def to(self, end: Position) -> Route:
         """The shortest way to `end`. Residents pay a toll for a line, but visitors do not."""
-        best = math.dist((self._start.x, self._start.y), (end.x, end.y))
+        best = self._start.distance(end)
         via: tuple[Position, Position] | None = None
         for there, name in self._portals:
             gap, entry = self._entry[name]
-            total = gap + math.dist((there.x, there.y), (end.x, end.y))
+            total = gap + walk_from(self._map, there).distance(end)
             if total < best:
                 best, via = total, (entry, there)
-        return Route(best, via)
+        if via is None:
+            return Route(best, self._start.legs(end))
+        entry, there = via
+        legs = (*self._start.legs(entry), *walk_from(self._map, there).legs(end))
+        return Route(best, legs)
 
 
 def _check_link(

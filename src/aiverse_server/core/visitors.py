@@ -40,9 +40,10 @@ class Visitor:
     """Where it walks to or stands; `at` while away."""
     departs_at: float = 0.0
     """Game time the present walk began."""
-    via: tuple[Position, Position] | None = None
-    """The portal the walk goes in at, and the one it comes out of at once, when that is the
-    quicker way; the walk is then `at` to the first, `target` from the second."""
+    legs: tuple[tuple[Position, Position], ...] = ()
+    """The straight stretches of the present walk, in order: one when it is a straight line, more
+    when it turns at the end of a bridge, and a break where it goes through a network of portals,
+    which takes no time. Empty means a straight walk from `at` to `target`."""
     goal: Goal = "exit"
     stop: str | None = None
     """The parcel of the facility the visitor is on its way to or standing at; None unless `goal`
@@ -73,7 +74,7 @@ class Visitor:
         times = (self.until, self.departs_at, *(until for _, until in self.seen))
         if not all(math.isfinite(time) for time in times):
             raise ValueError(f"visitor {self.id} has a time that is not finite")
-        for spot in (self.at, self.target, *(self.via or ())):
+        for spot in (self.at, self.target, *(spot for leg in self.legs for spot in leg)):
             if not (math.isfinite(spot.x) and math.isfinite(spot.y)):
                 raise ValueError(f"visitor {self.id} is at a spot that is not finite")
         if min(self.trip, self.step, self.stops_left) < 0:

@@ -17,10 +17,12 @@ slots showing content that it has not been counted at lately), it picks by a mul
 so every facility has a chance but better ones more. The utility is `APPEAL` times the log of one
 plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`), less
 `WALK_COST` per second of walking and `CROWD_COST` per `CROWD_CAPACITY` visitors already going
-or standing there, plus noise. The walk is the shorter of walking straight and going through a
+or standing there, plus noise. The walk is the shorter of walking on foot and going through a
 network of portals, see `portals.Router`, so the lines change which slots are near, and whether
-a visitor takes one is its own choice. Visitors use the lines for nothing. With nothing worth
-seeing the visitor roams to a random spot nearby and looks again.
+a visitor takes one is its own choice. Visitors use the lines for nothing. Where the map has
+islands the walk keeps to them and crosses from one to the next only by the bridges, see
+`islands.py`; residents are not held to that. With nothing worth seeing the visitor roams to a
+random spot nearby, on its own island, and looks again.
 
 Choices are random but the dice are not stateful: each is a hash of the crowd's seed, the
 visitor, its trip, its step and what is being chosen, so the same game plays out the same way.
@@ -47,6 +49,7 @@ from ..core.visitors import Crowd, Goal, Visitor
 from ..core.world import Position, World
 from .admissions import FEES, admit
 from .ads import shown
+from .islands import on_island
 from .land import parcel_centre, town_centre
 from .portals import Router
 
@@ -263,7 +266,7 @@ def _step(
             phase="staying",
             at=entrance,
             target=entrance,
-            via=None,
+            legs=(),
             goal="exit",
             stop=None,
             trip=visitor.trip + 1,
@@ -284,7 +287,7 @@ def _step(
         low, high = DWELL[kind]
         dwell = low + _dice(seed, visitor, "dwell") * (high - low)
     gained, seen = _count_views(visitor, now, dwell if kind == "ad" else 0.0, town.places["ad"])
-    here = replace(visitor, at=visitor.target, via=None, seen=seen)
+    here = replace(visitor, at=visitor.target, legs=(), seen=seen)
     if visitor.goal == "wander":
         # Roaming uses up a stop too, so with nothing to see a visitor still leaves in the end.
         here = replace(here, stops_left=max(visitor.stops_left - 1, 0))
@@ -338,7 +341,7 @@ def _head_for(
         at=here,
         target=target,
         departs_at=now,
-        via=route.via,
+        legs=route.legs,
         goal=goal,
         stop=stop,
         route=rest,
@@ -424,11 +427,9 @@ def _inside(start: Position, end: Position, centre: Position, radius: float) -> 
 
 
 def _legs(visitor: Visitor) -> list[tuple[Position, Position]]:
-    """The straight stretches of the visitor's present walk: one, or two when it goes through
-    a network of portals, which it crosses in no time."""
-    if visitor.via is None:
-        return [(visitor.at, visitor.target)]
-    return [(visitor.at, visitor.via[0]), (visitor.via[1], visitor.target)]
+    """The straight stretches of the visitor's present walk: one, or several when it turns at
+    the ends of bridges or goes through a network of portals, which it crosses in no time."""
+    return list(visitor.legs) or [(visitor.at, visitor.target)]
 
 
 def _town(world: World) -> _Town:
@@ -458,7 +459,9 @@ def _town(world: World) -> _Town:
 
 
 def _roam_from(world: World, visitor: Visitor, here: Position) -> Position:
-    """A random spot `MIN_ROAM` to `MAX_ROAM` units from `here`, turned back from the edge."""
+    """A random spot `MIN_ROAM` to `MAX_ROAM` units from `here`, turned back from the edge of the
+    map, and kept on the island it is on where the map has islands: roaming never crosses a
+    bridge."""
     seed = world.crowd.seed
     angle = 2 * math.pi * _dice(seed, visitor, "roam-angle")
     far = MIN_ROAM + _dice(seed, visitor, "roam-far") * (MAX_ROAM - MIN_ROAM)
@@ -468,7 +471,8 @@ def _roam_from(world: World, visitor: Visitor, here: Position) -> Position:
         x = here.x - (x - here.x)
     if not 0 <= y <= size:
         y = here.y - (y - here.y)
-    return Position(min(max(x, 0.0), size), min(max(y, 0.0), size))
+    spot = Position(min(max(x, 0.0), size), min(max(y, 0.0), size))
+    return on_island(world.map, here, spot)
 
 
 def _along(start: float, end: float, share: float) -> float:
