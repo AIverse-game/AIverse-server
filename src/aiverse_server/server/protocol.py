@@ -29,6 +29,7 @@ from ..economy.ads import shown
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
 from ..economy.land import PARCEL_SIZE, grid_size, plots
+from ..economy.payouts import latest_payout
 from ..economy.trade import PurchaseOffer, SaleOffer
 from ..economy.visitors import VISITOR_SPEED, remaining_legs, visitor_position
 from ..game.actions import (
@@ -48,7 +49,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 27
+PROTOCOL_VERSION = 28
 
 ERROR_MAX_LENGTH = 200
 
@@ -382,10 +383,19 @@ class MapView(_Message):
     parcel_prices: list[list[int]]
 
 
+class IncomeView(_Message):
+    at: float
+    """Game time of the payday that paid the facility; a later one than the page last saw is new."""
+    coins: int
+    """Whole coins the facility was paid then, sponsors and admission fees together."""
+
+
 class FacilityView(_Message):
     kind: Literal["ad", "portal", "game_hall", "workspace"]
     contents: int
     expires_in: list[float]
+    income: IncomeView | None = None
+    """What the facility was paid at the payday that last paid it; absent when none has."""
 
 
 class ParcelView(_Message):
@@ -608,6 +618,12 @@ ServerMessage = (
 )
 
 
+def income_view(world: World, parcel_id: str) -> IncomeView | None:
+    """What the facility on the parcel was paid at its latest payday, None when never."""
+    payout = latest_payout(world, parcel_id)
+    return None if payout is None else IncomeView(at=payout.at, coins=payout.coins)
+
+
 def world_view(
     world: World,
     remaining_seconds: float,
@@ -666,6 +682,7 @@ def world_view(
                         for stale_at in parcel.facility.contents
                         if stale_at > world.time
                     ],
+                    income=income_view(world, parcel.id),
                 )
                 if parcel.facility is not None
                 else None,

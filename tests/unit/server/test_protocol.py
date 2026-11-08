@@ -4,8 +4,10 @@ from typing import Any
 
 import pytest
 
+from aiverse_server.core.admissions import AdmissionBook
 from aiverse_server.core.compute import ComputeBook, Job
 from aiverse_server.core.land import Facility, Parcel
+from aiverse_server.core.sponsors import SponsorBook
 from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy import exchange as exchange_rules
@@ -109,6 +111,24 @@ def test_facility_state_and_manual_actions_use_authoritative_rules() -> None:
         message = parse_client_message(json.dumps({"type": "action", "action": payload}))
         assert isinstance(message, protocol.ActionMessage)
         assert type(protocol.to_action(message)).__name__ == expected
+
+
+def test_a_facility_shows_what_it_was_paid_at_its_latest_payday() -> None:
+    world = replace(
+        WORLD,
+        parcels=(
+            Parcel(1, 1, "a", Facility("ad", 0.0, (100.0,))),
+            Parcel(1, 2, "a", Facility("workspace", 0.0)),
+        ),
+        sponsors=SponsorBook(topped_up_at=60.0, last_paid=(("L1-1", 18),)),
+        admissions=AdmissionBook(paid_at=60.0, last_paid=(("L1-1", 4),)),
+    )
+
+    view = world_view(world, 90).model_dump(by_alias=True, exclude_none=True)
+
+    paid, unpaid = (parcel["facility"] for parcel in view["parcels"])
+    assert paid["income"] == {"at": 60.0, "coins": 22}
+    assert "income" not in unpaid
 
 
 def test_a_parsed_request_keeps_the_key_out_of_its_repr() -> None:

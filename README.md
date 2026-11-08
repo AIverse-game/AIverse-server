@@ -109,16 +109,16 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 27。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 28。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 27}` | 连接后发送；多余字段忽略 |
+| 客户端 → 服务端 | `{"type": "hello", "protocolVersion": 28}` | 连接后发送；多余字段忽略 |
 | 客户端 → 服务端 | `{"type": "view_as", "residentId": "r1"}` | `hello` 成功后才能发送：选择这个连接以哪名居民的身份看私聊、报价、合约与挂单，`null` 为不以任何人身份。回复一份新的 `state`；居民不存在时回复 `bad_message`，原选择不变。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "action", "action": {...}}` | 操作原语，`hello` 成功后才能发送，见下 |
 | 客户端 → 服务端 | `{"type": "start_agent", "residentId": "r1", "llm": {"baseUrl": "...", "apiKey": "...", "model": "..."}}` | `hello` 成功后才能发送：把居民交给大模型，同时替换原有的 Agent。三项都可以省略或留空，由配置文件覆盖的项不用填；每项最多 2048 字符。尚无归属，可选任何居民 |
 | 客户端 → 服务端 | `{"type": "stop_agent", "residentId": "r1"}` | `hello` 成功后才能发送：停止驱动该居民的 Agent，没有 Agent 时什么也不做 |
-| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 27, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
+| 服务端 → 客户端 | `{"type": "welcome", "protocolVersion": 28, "llmOverrides": ["apiKey"]}` | 回应 `hello`。`llmOverrides` 是配置文件覆盖的设置（`baseUrl`、`apiKey`、`model`），只列名字、不含值，没有时为空列表 |
 | 服务端 → 客户端 | `{"type": "state", "world": {...}}` | 紧跟 `welcome`；世界变化后、游戏结束时也推送给每个已握手的连接。内容见下 |
 | 服务端 → 客户端 | `{"type": "visitors", "speed": 2.5, "visitors": [{"id": 3, "position": {...}, "legs": [{"start": {...}, "end": {...}}]}]}` | 脚本访客不在 `state` 里：握手后紧跟 `state` 发一次，之后每 2 秒（`VISITOR_PUSH_SECONDS`）发给每个已握手的连接，世界里没有访客时不发。每份是一张快照：`position` 是发送时的位置，`legs` 是还要走的直线段（按 `speed` 每秒走多少地图单位，第一段从 `position` 起；一段的终点和下一段的起点不同表示走了传送门，不花时间），走完停在最后一段的终点，`legs` 为空表示站着。下一份会整个替换这一份，不在其中的访客已离开地图（在城外的访客不发）。每个连接只保留最新一份待发的 |
 | 服务端 → 客户端 | `{"type": "action_result", "ok": true}` | 回应发送者的 `action`。被拒绝时 `ok` 为 `false`，附 `code`（如 `unknown_resident`、`out_of_bounds`、`resident_left`、`game_over`、`busy`、`empty_speech`、`speech_too_long`、`invalid_speech`、`unknown_listener`；客户端应接受未知代码）和 `message` |
@@ -144,7 +144,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 `leave_game` 让居民出局：与其有关的待处理报价撤销并退回预留，物品清空，金币保留并参与排名；居民仍留在地图上，之后其操作一律以 `resident_left` 拒绝。游戏结束后，所有操作以 `game_over` 拒绝。交易与答复事件的原语还不在协议中。
 
-`world` 在协议 27 还包括 `map.parcelSize`、`map.blockCells`、`map.venueCells`（游戏厅和工作空间占的方块边长，单位是地块，默认世界为 2，即 20 × 20） 与按行排列的 `map.parcelPrices`、公开的 `parcels`（产权人、份额、设施种类、有效内容数及每份内容的 `expiresIn` 剩余秒数）、`jobs`（进行中的工作及剩余秒数）；只有 `view_as` 选择居民后才有 `content`（`viewerId`、该居民携带的广告与游戏数量）。设施可为 `ad`、`portal`、`game_hall`、`workspace`；游戏厅和工作空间占一个 `venueCells` × `venueCells` 的方块，设施记在方块西北角的那块地上，方块里其余的地块没有设施，别的设施也不能建在上面（页面按 `venueCells` 自己推算）；建设来源为 `self` 或 `on_demand`，订阅节点尚未进入页面操作。
+`world` 在协议 28 还包括 `map.parcelSize`、`map.blockCells`、`map.venueCells`（游戏厅和工作空间占的方块边长，单位是地块，默认世界为 2，即 20 × 20） 与按行排列的 `map.parcelPrices`、公开的 `parcels`（产权人、份额、设施种类、有效内容数、每份内容的 `expiresIn` 剩余秒数，以及上一个付给它钱的付款日里它收到的 `income`：`at` 是那个付款日的游戏时间，`coins` 是赞助商和入场费合计的整数金币，没有付过时省略；页面靠 `at` 变大判断是新的一笔）、`jobs`（进行中的工作及剩余秒数）；只有 `view_as` 选择居民后才有 `content`（`viewerId`、该居民携带的广告与游戏数量）。设施可为 `ad`、`portal`、`game_hall`、`workspace`；游戏厅和工作空间占一个 `venueCells` × `venueCells` 的方块，设施记在方块西北角的那块地上，方块里其余的地块没有设施，别的设施也不能建在上面（页面按 `venueCells` 自己推算）；建设来源为 `self` 或 `on_demand`，订阅节点尚未进入页面操作。
 
 `world` 的部分结构示意（省略 `parcelPrices`、`parcels`、`jobs` 等必填字段，不能直接作为完整协议消息复制使用）：
 
@@ -221,6 +221,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/economy/exchange.py` | 挂单交易所：下单、价格优先与时间优先的连续撮合、撤单、到期，挂单簿深度、最近成交价与成交量 |
 | `src/aiverse_server/economy/compute.py` | 算力：速率与价格常量，买节点（生成式、渲染式）、开工建广告位、传送门、游戏厅、工作空间或做内容（广告或游戏）、完工、节点到期、取消 |
 | `src/aiverse_server/economy/ads.py` | 广告位、游戏厅与内容：内容物品 `ad_content`（广告位）和 `game_content`（游戏厅）、放进对应的设施（展示 300 秒后过期，最多 5 份）；收入见 `sponsors.py` 和 `admissions.py` |
+| `src/aiverse_server/economy/payouts.py` | 设施上一个付款日收到的钱 `latest_payout`（赞助商与入场费两本账合计，带付款日时间 `at`），给协议里设施的 `income` 用 |
 | `src/aiverse_server/economy/shares.py` | 地块份额：按份额分账 `split_income`，份额报价事件 `ShareOffer`（持有人把份额转给别人，可收费，可免费），已承诺的份额不能再承诺 |
 | `src/aiverse_server/economy/joint_purchase.py` | 合买地块：提议事件 `JointPurchase`（对方出多少钱、拿多少份，提议人的那份预留），同意时两人各付镇上、地块归提议人，预留的钱统计 |
 | `src/aiverse_server/economy/land.py` | 地块：网格、按离地图中央远近定价、购买，地图中央 `town_centre` |
