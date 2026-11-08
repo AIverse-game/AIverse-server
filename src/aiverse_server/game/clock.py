@@ -11,6 +11,7 @@ time themselves to skip ahead. Ending the game on time is the caller's part, see
 from dataclasses import replace
 
 from ..core.world import World
+from ..economy.admissions import next_admission_payday, pay_admissions
 from ..economy.compute import expire_nodes, finish_jobs, next_compute_due
 from ..economy.contracts import expire_contracts, next_expiry
 from ..economy.exchange import expire_orders, next_order_expiry
@@ -31,7 +32,7 @@ def settle_due(world: World) -> World:
         timed = replace(after, time=due)
         arrived = record_activity(timed, finish_walks(timed))
         built = expire_nodes(finish_jobs(arrived))
-        after = expire_orders(expire_contracts(pay_sponsors(advance_crowd(built))))
+        after = expire_orders(expire_contracts(pay_admissions(pay_sponsors(advance_crowd(built)))))
     return world if after is world else replace(after, time=target)
 
 
@@ -43,6 +44,7 @@ def next_due(world: World) -> float | None:
         next_compute_due(world),
         next_visit(world),
         next_payday(world),
+        next_admission_payday(world),
         next_expiry(world),
         next_order_expiry(world),
     )

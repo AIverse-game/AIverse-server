@@ -8,8 +8,8 @@ from typing import Literal
 FacilityKind = Literal["ad", "portal", "game_hall", "workspace"]
 """What a facility is: an ad slot, which earns from the content it shows; a portal, which
 earns nothing itself but joins parcels into a transport network, see `economy/portals.py`; or
-a game hall or a workspace, venues for the visitors of a later design that earn nothing yet,
-see `economy/ads.py`. Other kinds come with the designs that need them, see the client
+a game hall or a workspace, venues that earn from the fees workers pay at the door, see
+`economy/admissions.py`. Other kinds come with the designs that need them, see the client
 repository's docs/design/facilities.md."""
 
 FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal", "game_hall", "workspace")

@@ -300,3 +300,26 @@ def test_the_sponsors_are_paid_at_every_payday_however_late_the_clock_wakes() ->
     assert on_time > 0
     assert slightly_late > on_time * 0.9
     assert late > on_time * 0.9
+
+
+def test_a_worker_paying_at_a_door_is_not_news_but_the_payout_at_the_payday_is() -> None:
+    entrance = Position(50, 50)
+    worker = Visitor(
+        0, "staying", 5.0, entrance, entrance, kind="worker", errands=("workspace",), purse=10.0
+    )
+    desk = Parcel(5, 5, "a", Facility("workspace", 0.0))
+    game, clock = make_game(replace(WORLD, parcels=(desk,), crowd=Crowd(visitors=(worker,))))
+    watcher = Outbox()
+    game.watch(watcher)
+
+    clock.now = 20.0
+    game.tick()
+    let_in = game.world.admissions.admitted
+    quiet = watcher.state is None
+    clock.now = 31.0
+    game.tick()
+
+    assert let_in != ()
+    assert quiet
+    assert watcher.state is not None
+    assert me(game, "a").coins == 5_000 + 4

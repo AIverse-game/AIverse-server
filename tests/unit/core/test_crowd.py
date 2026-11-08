@@ -16,7 +16,7 @@ def visitor(**kwargs: object) -> Visitor:
 
 def test_a_visitor_has_a_stop_exactly_when_it_is_going_to_a_slot() -> None:
     with pytest.raises(ValueError, match="stop"):
-        visitor(goal="slot")
+        visitor(goal="place")
     with pytest.raises(ValueError, match="stop"):
         visitor(goal="wander", stop="L1-1")
 

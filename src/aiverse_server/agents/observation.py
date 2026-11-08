@@ -194,6 +194,9 @@ class MyParcelView:
     people_seen: float = 0.0
     """People the scripted visitors have counted as seeing its ad slot so far this game, see
     `economy/visitors.py`; the sponsors pay for them at paydays, see `LandView.sponsors`."""
+    people_admitted: float = 0.0
+    """People let into its workspace or game hall so far this game, who paid the fee at the door;
+    the fees are paid out to the holders at paydays, with the sponsors' pay."""
 
 
 @dataclass(frozen=True)
@@ -735,6 +738,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
                 dict(owned[square.id].shares),
                 _cut(world, facilities.get(square.id), resident_id),
                 round(world.crowd.viewed(square.id), 1),
+                round(world.admissions.admitted_to(square.id), 1),
             )
             for square in mine
         ),
@@ -757,8 +761,11 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
 
 
 def _income(world: World, parcel: Parcel | None) -> int:
-    """Coins the ad slot on `parcel` was paid at the last payday with views, 0 without."""
-    return world.sponsors.last_paid_to(parcel.id) if parcel is not None else 0
+    """Coins the facility on `parcel` was paid at the last payday, from sponsors and from fees at
+    the door, 0 without."""
+    if parcel is None:
+        return 0
+    return world.sponsors.last_paid_to(parcel.id) + world.admissions.last_paid_to(parcel.id)
 
 
 def _cut(world: World, parcel: Parcel | None, resident_id: str) -> int:

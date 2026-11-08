@@ -3,9 +3,12 @@
 import math
 from dataclasses import replace
 
+import pytest
+
 from aiverse_server.core.land import Facility, Link, Parcel
 from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
+from aiverse_server.economy import visitors
 from aiverse_server.economy.ads import CONTENT_LIFETIME
 from aiverse_server.economy.visitors import (
     MAX_DWELL,
@@ -27,6 +30,13 @@ from aiverse_server.economy.visitors import (
 from aiverse_server.game.clock import next_due, settle_due
 from aiverse_server.game.layout import create_default_world
 from aiverse_server.residents.walking import WALK_SPEED
+
+
+@pytest.fixture(autouse=True)
+def tourists_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tests here are about tourists unless they say otherwise, see `test_workers.py`."""
+    monkeypatch.setattr(visitors, "WORKER_SHARE", 0.0)
+
 
 ENTRANCE = Position(50, 50)
 PORTAL = Facility("portal", 0.0)
@@ -77,7 +87,7 @@ def test_a_visitor_comes_in_at_the_entrance_and_heads_for_the_slot_worth_seeing(
     after = at(world, 5.0)
 
     walker = the_visitor(after)
-    assert (walker.phase, walker.goal, walker.stop) == ("walking", "slot", "L5-5")
+    assert (walker.phase, walker.goal, walker.stop) == ("walking", "place", "L5-5")
     assert walker.at == ENTRANCE
     assert walker.target == Position(55, 55)
     assert walker.until == 5.0 + math.dist((50, 50), (55, 55)) / VISITOR_SPEED
@@ -218,7 +228,9 @@ def test_a_slot_stops_counting_the_visitors_who_have_left_it() -> None:
     # one more chooses between it and L7-5, which are as good as each other and as near.
     both = (("L2-5", 999.0), ("L7-5", 999.0))
     leaving = tuple(
-        visitor(id=i, phase="staying", until=5.0, goal="slot", stop="L2-5", stops_left=1, seen=both)
+        visitor(
+            id=i, phase="staying", until=5.0, goal="place", stop="L2-5", stops_left=1, seen=both
+        )
         for i in range(30)
     )
     picks = []

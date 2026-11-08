@@ -123,9 +123,15 @@ def next_payday(world: World) -> float | None:
     nothing to pay for or no sponsor to pay."""
     if not world.sponsors.sponsors or not unsettled_views(world):
         return None
-    if latest_payday(world.time) > world.sponsors.topped_up_at:
-        return world.time
-    return latest_payday(world.time) + PAY_PERIOD
+    return next_payday_after(world.time, world.sponsors.topped_up_at)
+
+
+def next_payday_after(time: float, last: float) -> float:
+    """When a payday is held, given that the last one was the multiple `last` of the period and
+    it is `time` now: at once when a multiple has passed since, else at the next multiple."""
+    if latest_payday(time) > last:
+        return time
+    return latest_payday(time) + PAY_PERIOD
 
 
 def budget_cap(sponsor: Sponsor) -> float:

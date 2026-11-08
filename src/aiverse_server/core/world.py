@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .admissions import AdmissionBook
 from .compute import ComputeBook
 from .events import EventQueue
 from .land import Link, Parcel
@@ -493,6 +494,8 @@ class World:
     `visitors.py`."""
     sponsors: SponsorBook = SponsorBook()
     """Who pays for those views and what they were paid, see `sponsors.py`."""
+    admissions: AdmissionBook = AdmissionBook()
+    """Fees visitors paid at the doors of workspaces and game halls, see `admissions.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -556,6 +559,10 @@ class World:
         for parcel_id, _ in (*self.sponsors.settled, *self.sponsors.last_paid):
             if parcel_id not in owners:
                 raise ValueError(f"sponsors dealt with {parcel_id}, which nobody owns")
+        book = self.admissions
+        for parcel_id, _ in (*book.unpaid, *book.admitted, *book.last_paid):
+            if parcel_id not in owners:
+                raise ValueError(f"admissions to {parcel_id}, which nobody owns")
         for node in self.compute.nodes:
             if node.owner_id not in ids or node.owner_id in left or self.ended:
                 raise ValueError(f"node {node.id} outlives its game or resident")

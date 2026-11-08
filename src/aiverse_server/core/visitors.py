@@ -14,9 +14,16 @@ Phase = Literal["away", "walking", "staying"]
 """Off the map until `until`; walking to `target`, arriving at `until`; or standing at `target`
 until `until`."""
 
-Goal = Literal["slot", "wander", "exit"]
-"""What a walk is for: to see the ad slot `Visitor.stop`; to roam to a random spot because
-nothing was worth seeing; or to leave through the entrance."""
+Goal = Literal["place", "wander", "exit"]
+"""What a walk is for: to go to the facility on the parcel `Visitor.stop`, an ad slot to see, a
+workspace to work in or a game hall to play in; to roam to a random spot because nothing was
+worth seeing; or to leave through the entrance."""
+
+Kind = Literal["tourist", "worker"]
+"""A tourist looks at ad slots; a worker goes to a workspace and then a game hall."""
+
+Errand = Literal["workspace", "game_hall"]
+"""What a worker needs, in the order it goes."""
 
 
 @dataclass(frozen=True)
@@ -40,8 +47,16 @@ class Visitor:
     quicker way; the walk is then `at` to the first, `target` from the second."""
     goal: Goal = "exit"
     stop: str | None = None
-    """The parcel of the ad slot the visitor is on its way to or standing at; None unless
-    `goal` is `slot`."""
+    """The parcel of the facility the visitor is on its way to or standing at; None unless `goal`
+    is `place`."""
+    kind: Kind = "tourist"
+    """What the visitor does on this trip, chosen as it comes in."""
+    errands: tuple[Errand, ...] = ()
+    """The facilities a worker still has to go to on this trip, in order; the one it is on its
+    way to or at is not in it. Empty for a tourist."""
+    purse: float = 0.0
+    """Coins a worker still has to spend on this trip, for one person: admission fees come out of
+    it, and a facility it cannot pay is not visited. 0 for a tourist."""
     trip: int = 0
     """Visits to town so far, counting this one; with `step` it gives the dice of each choice
     their own seed."""
@@ -56,10 +71,16 @@ class Visitor:
     def __post_init__(self) -> None:
         if self.phase not in ("away", "walking", "staying"):
             raise ValueError(f"unknown visitor phase {self.phase!r}")
-        if self.goal not in ("slot", "wander", "exit"):
+        if self.goal not in ("place", "wander", "exit"):
             raise ValueError(f"unknown visitor goal {self.goal!r}")
-        if (self.goal == "slot") != (self.stop is not None):
-            raise ValueError("a visitor has a stop exactly when it is going to a slot")
+        if (self.goal == "place") != (self.stop is not None):
+            raise ValueError("a visitor has a stop exactly when it is going to a place")
+        if self.kind not in ("tourist", "worker"):
+            raise ValueError(f"unknown visitor kind {self.kind!r}")
+        if self.kind == "tourist" and (self.errands or self.purse):
+            raise ValueError("a tourist has no errands and no purse")
+        if not (math.isfinite(self.purse) and self.purse >= 0):
+            raise ValueError(f"visitor {self.id} has a purse of {self.purse!r}")
         times = (self.until, self.departs_at, *(until for _, until in self.seen))
         if not all(math.isfinite(time) for time in times):
             raise ValueError(f"visitor {self.id} has a time that is not finite")

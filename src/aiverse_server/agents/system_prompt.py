@@ -6,6 +6,7 @@ the observation carries the current state and prices.
 
 from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
+from ..economy.admissions import FEES
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME
 from ..economy.compute import (
     AD_WORKLOAD,
@@ -61,7 +62,7 @@ cannot act except to speak, cancel orders, handle compute and content or leave.
 - The map is a {grid} x {grid} grid of {PARCEL_SIZE:g}-unit parcels, id L<col>-<row>, col =
 floor(x / {PARCEL_SIZE:g}). Standing in a free parcel, buy_parcel buys it from the town for
 {LAND_PRICE_EDGE}-{LAND_PRICE_CENTRE} coins, dearer nearer the middle of the map. It stays
-yours; it earns only through an ad slot built on it.
+yours; it earns only through an ad slot, workspace or game hall built on it.
 - Compute is a speed: a job of W workload takes W / rate seconds. Your own compute is free,
 {SELF_RATE:g} workload/s, one job at a time of any kind. A node does {NODE_RATE:g}/s, one job at
 a time. Hire one for a single job at {ON_DEMAND_PRICE} coins per workload, or subscribe with
@@ -94,8 +95,11 @@ content, more to ones with more pieces and nearer to them, fewer to crowded ones
 come again; each stands for more people as the game goes on. Near a slot is enough to see it.
 The land observation shows how many people are passing each parcel now.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
-- build_venue builds a game hall (shows games, make_content content=game) or a workspace. Neither
-earns yet.
+- build_venue builds a game hall (shows games, make_content content=game) or a workspace. Some
+visitors are workers: they go to a workspace, then to a game hall showing games, and pay a
+fee at each door, {FEES["workspace"]} and {FEES["game_hall"]} coins a person, from a purse that
+lets some afford only the workspace. The fees are paid to the holders at paydays, with the sponsors'
+pay. A game hall showing no games draws nobody.
 
 Deals and information
 - Speak aloud within {HEARING_RADIUS:g} units or privately to one resident anywhere; at most

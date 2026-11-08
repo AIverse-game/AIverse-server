@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 from aiverse_server.agents.observation import observe
+from aiverse_server.core.admissions import AdmissionBook
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.sponsors import Sponsor, SponsorBook
 from aiverse_server.core.visitors import Crowd
@@ -40,3 +41,19 @@ def test_a_resident_is_told_who_pays_for_views_and_how_much_budget_each_has_now(
     (view,) = land.sponsors
     assert (view.name, view.price_per_view, view.budget_per_second) == ("甲方", 2.0, 1.5)
     assert view.budget_now == 40  # 10 left and 20 s at 1.5
+
+
+def test_a_resident_is_told_how_many_people_went_into_their_workspace_and_what_it_earned() -> None:
+    desk = Facility("workspace", 0.0)
+    world = replace(
+        WORLD,
+        parcels=(*WORLD.parcels, Parcel(2, 2, "a", desk)),
+        admissions=AdmissionBook(admitted=(("L2-2", 7.26),), last_paid=(("L2-2", 28),)),
+    )
+
+    perception = begin_turn(world, "a")[1]
+    land = observe(world, "a", perception, 600).land
+
+    mine = {parcel.id: parcel for parcel in land.mine}["L2-2"]
+    assert (mine.facility, mine.people_admitted, mine.income_last_payday) == ("workspace", 7.3, 28)
+    assert mine.my_cut_last_payday == 28

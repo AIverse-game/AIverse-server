@@ -1,16 +1,21 @@
-"""Visitors: scripted tourists who walk the map and see the ad slots, so that where the traffic
-goes is up to the layout of the town and not fixed beforehand.
+"""Visitors: scripted tourists and workers who walk the map, so that where the traffic goes is up
+to the layout of the town and not fixed beforehand.
 
 There are `VISITOR_COUNT` of them, each standing for more and more people as the game goes on,
-`visitor_weight`. A visitor comes in through the entrance, the middle of the map, makes a
-few stops at ad slots showing content, then walks back out and stays away a while before
-coming again. Nothing about it is stored beyond where it set off from and to, and when: where
-it is in between is worked out from that, `visitor_position`, and something happens only when a
-walk or a stay ends, `advance_crowd`, at the times `next_visit` gives.
+`visitor_weight`. A visitor comes in through the entrance, the middle of the map, and on each
+trip is a tourist or, with probability `WORKER_SHARE`, a worker. A tourist makes a few stops at
+ad slots showing content. A worker goes to a workspace and then to a game hall showing games,
+paying the fee at each door out of its purse for the trip, see `admissions.py`: an errand with
+nowhere to go, or a fee it cannot pay, is skipped, and with none left it leaves. Then the visitor
+walks back out and stays away a while before coming again. Nothing about it is stored beyond
+where it set off from and to, and when: where it is in between is worked out from that,
+`visitor_position`, and something happens only when a walk or a stay ends, `advance_crowd`, at
+the times `next_visit` gives.
 
-Where to next, `_head_for`: among the ad slots showing content that the visitor has not been
-counted at lately, it picks by a multinomial logit, so every slot has a chance but better ones
-more. A slot's utility is `APPEAL` times the log of one plus the pieces it shows, less
+Where to next, `_head_for`: among the facilities of the kind it needs (for a tourist the ad
+slots showing content that it has not been counted at lately), it picks by a multinomial logit,
+so every facility has a chance but better ones more. The utility is `APPEAL` times the log of one
+plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`), less
 `WALK_COST` per second of walking and `CROWD_COST` per `CROWD_CAPACITY` visitors already going
 or standing there, plus noise. The walk is the shorter of walking straight and going through a
 network of portals, see `portals.Router`, so the lines change which slots are near, and whether
@@ -20,8 +25,9 @@ seeing the visitor roams to a random spot nearby and looks again.
 Choices are random but the dice are not stateful: each is a hash of the crowd's seed, the
 visitor, its trip, its step and what is being chosen, so the same game plays out the same way.
 
-A visitor counts as having seen a slot when it spends at least `MIN_VIEW_SECONDS` within
-`VIEW_RADIUS` of it, standing there or passing by, and is not counted at the same slot again for
+A visitor, whichever kind, counts as having seen a slot when it spends at least
+`MIN_VIEW_SECONDS` within `VIEW_RADIUS` of it, standing there or passing by on the way to
+somewhere else, and is not counted at the same slot again for
 `SEEN_FOR` game seconds, even on a later trip. The count is made when the walk ends, judging
 by the slots showing content then, and adds the people the visitor
 stands for to the views of the slot's parcel, `Crowd.views`, which the sponsors pay for, see
@@ -34,11 +40,12 @@ untouched.
 import hashlib
 import math
 from collections import Counter, defaultdict
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
-from ..core.land import Parcel
 from ..core.visitors import Crowd, Goal, Visitor
 from ..core.world import Position, World
+from .admissions import FEES, admit
 from .ads import shown
 from .land import parcel_centre, town_centre
 from .portals import Router
@@ -62,7 +69,28 @@ MAX_STOPS = 4
 
 MIN_DWELL = 6.0
 MAX_DWELL = 14.0
-"""Game seconds a visitor stays at a slot it has come to see, least and most."""
+"""Game seconds a visitor stays at an ad slot it has come to see, least and most."""
+
+DWELL: dict[str, tuple[float, float]] = {
+    "ad": (MIN_DWELL, MAX_DWELL),
+    "workspace": (20.0, 40.0),
+    "game_hall": (10.0, 20.0),
+}
+"""Game seconds a visitor stays at a facility of each kind, least and most."""
+
+WORKER_SHARE = 0.3
+"""Share of trips made by workers, who go to a workspace and then a game hall; the rest are
+tourists, who look at ad slots."""
+
+MIN_PURSE = 6.0
+MAX_PURSE = 14.0
+"""Coins one person of a worker has to spend on a trip, least and most; with the fees in
+`admissions.py` a worker can always afford the workspace but only some can afford the game
+hall afterwards."""
+
+WORKSPACE_PIECES = 1
+"""A workspace shows no content, so it draws visitors as an ad slot showing this many pieces
+would."""
 
 MIN_AWAY = 20.0
 MAX_AWAY = 60.0
@@ -95,6 +123,10 @@ slot."""
 
 CROWD_CAPACITY = 8
 """Visitors a slot can take before it crowds; more make it less attractive, in proportion."""
+
+
+_SLACK = 1e-9
+"""Slack for comparing a purse with a fee."""
 
 
 def new_crowd(count: int = VISITOR_COUNT, seed: int = 0) -> Crowd:
@@ -174,15 +206,26 @@ def next_visit(world: World) -> float | None:
     return min((visitor.until for visitor in world.crowd.visitors), default=None)
 
 
+@dataclass(frozen=True)
+class _Town:
+    """What visitors can go to right now."""
+
+    places: dict[str, dict[str, tuple[Position, int]]]
+    """By kind of facility, then parcel: the centre and the pieces of content that draw people.
+    Only ad slots and game halls showing content are in it, and every workspace."""
+    kinds: Mapping[str, str]
+    """The kind of facility on each parcel that has one."""
+
+
 def advance_crowd(world: World) -> World:
     """Take the next step for every visitor whose walk, stay or absence has ended by
-    `world.time`: count what the walkers who arrived have seen, then send everyone on. The same
-    world when none has."""
+    `world.time`: count what the walkers who arrived have seen, take the fees of those who went
+    into a workspace or game hall, then send everyone on. The same world when none has."""
     now = world.time
     due = [visitor for visitor in world.crowd.visitors if visitor.until <= now]
     if not due:
         return world
-    slots = _open_slots(world)
+    town = _town(world)
     heading: Counter[str] = Counter(
         visitor.stop
         for visitor in world.crowd.visitors
@@ -190,15 +233,22 @@ def advance_crowd(world: World) -> World:
     )
     entrance = town_centre(world.map.size)
     views = dict(world.crowd.views)
+    admissions = world.admissions
     moved: dict[int, Visitor] = {}
     for visitor in due:
-        stepped, seen = _step(world, visitor, entrance, slots, heading)
+        stepped, seen, entered = _step(world, visitor, entrance, town, heading)
         moved[visitor.id] = stepped
         for parcel_id, people in seen.items():
             views[parcel_id] = views.get(parcel_id, 0.0) + people
+        if entered is not None:
+            admissions = admit(
+                admissions, entered, visitor_weight(visitor.until), FEES[town.kinds[entered]]
+            )
     visitors = tuple(moved.get(visitor.id, visitor) for visitor in world.crowd.visitors)
     return replace(
-        world, crowd=replace(world.crowd, visitors=visitors, views=tuple(sorted(views.items())))
+        world,
+        crowd=replace(world.crowd, visitors=visitors, views=tuple(sorted(views.items()))),
+        admissions=admissions,
     )
 
 
@@ -206,16 +256,19 @@ def _step(
     world: World,
     visitor: Visitor,
     entrance: Position,
-    slots: dict[str, tuple[Position, int]],
+    town: _Town,
     heading: Counter[str],
-) -> tuple[Visitor, dict[str, float]]:
-    """The visitor after the phase that has just ended, and the people it has counted at
-    each slot it saw. `heading` is how many visitors are going or standing at each slot, and is
-    kept up to date."""
+) -> tuple[Visitor, dict[str, float], str | None]:
+    """The visitor after the phase that has just ended, the people it has counted at each ad
+    slot it saw, and the parcel of the workspace or game hall it has just paid to get into, if
+    any. `heading` is how many visitors are going or standing at each place, and is kept up to
+    date."""
     now = visitor.until
     seed = world.crowd.seed
     if visitor.phase == "away":
+        worker = _dice(seed, visitor, "kind") < WORKER_SHARE
         stops = MIN_STOPS + int(_dice(seed, visitor, "stops") * (MAX_STOPS - MIN_STOPS + 1))
+        purse = MIN_PURSE + _dice(seed, visitor, "purse") * (MAX_PURSE - MIN_PURSE)
         arrived = replace(
             visitor,
             phase="staying",
@@ -226,68 +279,72 @@ def _step(
             stop=None,
             trip=visitor.trip + 1,
             step=0,
-            stops_left=stops,
+            kind="worker" if worker else "tourist",
+            errands=("workspace", "game_hall") if worker else (),
+            purse=purse if worker else 0.0,
+            stops_left=0 if worker else stops,
         )
-        return _head_for(world, arrived, now, slots, heading), {}
+        return _head_for(world, arrived, now, town, heading), {}, None
     if visitor.phase == "staying":
         if visitor.stop is not None:
             heading[visitor.stop] -= 1
         gone = replace(visitor, stop=None, goal="exit")
-        return _head_for(world, gone, now, slots, heading), {}
+        return _head_for(world, gone, now, town, heading), {}, None
     # A walk has ended.
+    kind = town.kinds[visitor.stop] if visitor.stop is not None else None
     dwell = 0.0
-    if visitor.goal == "slot":
-        dwell = MIN_DWELL + _dice(seed, visitor, "dwell") * (MAX_DWELL - MIN_DWELL)
-    gained, seen = _count_views(visitor, now, dwell, slots)
+    if kind is not None:
+        low, high = DWELL[kind]
+        dwell = low + _dice(seed, visitor, "dwell") * (high - low)
+    gained, seen = _count_views(visitor, now, dwell if kind == "ad" else 0.0, town.places["ad"])
     here = replace(visitor, at=visitor.target, via=None, seen=seen)
     if visitor.goal == "wander":
         # Roaming uses up a stop too, so with nothing to see a visitor still leaves in the end.
         here = replace(here, stops_left=max(visitor.stops_left - 1, 0))
-    if visitor.goal == "slot":
-        return (
-            replace(here, phase="staying", until=now + dwell, stops_left=visitor.stops_left - 1),
-            gained,
-        )
+    if visitor.goal == "place":
+        stays = replace(here, phase="staying", until=now + dwell)
+        if kind == "ad":
+            return replace(stays, stops_left=visitor.stops_left - 1), gained, None
+        # The fee was affordable when the visitor chose, and nothing else spends its purse.
+        fee = FEES[kind or ""]
+        return replace(stays, purse=max(visitor.purse - fee, 0.0)), gained, visitor.stop
     if visitor.goal == "exit":
         gap = MIN_AWAY + _dice(seed, visitor, "away") * (MAX_AWAY - MIN_AWAY)
-        return replace(here, phase="away", until=now + gap, stop=None), gained
-    return _head_for(world, here, now, slots, heading), gained
+        return replace(here, phase="away", until=now + gap, stop=None), gained, None
+    return _head_for(world, here, now, town, heading), gained, None
 
 
 def _head_for(
     world: World,
     visitor: Visitor,
     now: float,
-    slots: dict[str, tuple[Position, int]],
+    town: _Town,
     heading: Counter[str],
 ) -> Visitor:
-    """Send the visitor, standing at `visitor.target`, to the next ad slot it picks, to the
-    entrance when it has seen enough, or roaming when there is nothing to see."""
+    """Send the visitor, standing at `visitor.target`, to the next place it picks, to the
+    entrance when it has had enough, or roaming when a tourist finds nothing to see. A worker
+    goes to a facility for each errand it has, skipping those with nowhere to go."""
     here = visitor.target
-    seed = world.crowd.seed
     router = Router(world, here)
     goal: Goal = "exit"
     stop: str | None = None
     target = town_centre(world.map.size)
-    if visitor.stops_left > 0:
-        recent = {parcel_id for parcel_id, until in visitor.seen if until > now}
-        best: float | None = None
-        for parcel_id, (centre, pieces) in sorted(slots.items()):
-            if parcel_id in recent:
-                continue
-            seconds = router.to(centre).distance / VISITOR_SPEED
-            utility = (
-                APPEAL * math.log(1 + pieces)
-                - WALK_COST * seconds
-                - CROWD_COST * heading[parcel_id] / CROWD_CAPACITY
-                + _gumbel(_dice(seed, visitor, f"pick:{parcel_id}"))
-            )
-            if best is None or utility > best:
-                best, goal, stop, target = utility, "slot", parcel_id, centre
-        if stop is None:
+    errands = visitor.errands
+    if visitor.kind == "worker":
+        left = list(errands)
+        while left and stop is None:
+            picked = _pick(world, visitor, left.pop(0), town, heading, router, now)
+            if picked is not None:
+                goal, (stop, target) = "place", picked
+        errands = tuple(left)
+    elif visitor.stops_left > 0:
+        picked = _pick(world, visitor, "ad", town, heading, router, now)
+        if picked is None:
             goal, target = "wander", _roam_from(world, visitor, here)
         else:
-            heading[stop] += 1
+            goal, (stop, target) = "place", picked
+    if stop is not None:
+        heading[stop] += 1
     route = router.to(target)
     return replace(
         visitor,
@@ -299,9 +356,43 @@ def _head_for(
         via=route.via,
         goal=goal,
         stop=stop,
+        errands=errands,
         step=visitor.step + 1,
         seen=tuple((parcel_id, until) for parcel_id, until in visitor.seen if until > now),
     )
+
+
+def _pick(
+    world: World,
+    visitor: Visitor,
+    kind: str,
+    town: _Town,
+    heading: Counter[str],
+    router: Router,
+    now: float,
+) -> tuple[str, Position] | None:
+    """The facility of `kind` the visitor chooses, with its centre, by the logit of the module
+    docstring; None when there is nothing it can go to. An ad slot it was counted at lately is
+    out, and so is a workspace or game hall whose fee its purse cannot pay."""
+    seed = world.crowd.seed
+    recent = {parcel_id for parcel_id, until in visitor.seen if until > now}
+    best: float | None = None
+    chosen: tuple[str, Position] | None = None
+    for parcel_id, (centre, pieces) in sorted(town.places[kind].items()):
+        if kind == "ad" and parcel_id in recent:
+            continue
+        if kind != "ad" and visitor.purse + _SLACK < FEES[kind]:
+            continue
+        seconds = router.to(centre).distance / VISITOR_SPEED
+        utility = (
+            APPEAL * math.log(1 + pieces)
+            - WALK_COST * seconds
+            - CROWD_COST * heading[parcel_id] / CROWD_CAPACITY
+            + _gumbel(_dice(seed, visitor, f"pick:{parcel_id}"))
+        )
+        if best is None or utility > best:
+            best, chosen = utility, (parcel_id, centre)
+    return chosen
 
 
 def _count_views(
@@ -310,7 +401,7 @@ def _count_views(
     dwell: float,
     slots: dict[str, tuple[Position, int]],
 ) -> tuple[dict[str, float], tuple[tuple[str, float], ...]]:
-    """The people the walk that has just ended adds to each slot's views, and the visitor's
+    """The people the walk that has just ended adds to each ad slot's views, and the visitor's
     record of where it has been counted. A slot counts when the walk spent `MIN_VIEW_SECONDS`
     within `VIEW_RADIUS` of it, with the stay at its target added, and the visitor has not been
     counted there lately."""
@@ -357,21 +448,30 @@ def _legs(visitor: Visitor) -> list[tuple[Position, Position]]:
     return [(visitor.at, visitor.via[0]), (visitor.via[1], visitor.target)]
 
 
-def _open_slots(world: World) -> dict[str, tuple[Position, int]]:
-    """Every ad slot showing content now, by parcel, with its centre and the pieces shown."""
-    open_slots = {}
+def _town(world: World) -> _Town:
+    places: dict[str, dict[str, tuple[Position, int]]] = {
+        "ad": {},
+        "workspace": {},
+        "game_hall": {},
+    }
+    kinds = {}
     for parcel in world.parcels:
-        pieces = _pieces(parcel, world.time)
+        facility = parcel.facility
+        if facility is None:
+            continue
+        kinds[parcel.id] = facility.kind
+        if facility.kind == "workspace":
+            pieces = WORKSPACE_PIECES
+        elif facility.kind in ("ad", "game_hall"):
+            pieces = shown(facility, world.time)
+        else:
+            continue
         if pieces:
-            open_slots[parcel.id] = (parcel_centre(world.map.size, parcel.col, parcel.row), pieces)
-    return open_slots
-
-
-def _pieces(parcel: Parcel, time: float) -> int:
-    facility = parcel.facility
-    if facility is None or facility.kind != "ad":
-        return 0
-    return shown(facility, time)
+            places[facility.kind][parcel.id] = (
+                parcel_centre(world.map.size, parcel.col, parcel.row),
+                pieces,
+            )
+    return _Town(places, kinds)
 
 
 def _roam_from(world: World, visitor: Visitor, here: Position) -> Position:

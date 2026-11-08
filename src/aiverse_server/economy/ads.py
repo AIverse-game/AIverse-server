@@ -7,11 +7,10 @@ facility on their own parcel, `place_content`, where it is shown for `CONTENT_LI
 seconds and then goes stale; the clock starts when it is put in, so a piece in hand never
 spoils. A facility shows at most `AD_SLOT_CAPACITY` pieces at once.
 
-A game hall shows games but earns nothing yet: its visitors, who will pay it, come with a later
-change, see the client repository's docs/design/facilities.md. A workspace shows nothing and
-earns nothing either, see `compute.py`; both are only built for now. An ad slot earns from the
-views it gets, see `sponsors.py`; what draws visitors to it is the content it shows, see
-`visitors.py`.
+A game hall shows games and a workspace shows nothing, see `compute.py` for how they are built;
+both earn from the fees workers pay at the door, see `admissions.py`, and a game hall draws
+them only while it shows a game. An ad slot earns from the views it gets, see `sponsors.py`;
+what draws visitors to any of them is the content it shows, see `visitors.py`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
