@@ -61,6 +61,9 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                 "map": {
                     "size": 50,
                     "parcelSize": 10,
+                    "blockCells": 1,
+                    "road": 0,
+                    "lobby": False,
                     "parcelPrices": [
                         [2170, 2340, 2410, 2340, 2170],
                         [2340, 2590, 2710, 2590, 2340],
@@ -116,10 +119,11 @@ def test_default_app_serves_the_fixed_layout() -> None:
         ws.send_text(json.dumps(HELLO))
         ws.receive_json()
         world = ws.receive_json()["world"]
-    assert world["map"]["size"] == 150
+    assert world["map"]["size"] == 186
+    assert (world["map"]["blockCells"], world["map"]["road"], world["map"]["lobby"]) == (3, 6, True)
     assert [r["id"] for r in world["residents"]] == [f"r{n}" for n in range(1, 9)]
     assert {r["coins"] for r in world["residents"]} == {10_000}
-    assert {(r["position"]["x"], r["position"]["y"]) for r in world["residents"]} == {(75, 75)}
+    assert {(r["position"]["x"], r["position"]["y"]) for r in world["residents"]} == {(93, 93)}
 
 
 @pytest.mark.parametrize(

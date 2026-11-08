@@ -17,12 +17,15 @@ from aiverse_server.core.world import Position
 from aiverse_server.game.layout import create_default_world
 from aiverse_server.server.app import Game
 
+# The block around (57, 57): a parcel there costs 1,510, and a block five times that.
+BLOCK_PRICE = 7_550
+
 
 def game_in_town() -> Game:
     world = create_default_world()
     world = replace(
         world,
-        residents=(replace(world.residents[0], position=Position(75, 75)), *world.residents[1:]),
+        residents=(replace(world.residents[0], position=Position(57, 57)), *world.residents[1:]),
     )
     return Game(world, clock=lambda: 0)
 
@@ -58,12 +61,12 @@ def test_the_runner_logs_actions_memory_and_timestamps(tmp_path: Path) -> None:
     row = asyncio.run(scenario())
 
     assert row["round"] == 1 and row["resident_name"] == "阿青"
-    assert row["before"]["coins"] == 10000 and row["after"]["coins"] == 7000
+    assert row["before"]["coins"] == 10000 and row["after"]["coins"] == 10000 - BLOCK_PRICE
     assert row["observation"]["long_term_notes"] == []
     assert row["memory_after"]["long_term"][0]["text"] == "保留返程算力"
     assert row["memory_after"]["short_term"][0]["text"] == "观察市场"
     assert row["outputs"] == ["准备采集"]
-    assert row["calls"][-1]["coins_change"] == -3000
+    assert row["calls"][-1]["coins_change"] == -BLOCK_PRICE
     assert datetime.fromisoformat(row["started_at"]) <= datetime.fromisoformat(row["finished_at"])
     assert datetime.fromisoformat(row["calls"][0]["timestamp"]).tzinfo is not None
 

@@ -39,7 +39,16 @@ from ..economy.compute import (
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
 from ..economy.joint_purchase import JointPurchase, reserved_purchase_coins
-from ..economy.land import PARCEL_SIZE, Plot, grid_size, plot, plot_at, plots, town_centre
+from ..economy.land import (
+    PARCEL_SIZE,
+    Plot,
+    for_sale_at,
+    grid_size,
+    plot,
+    plot_at,
+    plots,
+    town_centre,
+)
 from ..economy.portals import (
     MAX_LINKS_PER_PORTAL,
     MAX_PORTALS,
@@ -707,9 +716,25 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         )
 
     squares = plots(world)
+    # Where one stands is shown if it is owned or for sale, not on a road or in the lobby.
+    standing_on = plot_at(world, here)
+    square_here = (
+        standing_on
+        if standing_on.owner_id is not None or for_sale_at(world, here) is not None
+        else None
+    )
     mine = [square for square in squares if square.owner_id == resident_id]
+    cells = world.map.block_cells
     best = sorted(
-        (square for square in squares if square.owner_id is None),
+        # One suggestion per block, its middle parcel, since a block is bought whole.
+        (
+            square
+            for square in squares
+            if square.owner_id is None
+            and not square.lobby
+            and square.col % cells == cells // 2
+            and square.row % cells == cells // 2
+        ),
         key=lambda square: (
             -traffic.near(square.centre),
             square.price,
@@ -723,7 +748,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         content_lasts=CONTENT_LIFETIME,
         pay_period=PAY_PERIOD,
         sponsors=_sponsor_views(world),
-        here=view(plot_at(world, here)) if standing else None,
+        here=view(square_here) if standing and square_here is not None else None,
         mine=tuple(
             MyParcelView(
                 square.id,

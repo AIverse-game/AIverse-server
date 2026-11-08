@@ -16,14 +16,14 @@ untouched; on error nothing changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..core.events import EventPayload
 from ..core.inventory import add_coins, take_coins
-from ..core.land import PARCEL_SHARES, Parcel
+from ..core.land import PARCEL_SHARES
 from ..core.ledger import SYSTEM, record_transfer
-from .land import LandError, plot
+from .land import add_block, check_for_sale, plot
 from .shares import MAX_PENDING_PER_PAIR, SharesError
 
 if TYPE_CHECKING:
@@ -67,8 +67,7 @@ class JointPurchase(EventPayload):
             raise SharesError(
                 "invalid_shares", f"the partner pays an integer in 0..{square.price} coins"
             )
-        if square.owner_id is not None:
-            raise LandError("parcel_owned", f"parcel {square.id} already belongs to someone")
+        check_for_sale(world, square)
         waiting = sum(
             other.sender_id == event.sender_id
             and other.recipient_id == event.recipient_id
@@ -85,8 +84,7 @@ class JointPurchase(EventPayload):
 
     def on_accept(self, world: World, event: Event) -> World:
         square = plot(world, self.col, self.row)
-        if square.owner_id is not None:
-            raise LandError("parcel_owned", f"parcel {square.id} was bought by someone else")
+        check_for_sale(world, square)
         if self.partner_pays:
             world = take_coins(world, event.recipient_id, self.partner_pays)
             world = record_transfer(world, event.recipient_id, SYSTEM, self.partner_pays, "land")
@@ -97,8 +95,7 @@ class JointPurchase(EventPayload):
             (event.sender_id, PARCEL_SHARES - self.partner_shares),
             (event.recipient_id, self.partner_shares),
         )
-        parcel = Parcel(self.col, self.row, event.sender_id, shares=shares)
-        return replace(world, parcels=(*world.parcels, parcel))
+        return add_block(world, self.col, self.row, event.sender_id, shares)
 
     def on_decline(self, world: World, event: Event) -> World:
         own = self.proposer_pays(world)

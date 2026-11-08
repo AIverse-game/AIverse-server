@@ -4,11 +4,23 @@ Every match uses the same map and residents.
 """
 
 from ..core.world import Position, Resident, World, WorldMap
-from ..economy.land import town_centre
+from ..economy.land import PARCEL_SIZE, town_centre
 from ..economy.sponsors import default_sponsors
 from ..economy.visitors import new_crowd
 
-MAP_SIZE = 150.0
+BLOCK_CELLS = 3
+"""Parcels along each side of a block, the unit land is bought in."""
+
+ROAD_WIDTH = 6.0
+
+BLOCKS = 5
+"""Blocks along each side; the middle one is the spawn lobby."""
+
+BLOCK_PRICE_FACTOR = 5
+"""A block costs this many times what a single parcel at its place on the map would."""
+
+MAP_SIZE = BLOCKS * BLOCK_CELLS * PARCEL_SIZE + (BLOCKS + 1) * ROAD_WIDTH
+"""Five blocks of 30 with a road of 6 around each: 186."""
 
 STARTING_COINS = 10_000
 
@@ -36,7 +48,13 @@ DEFAULT_RESIDENTS = (
 
 def create_default_world() -> World:
     return World(
-        map=WorldMap(size=MAP_SIZE),
+        map=WorldMap(
+            size=MAP_SIZE,
+            block_cells=BLOCK_CELLS,
+            road=ROAD_WIDTH,
+            block_price_factor=BLOCK_PRICE_FACTOR,
+            lobby=True,
+        ),
         residents=DEFAULT_RESIDENTS,
         crowd=new_crowd(),
         sponsors=default_sponsors(),

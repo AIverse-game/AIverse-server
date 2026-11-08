@@ -25,7 +25,7 @@ from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
 from ..economy.land import LAND_PRICE_CENTRE, LAND_PRICE_EDGE, PARCEL_SIZE
 from ..economy.sponsors import PAY_PERIOD
 from ..economy.visitors import VISITOR_COUNT
-from ..game.layout import MAP_SIZE
+from ..game.layout import BLOCK_CELLS, BLOCK_PRICE_FACTOR, BLOCKS, MAP_SIZE, ROAD_WIDTH
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.speech import HEARING_RADIUS
@@ -48,7 +48,10 @@ def system_prompt(
     content_own_s = job_seconds(CONTENT_WORKLOAD, "self")
     content_hired_s = job_seconds(CONTENT_WORKLOAD, "on_demand")
     content_hired_coins = on_demand_cost(CONTENT_WORKLOAD)
-    grid = int(MAP_SIZE // PARCEL_SIZE)
+    grid = BLOCKS * BLOCK_CELLS
+    cells = BLOCK_CELLS * BLOCK_CELLS
+    block_low = LAND_PRICE_EDGE * BLOCK_PRICE_FACTOR
+    block_high = LAND_PRICE_CENTRE * BLOCK_PRICE_FACTOR
     prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
 at game end. Only coins count; land and items are worth nothing at the end.
 
@@ -59,10 +62,13 @@ them only on something that can plausibly bring more back; spending nothing is a
 - The map is {MAP_SIZE:g} x {MAP_SIZE:g}; (0,0) is north-west, x east, y south. Walking is a
 straight line at {WALK_SPEED:g} units/s and costs time only. You are busy until you arrive and
 cannot act except to speak, cancel orders, handle compute and content or leave.
-- The map is a {grid} x {grid} grid of {PARCEL_SIZE:g}-unit parcels, id L<col>-<row>, col =
-floor(x / {PARCEL_SIZE:g}). Standing in a free parcel, buy_parcel buys it from the town for
-{LAND_PRICE_EDGE}-{LAND_PRICE_CENTRE} coins, dearer nearer the middle of the map. It stays
-yours; it earns only through an ad slot, workspace or game hall built on it.
+- The map is a {grid} x {grid} grid of {PARCEL_SIZE:g}-unit parcels, id L<col>-<row>, laid out
+in blocks of {BLOCK_CELLS} x {BLOCK_CELLS} parcels with a road of {ROAD_WIDTH:g} units between them.
+Land is bought a whole block at a time: standing in a free block, buy_parcel buys all {cells} of its
+parcels from the town for {block_low}-{block_high} coins, dearer nearer the middle of the map.
+Roads cannot be bought, nor can the lobby, the middle block where everyone starts. A block stays
+yours; it earns only through ad slots, workspaces or game halls built on its parcels, one to a
+parcel.
 - Compute is a speed: a job of W workload takes W / rate seconds. Your own compute is free,
 {SELF_RATE:g} workload/s, one job at a time of any kind. A node does {NODE_RATE:g}/s, one job at
 a time. Hire one for a single job at {ON_DEMAND_PRICE} coins per workload, or subscribe with
@@ -87,7 +93,7 @@ it was paid at the last payday.
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
 Only the buyer of a parcel builds on it and puts content in it, whoever holds its shares.
-- To buy a parcel together, stand in it and joint_buy_parcel to a partner: they pay part of the
+- To buy a block together, stand in it and joint_buy_parcel to a partner: they pay part of the
 price for a number of shares, you pay the rest at once and keep the other shares and the
 running of it. It is bought when they accept; if someone buys it first, withdraw.
 - {VISITOR_COUNT} scripted visitors come in at the middle of the map, go to ad slots showing

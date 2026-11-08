@@ -448,13 +448,36 @@ class Resident:
 
 @dataclass(frozen=True)
 class WorldMap:
-    """Side length of the square map, in map units."""
+    """The square map: its side length in map units, and how its land is laid out."""
 
     size: float
+    block_cells: int = 1
+    """Parcels along each side of a block, the unit land is bought in; 3 makes a block of 3 x 3
+    parcels. The default 1 makes every parcel its own block."""
+    road: float = 0.0
+    """Width of the road between blocks and around the map's edge, which belongs to no parcel;
+    0 leaves no roads. Needs `block_cells` above 1."""
+    block_price_factor: int = 1
+    """What the price of a block is multiplied by, on top of its place on the map."""
+    lobby: bool = False
+    """Whether the middle block is the spawn lobby, which nobody owns or can buy. Needs an odd
+    number of blocks along each side."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.size) and self.size > 0):
             raise ValueError(f"map size must be a positive finite number, got {self.size}")
+        if type(self.block_cells) is not int or self.block_cells < 1:
+            raise ValueError(f"block_cells must be an integer >= 1, got {self.block_cells!r}")
+        if not (math.isfinite(self.road) and self.road >= 0):
+            raise ValueError(f"road must be a finite number >= 0, got {self.road}")
+        if self.road and self.block_cells == 1:
+            raise ValueError("roads need blocks of more than one parcel")
+        if type(self.block_price_factor) is not int or self.block_price_factor < 1:
+            raise ValueError(
+                f"block_price_factor must be an integer >= 1, got {self.block_price_factor!r}"
+            )
+        if self.lobby and self.block_cells == 1:
+            raise ValueError("a lobby needs blocks of more than one parcel")
 
     def contains(self, position: Position) -> bool:
         # NaN fails every comparison, so it is never inside the map.

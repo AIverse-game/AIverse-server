@@ -47,7 +47,7 @@ from ..game.actions import (
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 24
+PROTOCOL_VERSION = 25
 
 ERROR_MAX_LENGTH = 200
 
@@ -371,6 +371,12 @@ class ContractView(_Message):
 class MapView(_Message):
     size: float
     parcel_size: float
+    block_cells: int
+    """Parcels along each side of a block, which is bought whole."""
+    road: float
+    """Width of the roads between blocks and around the map's edge; parcels never lie on one."""
+    lobby: bool
+    """Whether the middle block is the spawn lobby, which nobody owns."""
     parcel_prices: list[list[int]]
 
 
@@ -601,6 +607,9 @@ def world_view(
         map=MapView(
             size=world.map.size,
             parcel_size=PARCEL_SIZE,
+            block_cells=world.map.block_cells,
+            road=world.map.road,
+            lobby=world.map.lobby,
             parcel_prices=[
                 [square.price for square in squares[row * side_count : (row + 1) * side_count]]
                 for row in range(side_count)

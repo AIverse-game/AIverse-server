@@ -11,7 +11,7 @@ from typing import Any
 
 from ..economy.ads import ITEM_FOR
 from ..economy.compute import MAX_NODES, NODE_SECONDS, subscription_cost
-from ..economy.land import plot_at
+from ..economy.land import for_sale_at, plot_at
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
@@ -175,8 +175,8 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         return names
 
     names.update(("move_to", "place_order"))
-    square = plot_at(world, me.position)
-    if square.owner_id is None:
+    square = for_sale_at(world, me.position)
+    if square is not None:
         names.add("joint_buy_parcel")
         if me.coins >= square.price:
             names.add("buy_parcel")

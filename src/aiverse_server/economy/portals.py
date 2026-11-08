@@ -38,7 +38,7 @@ from ..core.events import EventPayload
 from ..core.inventory import add_coins, take_coins
 from ..core.land import MAX_TOLL, Link, Parcel
 from ..core.ledger import record_transfer
-from ..core.world import Position
+from ..core.world import Position, WorldMap
 from .land import parcel_centre, plot, plot_at, town_centre
 from .shares import MAX_PENDING_PER_PAIR, split_income
 
@@ -201,21 +201,21 @@ def effective_distance(world: World, centre: Position) -> float:
         )
     )
     lines = tuple(sorted((link.a, link.b) for link in world.links))
-    for there, from_there in _network(world.map.size, portals, lines):
+    for there, from_there in _network(world.map, portals, lines):
         best = min(best, math.dist((centre.x, centre.y), (there.x, there.y)) + from_there)
     return best
 
 
 @functools.lru_cache(maxsize=32)
 def _components(
-    size: float,
+    world_map: WorldMap,
     portals: tuple[tuple[str, int, int], ...],
     lines: tuple[tuple[str, str], ...],
 ) -> tuple[tuple[Position, str], ...]:
     """Each portal's centre, with a name for its network (the portals its lines reach, and
     theirs in turn), the same for all portals of one network. Worked out once per layout of
     portals and lines, since a layout is asked about many times."""
-    centres = {parcel_id: parcel_centre(size, col, row) for parcel_id, col, row in portals}
+    centres = {parcel_id: parcel_centre(world_map, col, row) for parcel_id, col, row in portals}
     group = {parcel_id: parcel_id for parcel_id in centres}
 
     def root(parcel_id: str) -> str:
@@ -238,19 +238,19 @@ def _layout(world: World) -> tuple[tuple[Position, str], ...]:
         )
     )
     lines = tuple(sorted((link.a, link.b) for link in world.links))
-    return _components(world.map.size, portals, lines)
+    return _components(world.map, portals, lines)
 
 
 @functools.lru_cache(maxsize=32)
 def _network(
-    size: float,
+    world_map: WorldMap,
     portals: tuple[tuple[str, int, int], ...],
     lines: tuple[tuple[str, str], ...],
 ) -> tuple[tuple[Position, float], ...]:
     """Each portal's centre, with the distance from the middle of the map of the portal in its
     network that lies nearest to the middle."""
-    town = town_centre(size)
-    components = _components(size, portals, lines)
+    town = town_centre(world_map.size)
+    components = _components(world_map, portals, lines)
     nearest: dict[str, float] = {}
     for there, name in components:
         gap = math.dist((there.x, there.y), (town.x, town.y))

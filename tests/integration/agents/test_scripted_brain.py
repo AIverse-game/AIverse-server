@@ -46,19 +46,22 @@ def test_the_scripted_bots_tour_the_map_buy_a_parcel_and_earn_from_an_ad_slot_on
         owners = [parcel.owner_id for parcel in game.world.parcels]
         assert all(not resident.left for resident in game.world.residents)
         assert owners
-        assert len(set(owners)) == len(owners)
-        # Every parcel got its ad slot from its owner's own compute, which costs nothing.
-        assert all(parcel.facility is not None for parcel in game.world.parcels)
+        # Each bot bought one whole block of nine parcels, and no two bought the same.
+        assert len(owners) == 9 * len(set(owners))
+        # Each built one ad slot on the parcel it stood in, from its own compute, which costs
+        # nothing.
+        built = [parcel for parcel in game.world.parcels if parcel.facility is not None]
+        assert sorted(parcel.owner_id for parcel in built) == sorted(set(owners))
         assert game.world.compute.jobs == ()
         # They keep their slots stocked with content from their own compute, and sponsors pay
         # for it: more than the land cost the owners.
-        assert all(parcel.facility.contents for parcel in game.world.parcels if parcel.facility)
+        assert all(parcel.facility.contents for parcel in built if parcel.facility)
         paid = sum(t.amount for t in game.world.ledger.transfers if t.channel == "sponsors")
         spent = sum(t.amount for t in game.world.ledger.transfers if t.channel == "land")
         assert spent > 0 and paid > 0
         for parcel in game.world.parcels:
             owner = me(game, parcel.owner_id)
-            assert owner.coins > STARTING_COINS - 3_000
+            assert owner.coins > STARTING_COINS - 9_000
         assert all(resident.position == Position(*TOUR[-1]) for resident in game.world.residents)
 
     asyncio.run(scenario())

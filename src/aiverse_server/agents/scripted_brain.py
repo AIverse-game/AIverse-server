@@ -1,7 +1,7 @@
 """A brain with a fixed plan, as a baseline and a stand-in opponent that costs nothing.
 
 It walks to the next spot in a fixed tour, says hello there and, the first time it stands in a
-free parcel it can afford, buys it and starts an ad slot there on its own compute. Whenever its
+free block it can afford, buys it and starts an ad slot there on its own compute. Whenever its
 own compute is free and it owns an ad slot or is building one, it renders content on it and
 puts the content it carries into the slot. Once the tour is done it waits. It never trades.
 """
@@ -12,12 +12,13 @@ from .observation import Observation
 from .tools import ResidentTools
 
 TOUR = (
-    (37.5, 37.5),
-    (112.5, 37.5),
-    (112.5, 112.5),
-    (37.5, 112.5),
+    (57.0, 57.0),
+    (129.0, 57.0),
+    (129.0, 129.0),
+    (57.0, 129.0),
 )
-"""Spots to visit, on a map of size 150, in order."""
+"""Spots to visit, in order: the middles of the four blocks diagonally next to the lobby, on
+the default map of size 186."""
 
 
 class ScriptedBrain:

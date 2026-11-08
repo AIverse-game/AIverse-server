@@ -53,7 +53,7 @@ from ..economy.exchange import (
     place_order,
 )
 from ..economy.joint_purchase import JointPurchase
-from ..economy.land import LandError, LandErrorCode, buy_parcel, plot_at
+from ..economy.land import LandError, LandErrorCode, buy_parcel, check_for_sale, plot_at
 from ..economy.portals import LinkProposal, PortalsError, PortalsErrorCode, link_portals, teleport
 from ..economy.shares import ShareOffer, SharesError, SharesErrorCode
 from ..economy.trade import PurchaseOffer, SaleOffer, TradeError, TradeErrorCode
@@ -582,6 +582,8 @@ def _offer_joint_purchase(world: World, action: OfferJointPurchase) -> World:
     square = plot_at(world, here)
     payload = JointPurchase(square.col, square.row, action.partner_pays, action.partner_shares)
     try:
+        # One must stand in the block to propose buying it, not on a road beside it.
+        check_for_sale(world, square, here)
         return send_event(world, action.resident_id, action.partner_id, payload)[0]
     except (EventError, InventoryError, SharesError, LandError) as error:
         raise ActionRejected(error.code, error.message) from error
