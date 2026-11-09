@@ -1,4 +1,4 @@
-"""Admission fees: what visitors pay at the door of a workspace or a game hall.
+"""Admission fees: what visitors pay at the door of a workspace, a game hall or a mall.
 
 The system sets one fee for each kind of facility, `FEES`, in coins for one person. A visitor
 stands for more people as the game goes on, `visitors.visitor_weight`, and pays for all of
@@ -21,7 +21,7 @@ from ..core.world import World
 from .shares import split_income
 from .sponsors import latest_payday, next_payday_after
 
-FEES: dict[str, int] = {"workspace": 8, "game_hall": 12}
+FEES: dict[str, int] = {"workspace": 8, "game_hall": 12, "mall": 2}
 """Coins one person pays to get into a facility of each kind."""
 
 _SLACK = 1e-9

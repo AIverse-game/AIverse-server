@@ -6,17 +6,24 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-FacilityKind = Literal["ad", "portal", "game_hall", "workspace"]
+FacilityKind = Literal["ad", "portal", "game_hall", "workspace", "mall"]
 """What a facility is: an ad slot, which earns from the content it shows; a portal, which
-earns nothing itself but joins parcels into a transport network, see `economy/portals.py`; or
-a game hall or a workspace, venues that earn from the fees visitors pay at the door, see
-`economy/admissions.py`. Other kinds come with the designs that need them, see the client
+earns nothing itself but joins parcels into a transport network, see `economy/portals.py`; a
+game hall or a workspace, venues that earn from the fees visitors pay at the door, see
+`economy/admissions.py`; or a mall, which draws visitors without content but earns little.
+Other kinds come with the designs that need them, see the client
 repository's docs/design/facilities.md."""
 
-FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal", "game_hall", "workspace")
+FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal", "game_hall", "workspace", "mall")
 
-VENUE_FACILITIES: tuple[FacilityKind, ...] = ("game_hall", "workspace")
-"""The facilities that take up a square of `WorldMap.venue_cells` parcels, not one."""
+VENUE_FACILITIES: tuple[FacilityKind, ...] = ("game_hall", "workspace", "mall")
+"""The facilities that take up several parcels, not one: a square of `WorldMap.venue_cells`
+parcels for a game hall or a workspace, `MALL_COLS` x `MALL_ROWS` for a mall."""
+
+MALL_COLS = 1
+MALL_ROWS = 2
+"""Parcels a mall takes up from west to east and from north to south, 10 x 20 map units, with the
+parcel it is built on at its north-west corner."""
 
 CONTENT_KINDS: tuple[FacilityKind, ...] = ("ad", "game_hall")
 """The facilities that show content: an ad slot shows ads, a game hall games."""

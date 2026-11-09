@@ -30,6 +30,7 @@ from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
     GAME_WORKLOAD,
+    MALL_WORKLOAD,
     MAX_NODES,
     NODE_SECONDS,
     PORTAL_WORKLOAD,
@@ -220,7 +221,8 @@ class MyParcelView:
     """People the scripted visitors have counted as seeing its ad slot so far this game, see
     `economy/visitors.py`; the sponsors pay for them at paydays, see `LandView.sponsors`."""
     people_admitted: float = 0.0
-    """People let into its workspace or game hall so far this game, who paid the fee at the door;
+    """People let into its workspace, game hall or mall so far this game, who paid the fee at the
+    door;
     the fees are paid out to the holders at paydays, with the sponsors' pay."""
     covered_by: str | None = None
     """The parcel whose venue, built or being built, takes this one up; nothing else can be built
@@ -231,6 +233,9 @@ class MyParcelView:
     promised_to: str | None = None
     """The builder you agreed to let build here, see `build_permits`; nothing else can be started
     on it until the permit is used or lapses. None when it is not promised."""
+    mall_room: bool = False
+    """Whether a mall could be started with this parcel at its north-west corner now: it and the
+    parcel south of it, in the same block, are yours and untaken."""
 
 
 @dataclass(frozen=True)
@@ -302,6 +307,8 @@ class ComputeView:
     """Time and coins for a portal on each source."""
     venue: tuple[AdOption, ...]
     """Time and coins for a game hall or a workspace on each source."""
+    mall: tuple[AdOption, ...]
+    """Time and coins for a mall on each source."""
     content: tuple[AdOption, ...]
     """Time and coins for a piece of ad content on each source."""
     game: tuple[AdOption, ...]
@@ -839,8 +846,11 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             round(world.crowd.viewed(square.id), 1),
             round(world.admissions.admitted_to(square.id), 1),
             holder if holder != square.id else None,
-            venue_room(world, parcel, taken) and promised_builder(world, square.id, True) is None,
-            promised_builder(world, square.id, False),
+            venue_room(world, parcel, taken)
+            and promised_builder(world, square.id, "game_hall") is None,
+            promised_builder(world, square.id, None),
+            venue_room(world, parcel, taken, "mall")
+            and promised_builder(world, square.id, "mall") is None,
         )
 
     return LandView(
@@ -958,6 +968,7 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
             AdOption("subscription", job_seconds(PORTAL_WORKLOAD, "subscription"), 0),
         ),
         venue=_options(VENUE_WORKLOAD),
+        mall=_options(MALL_WORKLOAD),
         content=(
             AdOption("self", job_seconds(CONTENT_WORKLOAD, "self"), 0),
             AdOption(

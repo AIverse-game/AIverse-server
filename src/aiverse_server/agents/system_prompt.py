@@ -12,6 +12,7 @@ from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
     GAME_WORKLOAD,
+    MALL_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
@@ -29,6 +30,7 @@ from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
 from ..economy.land import PARCEL_SIZE, plots
 from ..economy.sponsors import PAY_PERIOD, default_sponsors
 from ..economy.visitors import (
+    MALL_PIECES,
     MIN_VIEW_SECONDS,
     ROUTE_SHARE,
     SEEN_FOR,
@@ -62,6 +64,8 @@ def system_prompt(
     venue_own_s = job_seconds(VENUE_WORKLOAD, "self")
     venue_hired_s = job_seconds(VENUE_WORKLOAD, "on_demand")
     venue_hired_coins = on_demand_cost(VENUE_WORKLOAD)
+    mall_own_s = job_seconds(MALL_WORKLOAD, "self")
+    mall_hired_coins = on_demand_cost(MALL_WORKLOAD)
     grid = BLOCKS * BLOCK_CELLS
     cells = BLOCK_CELLS * BLOCK_CELLS
     for_sale = [square.price for square in plots(create_default_world()) if not square.lobby]
@@ -154,10 +158,10 @@ Only the buyer of a parcel builds on it; whoever holds its shares may put conten
 price for a number of shares, you pay the rest at once and keep the other shares and the
 running of it. It is bought when they accept; if someone buys it first, withdraw.
 - {VISITOR_COUNT} scripted visitors come in at the middle of the map and go to workspaces and game
-halls showing games, more to ones with more pieces (a workspace counts as {WORKSPACE_PIECES}) and
-nearer to them, fewer to crowded ones, paying the fee at each door; then they leave and come
-again, and each stands for more people as the game goes on. Some trips follow the working route
-instead, see build_venue.
+halls showing games, more to ones with more pieces (a workspace counts as {WORKSPACE_PIECES},
+a mall as {MALL_PIECES}) and nearer to them, fewer to crowded ones, paying the fee at each door;
+then they leave and come again, and each stands for more people as the game goes on. Some
+trips follow the working route instead, see build_venue.
 The land observation shows how many people are passing each parcel now.
 The observation's recent_payments counts the coins residents paid each other in the past
 {TREND_SECONDS / 60:g} minutes, so you can see whether anyone is actually buying from another
@@ -174,6 +178,12 @@ game hall showing games, and the others pick any venue. A workspace needs no con
 draws nobody until it shows games (make_content content=game, {GAME_WORKLOAD:g} workload, then
 place_content); games go stale after {CONTENT_LIFETIME:g}s like ads, so keep supplying them. A game
 is its own item, {GAME_ITEM!r}; an ad slot cannot show it.
+- A mall is a venue too (build_venue kind=mall): 1 x 2 parcels, one in the north-west corner and
+the one south of it, in one block, and cheaper at {MALL_WORKLOAD:g} workload ({mall_own_s:g}s on
+your own compute, {mall_hired_coins} coins on a hired node). It needs no content and draws
+visitors as soon as it is built, but they come to it less than to other venues, and the fee is
+only {FEES["mall"]} coins a person, so it earns far less than a game hall; it is a modest,
+steady use for a parcel pair that would otherwise stand empty.
 
 Deals and information
 - Working together pays. Nobody has to do everything: a resident with a busy render node can

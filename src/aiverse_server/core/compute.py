@@ -10,6 +10,8 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from .land import FacilityKind
+
 NodeKind = Literal["generative", "render"]
 """What a node does. Generative nodes build facilities; render nodes make content."""
 
@@ -19,7 +21,13 @@ SELF_JOBS = 3
 """Most jobs one resident's own compute may hold at once: one running, the rest queued."""
 
 JobKind = Literal[
-    "build_ad", "build_portal", "build_game_hall", "build_workspace", "make_content", "make_game"
+    "build_ad",
+    "build_portal",
+    "build_game_hall",
+    "build_workspace",
+    "build_mall",
+    "make_content",
+    "make_game",
 ]
 """What a job makes. It needs a node of the matching kind, see `economy/compute.py`."""
 
@@ -28,19 +36,27 @@ JOB_KINDS: tuple[JobKind, ...] = (
     "build_portal",
     "build_game_hall",
     "build_workspace",
+    "build_mall",
     "make_content",
     "make_game",
 )
+
+VENUE_JOB_FACILITY: dict[JobKind, FacilityKind] = {
+    "build_game_hall": "game_hall",
+    "build_workspace": "workspace",
+    "build_mall": "mall",
+}
+"""The jobs that build a facility taking up several parcels, and what each leaves."""
 
 MAKING_JOBS: tuple[JobKind, ...] = ("make_content", "make_game")
 """The jobs that make something to carry, rather than building on a parcel."""
 
 JobSource = Literal["self", "on_demand", "subscription"]
 
-PermitKind = Literal["ad", "game_hall", "workspace"]
+PermitKind = Literal["ad", "game_hall", "workspace", "mall"]
 """What a permit lets its holder build on someone else's parcel."""
 
-PERMIT_KINDS: tuple[PermitKind, ...] = ("ad", "game_hall", "workspace")
+PERMIT_KINDS: tuple[PermitKind, ...] = ("ad", "game_hall", "workspace", "mall")
 
 
 @dataclass(frozen=True)

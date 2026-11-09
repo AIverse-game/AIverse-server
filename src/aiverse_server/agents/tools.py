@@ -28,12 +28,14 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 from ..core.compute import JobSource, NodeKind
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, SPEECH_LENGTH_LIMIT, Position, Resident, World
+from ..economy.admissions import FEES
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
 from ..economy.commissions import MAX_FEE
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
     GAME_WORKLOAD,
+    MALL_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
@@ -130,10 +132,10 @@ class CommissionBuildArgs(_Args):
     )
     parcel_id: str = Field(
         description="id of the owner's parcel to build on: bare, with no job, and for a venue "
-        "the whole square must be the owner's too."
+        "all the land it takes up must be the owner's too."
     )
-    kind: Literal["ad", "game_hall", "workspace"] = Field(
-        description="What is built: an ad slot, a game hall or a workspace."
+    kind: Literal["ad", "game_hall", "workspace", "mall"] = Field(
+        description="What is built: an ad slot, a game hall, a workspace or a mall."
     )
     fee: StrictInt = Field(
         description=f"Coins the owner pays the builder when it is finished, 0 to {MAX_FEE}; "
@@ -188,11 +190,12 @@ class BuildPortalArgs(_Args):
 
 
 class BuildVenueArgs(_Args):
-    kind: Literal["game_hall", "workspace"] = Field(description="Which venue to build.")
+    kind: Literal["game_hall", "workspace", "mall"] = Field(description="Which venue to build.")
     parcel_id: str = Field(
-        description="id of the parcel at the north-west corner of the square the venue takes up: "
-        "it, the parcels east and south of it that make up the square (observation field "
-        "land.mine[].venue_room says whether it fits), all in one block, yours or the owner's "
+        description="id of the parcel at the north-west corner of the land the venue takes up: "
+        "for a game hall or workspace the square it and the parcels east and south of it make up "
+        "(observation field land.mine[].venue_room says whether it fits), for a mall it and the "
+        "parcel south of it (land.mine[].mall_room), all in one block, yours or the owner's "
         "who agreed to let you build there (build_permits), with no facility and no job."
     )
     source: Literal["self", "on_demand", "subscription"] = Field(
@@ -536,8 +539,8 @@ TOOLS = (
     ),
     ToolSpec(
         "build_venue",
-        "Start building a game hall or a workspace, from anywhere, even while walking; it "
-        "appears when the job ends. A venue is big: it takes up a square of "
+        "Start building a game hall, a workspace or a mall, from anywhere, even while walking; it "
+        "appears when the job ends. A game hall or workspace is big: it takes up a square of "
         f"{VENUE_CELLS} x {VENUE_CELLS} parcels of one block, all yours and bare, with the "
         "parcel you name at its north-west corner, so nothing else can be built on those "
         "parcels. It takes "
@@ -548,7 +551,10 @@ TOOLS = (
         "subscribed generative nodes. A game hall shows games (make_content with content "
         f"game, then place_content), up to {AD_SLOT_CAPACITY} for {CONTENT_LIFETIME:g} s each. "
         "Visitors pay a fee at the door of each, and go to a game hall only while it shows games; "
-        "the fees are paid out to the holders at paydays.",
+        "the fees are paid out to the holders at paydays. A mall takes 1 x 2 parcels and "
+        f"{MALL_WORKLOAD:g} workload ({on_demand_cost(MALL_WORKLOAD)} coins hired); it needs no "
+        "content and draws visitors at once, but fewer, for a fee of "
+        f"{FEES['mall']} coins a person.",
         BuildVenueArgs,
     ),
     ToolSpec(
@@ -760,7 +766,7 @@ class ResidentTools:
     def build_venue(
         self,
         parcel_id: str,
-        kind: Literal["game_hall", "workspace"],
+        kind: Literal["game_hall", "workspace", "mall"],
         source: JobSource,
         node_id: int | None = None,
     ) -> ToolResult:

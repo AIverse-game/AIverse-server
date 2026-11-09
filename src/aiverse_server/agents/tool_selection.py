@@ -81,7 +81,8 @@ def selected_tool_names(observation: Observation) -> set[str]:
     ):
         names.add("build_ad")
     if any(
-        parcel.venue_room and parcel.promised_to is None for parcel in observation.land.mine
+        (parcel.venue_room or parcel.mall_room) and parcel.promised_to is None
+        for parcel in observation.land.mine
     ) or any(
         permit.builder_id == me.id and permit.kind != "ad" for permit in observation.build_permits
     ):
@@ -165,7 +166,14 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     ) or any(permit.kind == "ad" for permit in permits):
         names.add("build_ad")
     if any(
-        venue_room(world, parcel, taken) and promised_builder(world, parcel.id, True) is None
+        (
+            venue_room(world, parcel, taken)
+            and promised_builder(world, parcel.id, "game_hall") is None
+        )
+        or (
+            venue_room(world, parcel, taken, "mall")
+            and promised_builder(world, parcel.id, "mall") is None
+        )
         for parcel in my_parcels
     ) or any(permit.kind != "ad" for permit in permits):
         names.add("build_venue")

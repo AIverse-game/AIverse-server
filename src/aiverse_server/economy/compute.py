@@ -16,9 +16,9 @@ as long as they are still in the game. There are three sources:
   the speed of one's own compute, without using up the resident's own one-job-at-a-time slot.
 
 Nodes have a kind, and a job needs a node of its kind: generative nodes build facilities,
-render nodes make content. There are six jobs. `build_ad` builds an ad slot, `build_portal`
-a portal, see `portals.py`, and `build_game_hall` and `build_workspace` the two venues, on a
-parcel the resident owns, wherever the resident is. `make_content` renders one piece of
+render nodes make content. There are seven jobs. `build_ad` builds an ad slot, `build_portal`
+a portal, see `portals.py`, and `build_game_hall`, `build_workspace` and `build_mall` the
+venues, on a parcel the resident owns, wherever the resident is. `make_content` renders one piece of
 content for an ad slot and `make_game` one for a game hall, each an item the resident then
 carries, see `ads.py`. Several content jobs may run at once, each on a source of its own.
 
@@ -36,6 +36,7 @@ from ..core.compute import (
     MAKING_JOBS,
     NODE_KINDS,
     SELF_JOBS,
+    VENUE_JOB_FACILITY,
     ComputeBook,
     Job,
     JobKind,
@@ -46,11 +47,11 @@ from ..core.compute import (
     PermitKind,
 )
 from ..core.inventory import add_coins, store_item, take_coins
-from ..core.land import Facility, FacilityKind, Parcel
+from ..core.land import VENUE_FACILITIES, Facility, FacilityKind, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
 from .ads import CONTENT_ITEM, GAME_ITEM
-from .land import claimed, venue_fits, venue_footprint
+from .land import claimed, footprint_size, venue_fits, venue_footprint
 from .portals import MAX_PORTALS, portal_count
 
 SELF_RATE = 0.5
@@ -78,6 +79,10 @@ VENUE_WORKLOAD = 240.0
 """Workload of building a game hall or a workspace: eight minutes of one's own compute, 24 seconds
 of a node. Dearest of the facilities, since a venue is worth more once visitors come."""
 
+MALL_WORKLOAD = 200.0
+"""Workload of building a mall: some seven minutes of one's own compute, 20 seconds of a node.
+A little cheaper than a game hall or a workspace, since it earns far less."""
+
 GAME_WORKLOAD = 90.0
 """Workload of rendering a game for a game hall: three minutes of one's own compute, 9 seconds of
 a node. Dearer than an ad."""
@@ -85,7 +90,7 @@ a node. Dearer than an ad."""
 ContentKind = Literal["ad", "game"]
 """What a content job renders: an ad for an ad slot or a game for a game hall."""
 
-VenueKind = Literal["game_hall", "workspace"]
+VenueKind = Literal["game_hall", "workspace", "mall"]
 """The facilities `start_build_venue` builds."""
 
 NODE_FOR_JOB: dict[JobKind, NodeKind] = {
@@ -93,6 +98,7 @@ NODE_FOR_JOB: dict[JobKind, NodeKind] = {
     "build_portal": "generative",
     "build_game_hall": "generative",
     "build_workspace": "generative",
+    "build_mall": "generative",
     "make_content": "render",
     "make_game": "render",
 }
@@ -103,6 +109,7 @@ WORKLOADS: dict[JobKind, float] = {
     "build_portal": PORTAL_WORKLOAD,
     "build_game_hall": VENUE_WORKLOAD,
     "build_workspace": VENUE_WORKLOAD,
+    "build_mall": MALL_WORKLOAD,
     "make_content": CONTENT_WORKLOAD,
     "make_game": GAME_WORKLOAD,
 }
@@ -110,6 +117,7 @@ WORKLOADS: dict[JobKind, float] = {
 BUILD_JOB: dict[VenueKind, JobKind] = {
     "game_hall": "build_game_hall",
     "workspace": "build_workspace",
+    "mall": "build_mall",
 }
 MAKE_JOB: dict[ContentKind, JobKind] = {"ad": "make_content", "game": "make_game"}
 BUILT_BY: dict[JobKind, FacilityKind] = {
@@ -117,6 +125,7 @@ BUILT_BY: dict[JobKind, FacilityKind] = {
     "build_portal": "portal",
     "build_game_hall": "game_hall",
     "build_workspace": "workspace",
+    "build_mall": "mall",
 }
 """The facility each building job leaves."""
 
@@ -274,7 +283,7 @@ def start_build_venue(
     if job is None:
         raise ComputeError("unknown_venue_kind", f"no venues of kind {kind!r}")
     owner_id, permit = _owner_or_permit(world, resident_id, parcel_id, kind)
-    parcel = _bare_parcel(world, owner_id, parcel_id, venue=True)
+    parcel = _bare_parcel(world, owner_id, parcel_id, venue=kind)
     return _start_job(world, resident_id, job, parcel.id, source, node_id, permit)
 
 
@@ -343,7 +352,7 @@ def _start_job(
     if parcel_id is not None and any(job.parcel_id == parcel_id for job in book.jobs):
         raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
     if parcel_id is not None and permit is None:
-        promised = promised_builder(world, parcel_id, kind in VENUE_JOBS)
+        promised = promised_builder(world, parcel_id, VENUE_JOB_FACILITY.get(kind))
         if promised is not None:
             raise ComputeError(
                 "parcel_permitted",
@@ -471,24 +480,21 @@ def cancel_compute(world: World, resident_id: str | None = None) -> World:
     return replace(world, compute=keep)
 
 
-VENUE_JOBS: tuple[JobKind, ...] = ("build_game_hall", "build_workspace")
-"""The jobs that build a venue, which takes up a square of parcels."""
+def promised_builder(world: World, parcel_id: str, venue: str | None) -> str | None:
+    """The builder holding a permit for a parcel that a facility on `parcel_id` would take up,
+    or None when none is promised. `venue` is the kind of venue it would be, None for a
+    facility of one parcel. A permit for a venue promises every parcel the venue would take up,
+    not only the one it names."""
 
-
-def promised_builder(world: World, parcel_id: str, venue: bool) -> str | None:
-    """The builder holding a permit for a parcel that a facility on `parcel_id`, a venue or not,
-    would take up, or None when none is promised. A permit for a venue promises every parcel
-    the venue would take up, not only the one it names."""
-
-    def cells(anchor_id: str, is_venue: bool) -> set[tuple[int, int]]:
+    def cells(anchor_id: str, kind: str | None) -> set[tuple[int, int]]:
         anchor = next(p for p in world.parcels if p.id == anchor_id)
-        if is_venue:
-            return set(venue_footprint(world.map, anchor.col, anchor.row))
+        if kind in VENUE_FACILITIES:
+            return set(venue_footprint(world.map, anchor.col, anchor.row, kind))
         return {(anchor.col, anchor.row)}
 
     wanted = cells(parcel_id, venue)
     for permit in world.compute.permits:
-        if wanted & cells(permit.parcel_id, permit.kind != "ad"):
+        if wanted & cells(permit.parcel_id, permit.kind):
             return permit.builder_id
     return None
 
@@ -497,10 +503,10 @@ def check_buildable(world: World, owner_id: str, parcel_id: str, kind: PermitKin
     """Refuse unless `owner_id` could build a facility of `kind` on `parcel_id` now: it is theirs,
     bare, not taken up by a venue, with no job, and for a venue the whole square fits. Raises
     `ComputeError`."""
-    _bare_parcel(world, owner_id, parcel_id, venue=kind != "ad")
+    _bare_parcel(world, owner_id, parcel_id, venue=None if kind == "ad" else kind)
     if any(job.parcel_id == parcel_id for job in world.compute.jobs):
         raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
-    if promised_builder(world, parcel_id, kind != "ad") is not None:
+    if promised_builder(world, parcel_id, None if kind == "ad" else kind) is not None:
         raise ComputeError(
             "parcel_permitted", f"parcel {parcel_id} is already promised to a builder"
         )
@@ -533,24 +539,29 @@ def _owner_or_permit(
     return parcel.owner_id, permit
 
 
-def _bare_parcel(world: World, resident_id: str, parcel_id: str, *, venue: bool = False) -> Parcel:
-    """The resident's parcel `parcel_id`, bare, and for a venue every parcel it would take up
-    theirs and untaken too."""
+def _bare_parcel(
+    world: World, resident_id: str, parcel_id: str, *, venue: str | None = None
+) -> Parcel:
+    """The resident's parcel `parcel_id`, bare, and for a venue, `venue` its kind, every parcel it
+    would take up theirs and untaken too."""
     by_cell = {(p.col, p.row): p for p in world.parcels}
     parcel = next((p for p in world.parcels if p.id == parcel_id), None)
     if parcel is None or parcel.owner_id != resident_id:
         raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     if parcel.facility is not None:
         raise ComputeError("parcel_built", f"parcel {parcel_id} already has a facility")
-    if venue and not venue_fits(world.map, parcel.col, parcel.row):
+    if venue and not venue_fits(world.map, parcel.col, parcel.row, venue):
+        cols, rows = footprint_size(world.map, venue)
         raise ComputeError(
             "no_room_for_venue",
-            f"a venue takes up {world.map.venue_cells} x {world.map.venue_cells} parcels with "
+            f"a {venue.replace('_', ' ')} takes up {cols} x {rows} parcels with "
             f"{parcel_id} at its north-west corner, which would reach out of the block",
         )
     taken = claimed(world)
     cells = (
-        venue_footprint(world.map, parcel.col, parcel.row) if venue else ((parcel.col, parcel.row),)
+        venue_footprint(world.map, parcel.col, parcel.row, venue)
+        if venue
+        else ((parcel.col, parcel.row),)
     )
     for cell in cells:
         holder = by_cell.get(cell)

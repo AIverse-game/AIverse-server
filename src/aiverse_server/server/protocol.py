@@ -51,7 +51,7 @@ from ..game.cues import CueKind
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 28
+PROTOCOL_VERSION = 29
 
 ERROR_MAX_LENGTH = 200
 
@@ -109,7 +109,7 @@ class BuildFacilityInput(_Message):
     type: Literal["build_facility"]
     resident_id: str
     parcel_id: str
-    kind: Literal["ad", "portal", "game_hall", "workspace"]
+    kind: Literal["ad", "portal", "game_hall", "workspace", "mall"]
     source: Literal["self", "on_demand"]
 
 
@@ -400,7 +400,8 @@ class MapView(_Message):
     """Parcels along each side of a block, which is bought whole."""
     venue_cells: int
     """Parcels along each side of the square a game hall or a workspace takes up, with its
-    north-west corner on the parcel it is built on."""
+    north-west corner on the parcel it is built on. A mall takes up 1 x 2, west to east and
+    north to south."""
     lobby: bool
     """Whether the middle block is the spawn lobby, which nobody owns."""
     parcel_prices: list[list[int]]
@@ -414,7 +415,7 @@ class IncomeView(_Message):
 
 
 class FacilityView(_Message):
-    kind: Literal["ad", "portal", "game_hall", "workspace"]
+    kind: Literal["ad", "portal", "game_hall", "workspace", "mall"]
     contents: int
     expires_in: list[float]
     income: IncomeView | None = None

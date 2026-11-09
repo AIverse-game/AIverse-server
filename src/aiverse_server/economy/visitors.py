@@ -2,22 +2,23 @@
 layout of the town and not fixed beforehand.
 
 There are `VISITOR_COUNT` of them, each standing for more and more people as the game goes on,
-`visitor_weight`. A visitor comes in through the entrance, the middle of the map, and makes a
-few stops at venues, a workspace or a game hall showing games, paying the system-set fee at each
-door, see `admissions.py`. On `ROUTE_SHARE` of the trips the visitor is a working tourist: it
+`visitor_weight`. A visitor comes in through the entrance, the middle of the map, and makes a few
+stops at venues, a workspace, a mall or a game hall showing games, paying the system-set fee at
+each door, see `admissions.py`. On `ROUTE_SHARE` of the trips the visitor is a working tourist: it
 differs from the others in nothing but its route, a workspace and then a game hall showing games,
 in that order. A stop with nowhere to go on the route is skipped, and with none left the visitor
-leaves. Then the visitor walks back out and stays away a while before coming again. Nothing
-about it is stored beyond where it set off from and to, and when: where it is in between is
-worked out from that, `visitor_position`, and something happens only when a walk or a stay
-ends, `advance_crowd`, at the times `next_visit` gives.
+leaves. Then the visitor walks back out and stays away a while before coming again. Nothing about
+it is stored beyond where it set off from and to, and when: where it is in between is worked out
+from that, `visitor_position`, and something happens only when a walk or a stay ends,
+`advance_crowd`, at the times `next_visit` gives.
 
 Nobody goes to look at an ad slot. Ad slots earn only from the visitors who pass close by on
 their way to a venue, see `_count_views`.
 
 Where to next, `_head_for`: among the venues it may go to, it picks by a multinomial logit,
 so every venue has a chance but better ones more. The utility is `APPEAL` times the log of one
-plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`), less
+plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`, a mall as
+`MALL_PIECES`), less
 `WALK_COST` per second of walking and `CROWD_COST` per `CROWD_CAPACITY` visitors already going
 or standing there, plus noise. The walk is the shorter of walking on foot and going through a
 network of portals, see `portals.Router`, so the lines change which ad slots are passed, and
@@ -73,10 +74,11 @@ MAX_STOPS = 4
 DWELL: dict[str, tuple[float, float]] = {
     "workspace": (20.0, 40.0),
     "game_hall": (10.0, 20.0),
+    "mall": (15.0, 30.0),
 }
 """Game seconds a visitor stays at a venue of each kind, least and most."""
 
-VENUE_KINDS: tuple[str, ...] = ("workspace", "game_hall")
+VENUE_KINDS: tuple[str, ...] = ("workspace", "game_hall", "mall")
 """The venues a visitor may go to, see `_pick`."""
 
 ROUTE_SHARE = 0.3
@@ -86,6 +88,11 @@ going to the venues the dice pick."""
 WORKSPACE_PIECES = 1
 """A workspace shows no content, so it draws visitors as an ad slot showing this many pieces
 would."""
+
+MALL_PIECES = 0.4
+"""A mall shows no content and draws visitors from the day it is built, but as an ad slot
+showing this many pieces would: less than a workspace, far less than a game hall with games.
+Visitors only look in, and are not on the working route."""
 
 MIN_AWAY = 20.0
 MAX_AWAY = 60.0
@@ -217,10 +224,10 @@ def next_visit(world: World) -> float | None:
 class _Town:
     """What visitors can go to right now."""
 
-    places: dict[str, dict[str, tuple[Position, int]]]
+    places: dict[str, dict[str, tuple[Position, float]]]
     """By kind of facility, then parcel: the centre and the pieces of content. Ad slots showing
     content are in it, to count the people passing them, and so are the venues visitors can go
-    to: every workspace and each game hall showing games."""
+    to: every workspace and mall, and each game hall showing games."""
     kinds: Mapping[str, str]
     """The kind of facility on each parcel that has one."""
 
@@ -228,7 +235,7 @@ class _Town:
 def advance_crowd(world: World) -> World:
     """Take the next step for every visitor whose walk, stay or absence has ended by
     `world.time`: count what the walkers who arrived have passed, take the fees of those who went
-    into a workspace or game hall, then send everyone on. The same world when none has."""
+    into a workspace, mall or game hall, then send everyone on. The same world when none has."""
     now = world.time
     due = [visitor for visitor in world.crowd.visitors if visitor.until <= now]
     if not due:
@@ -268,9 +275,9 @@ def _step(
     heading: Counter[str],
 ) -> tuple[Visitor, dict[str, float], str | None]:
     """The visitor after the phase that has just ended, the people it has counted at each ad
-    slot it passed, and the parcel of the workspace or game hall it has just paid to get into, if
-    any. `heading` is how many visitors are going or standing at each place, and is kept up to
-    date."""
+    slot it passed, and the parcel of the workspace, mall or game hall it has just paid to get
+    into, if any. `heading` is how many visitors are going or standing at each place, and is
+    kept up to date."""
     now = visitor.until
     seed = world.crowd.seed
     if visitor.phase == "away":
@@ -404,7 +411,7 @@ def _pick(
 def _count_views(
     visitor: Visitor,
     now: float,
-    slots: dict[str, tuple[Position, int]],
+    slots: dict[str, tuple[Position, float]],
 ) -> tuple[dict[str, float], tuple[tuple[str, float], ...]]:
     """The people the walk that has just ended adds to each ad slot's views, and the visitor's
     record of where it has been counted. A slot counts when the walk spent `MIN_VIEW_SECONDS`
@@ -449,10 +456,11 @@ def _legs(visitor: Visitor) -> list[tuple[Position, Position]]:
 
 
 def _town(world: World) -> _Town:
-    places: dict[str, dict[str, tuple[Position, int]]] = {
+    places: dict[str, dict[str, tuple[Position, float]]] = {
         "ad": {},
         "workspace": {},
         "game_hall": {},
+        "mall": {},
     }
     kinds = {}
     for parcel in world.parcels:
@@ -460,8 +468,11 @@ def _town(world: World) -> _Town:
         if facility is None:
             continue
         kinds[parcel.id] = facility.kind
+        pieces: float
         if facility.kind == "workspace":
             pieces = WORKSPACE_PIECES
+        elif facility.kind == "mall":
+            pieces = MALL_PIECES
         elif facility.kind in ("ad", "game_hall"):
             pieces = shown(facility, world.time)
         else:

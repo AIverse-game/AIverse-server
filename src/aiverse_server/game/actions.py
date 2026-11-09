@@ -308,7 +308,7 @@ class BuildPortal:
 
 @dataclass(frozen=True)
 class BuildVenue:
-    """Start building a game hall or a workspace, `kind`, on the resident's own bare parcel
+    """Start building a game hall, a workspace or a mall, `kind`, on the resident's own bare parcel
     `parcel_id`, on the same sources as `BuildAd`, see `compute.py`. It appears when the job
     ends."""
 

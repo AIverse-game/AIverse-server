@@ -208,7 +208,10 @@ def test_a_parcel_a_venue_takes_up_is_shown_as_covered_and_leaves_no_room_for_an
     blocks = replace(
         WORLD,
         map=WorldMap(size=90, block_cells=3, venue_cells=2),
-        parcels=tuple(Parcel(col, row, "a") for row in range(3) for col in range(3)),
+        parcels=(
+            *(Parcel(col, row, "a") for row in range(2) for col in range(2)),
+            Parcel(2, 2, "a"),
+        ),
     )
     game, _ = make_game(blocks)
     ResidentTools(game, "a").build_venue("L0-0", "workspace", "self")
@@ -216,13 +219,13 @@ def test_a_parcel_a_venue_takes_up_is_shown_as_covered_and_leaves_no_room_for_an
     seen = look(game, "a")
 
     mine = {parcel.id: parcel for parcel in seen.land.mine}
-    assert [mine[id_].covered_by for id_ in ("L0-0", "L1-1", "L2-0", "L2-2")] == [
+    assert [mine[id_].covered_by for id_ in ("L0-0", "L1-0", "L0-1", "L1-1")] == [
         None,
         "L0-0",
-        None,
-        None,
+        "L0-0",
+        "L0-0",
     ]
-    assert not any(parcel.venue_room for parcel in seen.land.mine)
+    assert not any(parcel.venue_room or parcel.mall_room for parcel in seen.land.mine)
     names = selected_tool_names(seen)
     assert "build_ad" in names and "build_venue" not in names
     assert "build_venue" not in last_request_tool_names(ResidentTools(game, "a"))
