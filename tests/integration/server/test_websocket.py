@@ -604,7 +604,7 @@ def test_states_carry_only_the_latest_speech(client: TestClient) -> None:
     ("frame", "code"),
     [
         (say("a", "   "), "empty_speech"),
-        (say("a", "字" * 101), "speech_too_long"),
+        (say("a", "字" * 301), "speech_too_long"),
         (say("a", "hi", to="a"), "unknown_listener"),
         (say("a", "hi", to="nobody"), "unknown_listener"),
         (say("nobody", "hi"), "unknown_resident"),

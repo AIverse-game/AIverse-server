@@ -198,8 +198,8 @@ class ActivityLog:
             previous = entry.seq
 
 
-SPEECH_LENGTH_LIMIT = 100
-"""Characters one line of speech may hold, as the design document's `say`."""
+SPEECH_LENGTH_LIMIT = 300
+"""Characters one line of speech may hold."""
 
 SPEECH_LIMIT = 200
 """Lines of speech the world keeps; older ones are dropped, so the record stays small."""

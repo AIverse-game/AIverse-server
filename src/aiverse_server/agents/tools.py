@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Valida
 
 from ..core.compute import JobSource, NodeKind
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES
-from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
+from ..core.world import NOTE_LENGTH_LIMIT, SPEECH_LENGTH_LIMIT, Position, Resident, World
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
 from ..economy.commissions import MAX_FEE
 from ..economy.compute import (
@@ -249,7 +249,7 @@ class PlaceContentArgs(_Args):
 
 
 class SayArgs(_Args):
-    text: str = Field(description="What to say, at most 100 characters.")
+    text: str = Field(description=f"What to say, at most {SPEECH_LENGTH_LIMIT} characters.")
     to: str | None = Field(
         default=None,
         description="Resident id to whisper to wherever they are; leave out to speak aloud "
