@@ -20,7 +20,14 @@ from dataclasses import asdict, dataclass, field
 
 from ..core.compute import Job, PermitKind
 from ..core.events import Event, pending_for, pending_from
-from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES, Parcel
+from ..core.land import (
+    AD_SLOT_CAPACITY,
+    MAX_TOLL,
+    ORIENTATIONS,
+    PARCEL_SHARES,
+    Orientation,
+    Parcel,
+)
 from ..core.ledger import SYSTEM
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
@@ -233,9 +240,10 @@ class MyParcelView:
     promised_to: str | None = None
     """The builder you agreed to let build here, see `build_permits`; nothing else can be started
     on it until the permit is used or lapses. None when it is not promised."""
-    mall_room: bool = False
-    """Whether a mall could be started with this parcel at its north-west corner now: it and the
-    parcel south of it, in the same block, are yours and untaken."""
+    mall_orientations: tuple[Orientation, ...] = ()
+    """The ways a mall could be started with this parcel at its north-west corner now: north_south
+    takes it and the parcel south of it, east_west it and the parcel east of it, in the same block,
+    yours and untaken. Empty when it cannot."""
 
 
 @dataclass(frozen=True)
@@ -390,6 +398,8 @@ class BuildCommissionView:
     fee: int
     """Coins the owner pays the builder once the facility is finished. Set aside already when
     the owner sent the proposal, and when the builder did, on acceptance."""
+    orientation: Orientation = "north_south"
+    """Which way a mall runs; the owner's say, who may change it when accepting."""
 
 
 @dataclass(frozen=True)
@@ -405,6 +415,8 @@ class BuildPermitView:
     """Coins set aside by the owner, paid to the builder when the facility is finished."""
     expires_in: float
     """Seconds left to start the job; after that the permit lapses and the fee goes back."""
+    orientation: Orientation = "north_south"
+    """Which way the owner has said a mall runs."""
 
 
 @dataclass(frozen=True)
@@ -829,7 +841,9 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
     def mine_view(square: Plot) -> MyParcelView:
         parcel = owned[square.id]
         kind = built.get(square.id)
-        centre = facility_centre(world.map, square.col, square.row, kind)
+        built_on = facilities.get(square.id)
+        runs_as = built_on.facility.orientation if built_on and built_on.facility else None
+        centre = facility_centre(world.map, square.col, square.row, kind, runs_as or "north_south")
         holder = taken.get((square.col, square.row))
         return MyParcelView(
             square.id,
@@ -849,8 +863,12 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             venue_room(world, parcel, taken)
             and promised_builder(world, square.id, "game_hall") is None,
             promised_builder(world, square.id, None),
-            venue_room(world, parcel, taken, "mall")
-            and promised_builder(world, square.id, "mall") is None,
+            tuple(
+                runs
+                for runs in ORIENTATIONS
+                if venue_room(world, parcel, taken, "mall", runs)
+                and promised_builder(world, square.id, "mall", runs) is None
+            ),
         )
 
     return LandView(
@@ -1178,6 +1196,7 @@ def _build_commissions(world: World, events: tuple[Event, ...]) -> tuple[BuildCo
             owner_id=event.payload.owner_id,
             builder_id=event.payload.builder_id,
             fee=event.payload.fee,
+            orientation=event.payload.orientation,
         )
         for event in events
         if isinstance(event.payload, BuildCommission)
@@ -1194,6 +1213,7 @@ def _build_permits(world: World, resident_id: str) -> tuple[BuildPermitView, ...
             owner_id=permit.owner_id,
             builder_id=permit.builder_id,
             fee=permit.fee,
+            orientation=permit.orientation,
             expires_in=max(permit.expires_at - world.time, 0.0),
         )
         for permit in world.compute.permits

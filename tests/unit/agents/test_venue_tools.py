@@ -225,7 +225,7 @@ def test_a_parcel_a_venue_takes_up_is_shown_as_covered_and_leaves_no_room_for_an
         "L0-0",
         "L0-0",
     ]
-    assert not any(parcel.venue_room or parcel.mall_room for parcel in seen.land.mine)
+    assert not any(parcel.venue_room or parcel.mall_orientations for parcel in seen.land.mine)
     names = selected_tool_names(seen)
     assert "build_ad" in names and "build_venue" not in names
     assert "build_venue" not in last_request_tool_names(ResidentTools(game, "a"))

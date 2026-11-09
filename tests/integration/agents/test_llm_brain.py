@@ -138,7 +138,7 @@ def test_the_brain_advertises_tools_for_the_residents_current_state() -> None:
         assert {"move_to", "buy_parcel"} <= rich_names
         assert "buy_parcel" not in poor_names
         assert "place_order" not in rich_names | poor_names
-        assert len(json.dumps(json.loads(requests[0].content)["tools"])) < 8000
+        assert len(json.dumps(json.loads(requests[0].content)["tools"])) < 8200
 
     asyncio.run(scenario())
 

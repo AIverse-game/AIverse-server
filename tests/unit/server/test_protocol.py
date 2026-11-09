@@ -84,11 +84,22 @@ def test_facility_state_and_manual_actions_use_authoritative_rules() -> None:
             "row": 1,
             "ownerId": "a",
             "shares": {"a": 100},
-            "facility": {"kind": "game_hall", "contents": 1, "expiresIn": [90.0]},
+            "facility": {
+                "kind": "game_hall",
+                "contents": 1,
+                "expiresIn": [90.0],
+                "orientation": "north_south",
+            },
         }
     ]
     assert view["jobs"] == [
-        {"id": 1, "ownerId": "a", "kind": "make_game", "remainingSeconds": 81.0}
+        {
+            "id": 1,
+            "ownerId": "a",
+            "kind": "make_game",
+            "remainingSeconds": 81.0,
+            "orientation": "north_south",
+        }
     ]
     for payload, expected in (
         ({"type": "buy_parcel", "residentId": "a"}, "BuyParcel"),

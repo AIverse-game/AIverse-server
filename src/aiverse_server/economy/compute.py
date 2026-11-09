@@ -47,7 +47,14 @@ from ..core.compute import (
     PermitKind,
 )
 from ..core.inventory import add_coins, store_item, take_coins
-from ..core.land import VENUE_FACILITIES, Facility, FacilityKind, Parcel
+from ..core.land import (
+    ORIENTATIONS,
+    VENUE_FACILITIES,
+    Facility,
+    FacilityKind,
+    Orientation,
+    Parcel,
+)
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
 from .ads import CONTENT_ITEM, GAME_ITEM
@@ -175,6 +182,8 @@ ComputeErrorCode = Literal[
     "invalid_fee",
     "parcel_permitted",
     "too_many_commissions",
+    "invalid_orientation",
+    "wrong_orientation",
 ]
 
 
@@ -272,19 +281,23 @@ def start_build_venue(
     kind: VenueKind,
     source: JobSource,
     node_id: int | None = None,
+    orientation: Orientation | None = None,
 ) -> World:
     """Start building a game hall or a workspace, `kind`, on the bare parcel `parcel_id` of the
     resident, as `start_build_ad` does for an ad slot. A venue takes up the square of
     `venue_cells` parcels with that parcel at its north-west corner: all of them must be the
     parcel owner's, untaken, and in the same block. The parcel may be another resident's when
-    its owner gave the resident a permit, as for an ad slot."""
+    its owner gave the resident a permit, as for an ad slot. A mall runs `orientation`, north to
+    south when not said; on a permit it runs as the owner said, and `orientation` may only repeat
+    that."""
     _find(world, resident_id)
     job = BUILD_JOB.get(kind)
     if job is None:
         raise ComputeError("unknown_venue_kind", f"no venues of kind {kind!r}")
     owner_id, permit = _owner_or_permit(world, resident_id, parcel_id, kind)
-    parcel = _bare_parcel(world, owner_id, parcel_id, venue=kind)
-    return _start_job(world, resident_id, job, parcel.id, source, node_id, permit)
+    runs = _orientation(kind, orientation, permit)
+    parcel = _bare_parcel(world, owner_id, parcel_id, venue=kind, orientation=runs)
+    return _start_job(world, resident_id, job, parcel.id, source, node_id, permit, runs)
 
 
 def start_make_content(
@@ -312,6 +325,7 @@ def _start_job(
     source: JobSource,
     node_id: int | None,
     permit: Permit | None = None,
+    orientation: Orientation = "north_south",
 ) -> World:
     book = world.compute
     workload = WORKLOADS[kind]
@@ -352,7 +366,7 @@ def _start_job(
     if parcel_id is not None and any(job.parcel_id == parcel_id for job in book.jobs):
         raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
     if parcel_id is not None and permit is None:
-        promised = promised_builder(world, parcel_id, VENUE_JOB_FACILITY.get(kind))
+        promised = promised_builder(world, parcel_id, VENUE_JOB_FACILITY.get(kind), orientation)
         if promised is not None:
             raise ComputeError(
                 "parcel_permitted",
@@ -372,6 +386,7 @@ def _start_job(
         ends_at,
         permit.fee if permit is not None else 0,
         permit.owner_id if permit is not None else None,
+        orientation,
     )
     permits = tuple(p for p in book.permits if p is not permit)
     book = replace(book, jobs=(*book.jobs, job), next_job_id=book.next_job_id + 1, permits=permits)
@@ -392,7 +407,7 @@ def finish_jobs(world: World) -> World:
             item = CONTENT_ITEM if job.kind == "make_content" else GAME_ITEM
             world = store_item(world, job.owner_id, item)
             continue
-        built = Facility(BUILT_BY[job.kind], world.time)
+        built = Facility(BUILT_BY[job.kind], world.time, orientation=job.orientation)
         parcels = tuple(
             replace(parcel, facility=built) if parcel.id == job.parcel_id else parcel
             for parcel in world.parcels
@@ -480,33 +495,43 @@ def cancel_compute(world: World, resident_id: str | None = None) -> World:
     return replace(world, compute=keep)
 
 
-def promised_builder(world: World, parcel_id: str, venue: str | None) -> str | None:
+def promised_builder(
+    world: World, parcel_id: str, venue: str | None, orientation: Orientation = "north_south"
+) -> str | None:
     """The builder holding a permit for a parcel that a facility on `parcel_id` would take up,
-    or None when none is promised. `venue` is the kind of venue it would be, None for a
-    facility of one parcel. A permit for a venue promises every parcel the venue would take up,
-    not only the one it names."""
+    or None when none is promised. `venue` is the kind of venue it would be, a mall running as
+    `orientation`, None for a facility of one parcel. A permit for a venue promises every parcel
+    the venue would take up, not only the one it names."""
 
-    def cells(anchor_id: str, kind: str | None) -> set[tuple[int, int]]:
+    def cells(anchor_id: str, kind: str | None, runs: Orientation) -> set[tuple[int, int]]:
         anchor = next(p for p in world.parcels if p.id == anchor_id)
         if kind in VENUE_FACILITIES:
-            return set(venue_footprint(world.map, anchor.col, anchor.row, kind))
+            return set(venue_footprint(world.map, anchor.col, anchor.row, kind, runs))
         return {(anchor.col, anchor.row)}
 
-    wanted = cells(parcel_id, venue)
+    wanted = cells(parcel_id, venue, orientation)
     for permit in world.compute.permits:
-        if wanted & cells(permit.parcel_id, permit.kind):
+        if wanted & cells(permit.parcel_id, permit.kind, permit.orientation):
             return permit.builder_id
     return None
 
 
-def check_buildable(world: World, owner_id: str, parcel_id: str, kind: PermitKind) -> None:
-    """Refuse unless `owner_id` could build a facility of `kind` on `parcel_id` now: it is theirs,
-    bare, not taken up by a venue, with no job, and for a venue the whole square fits. Raises
-    `ComputeError`."""
-    _bare_parcel(world, owner_id, parcel_id, venue=None if kind == "ad" else kind)
+def check_buildable(
+    world: World,
+    owner_id: str,
+    parcel_id: str,
+    kind: PermitKind,
+    orientation: Orientation = "north_south",
+) -> None:
+    """Refuse unless `owner_id` could build a facility of `kind` on `parcel_id` now, a mall
+    running as `orientation`: it is theirs, bare, not taken up by a venue, with no job, and for a
+    venue all of its land fits. Raises `ComputeError`."""
+    _bare_parcel(
+        world, owner_id, parcel_id, venue=None if kind == "ad" else kind, orientation=orientation
+    )
     if any(job.parcel_id == parcel_id for job in world.compute.jobs):
         raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
-    if promised_builder(world, parcel_id, None if kind == "ad" else kind) is not None:
+    if promised_builder(world, parcel_id, None if kind == "ad" else kind, orientation) is not None:
         raise ComputeError(
             "parcel_permitted", f"parcel {parcel_id} is already promised to a builder"
         )
@@ -539,8 +564,32 @@ def _owner_or_permit(
     return parcel.owner_id, permit
 
 
+def _orientation(kind: str, asked: Orientation | None, permit: Permit | None) -> Orientation:
+    """Which way a venue of `kind` runs: as the permit's owner said, else as asked, else north to
+    south. Only a mall has a choice."""
+    if asked is not None and asked not in ORIENTATIONS:
+        raise ComputeError("invalid_orientation", f"no orientation {asked!r}")
+    if kind != "mall":
+        if asked not in (None, "north_south"):
+            raise ComputeError("invalid_orientation", f"a {kind.replace('_', ' ')} has none")
+        return "north_south"
+    if permit is not None:
+        if asked not in (None, permit.orientation):
+            raise ComputeError(
+                "wrong_orientation",
+                f"the owner's permit says the mall runs {permit.orientation.replace('_', ' to ')}",
+            )
+        return permit.orientation
+    return asked or "north_south"
+
+
 def _bare_parcel(
-    world: World, resident_id: str, parcel_id: str, *, venue: str | None = None
+    world: World,
+    resident_id: str,
+    parcel_id: str,
+    *,
+    venue: str | None = None,
+    orientation: Orientation = "north_south",
 ) -> Parcel:
     """The resident's parcel `parcel_id`, bare, and for a venue, `venue` its kind, every parcel it
     would take up theirs and untaken too."""
@@ -550,8 +599,8 @@ def _bare_parcel(
         raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     if parcel.facility is not None:
         raise ComputeError("parcel_built", f"parcel {parcel_id} already has a facility")
-    if venue and not venue_fits(world.map, parcel.col, parcel.row, venue):
-        cols, rows = footprint_size(world.map, venue)
+    if venue and not venue_fits(world.map, parcel.col, parcel.row, venue, orientation):
+        cols, rows = footprint_size(world.map, venue, orientation)
         raise ComputeError(
             "no_room_for_venue",
             f"a {venue.replace('_', ' ')} takes up {cols} x {rows} parcels with "
@@ -559,7 +608,7 @@ def _bare_parcel(
         )
     taken = claimed(world)
     cells = (
-        venue_footprint(world.map, parcel.col, parcel.row, venue)
+        venue_footprint(world.map, parcel.col, parcel.row, venue, orientation)
         if venue
         else ((parcel.col, parcel.row),)
     )

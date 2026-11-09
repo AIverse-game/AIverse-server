@@ -21,12 +21,12 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 
 from ..core.compute import JobSource, NodeKind
-from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES
+from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES, Orientation
 from ..core.world import NOTE_LENGTH_LIMIT, SPEECH_LENGTH_LIMIT, Position, Resident, World
 from ..economy.admissions import FEES
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
@@ -132,10 +132,11 @@ class CommissionBuildArgs(_Args):
     )
     parcel_id: str = Field(
         description="id of the owner's parcel to build on: bare, with no job, and for a venue "
-        "all the land it takes up must be the owner's too."
+        "all its land must be the owner's too."
     )
-    kind: Literal["ad", "game_hall", "workspace", "mall"] = Field(
-        description="What is built: an ad slot, a game hall, a workspace or a mall."
+    kind: Literal["ad", "game_hall", "workspace", "mall"] = Field(description="What is built.")
+    orientation: Literal["north_south", "east_west"] = Field(
+        default="north_south", description="Mall only; owner's choice."
     )
     fee: StrictInt = Field(
         description=f"Coins the owner pays the builder when it is finished, 0 to {MAX_FEE}; "
@@ -191,12 +192,15 @@ class BuildPortalArgs(_Args):
 
 class BuildVenueArgs(_Args):
     kind: Literal["game_hall", "workspace", "mall"] = Field(description="Which venue to build.")
+    orientation: Literal["north_south", "east_west"] | None = Field(
+        default=None,
+        description="Mall only; default north_south.",
+    )
     parcel_id: str = Field(
-        description="id of the parcel at the north-west corner of the land the venue takes up: "
-        "for a game hall or workspace the square it and the parcels east and south of it make up "
-        "(observation field land.mine[].venue_room says whether it fits), for a mall it and the "
-        "parcel south of it (land.mine[].mall_room), all in one block, yours or the owner's "
-        "who agreed to let you build there (build_permits), with no facility and no job."
+        description="id of the parcel at the north-west corner of the land the venue takes up: a "
+        "square (land.mine[].venue_room says whether it fits), for a mall it and the parcel "
+        "south, or east if east_west (land.mine[].mall_orientations), in one block, yours or "
+        "permitted (build_permits), bare, no job."
     )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
@@ -327,6 +331,9 @@ class RespondToOfferArgs(_Args):
         "contract_proposals_to_me or link_proposals_to_me."
     )
     accept: StrictBool = Field(description="true to accept, false to reject.")
+    orientation: str = Field(
+        default="", description="Owner accepting a mall commission: north_south or east_west."
+    )
 
 
 class WithdrawOfferArgs(_Args):
@@ -540,10 +547,9 @@ TOOLS = (
     ToolSpec(
         "build_venue",
         "Start building a game hall, a workspace or a mall, from anywhere, even while walking; it "
-        "appears when the job ends. A game hall or workspace is big: it takes up a square of "
-        f"{VENUE_CELLS} x {VENUE_CELLS} parcels of one block, all yours and bare, with the "
-        "parcel you name at its north-west corner, so nothing else can be built on those "
-        "parcels. It takes "
+        "appears when the job ends. A game hall or workspace takes up a square of "
+        f"{VENUE_CELLS} x {VENUE_CELLS} parcels of one block, all yours and bare, the one you "
+        "name at its north-west corner; nothing else can be built on them. It takes "
         f"{VENUE_WORKLOAD:g} workload: {job_seconds(VENUE_WORKLOAD, 'self'):g} s on your own "
         "compute (free, one at a time, later jobs queue), "
         f"{job_seconds(VENUE_WORKLOAD, 'on_demand'):g} s on a "
@@ -551,10 +557,9 @@ TOOLS = (
         "subscribed generative nodes. A game hall shows games (make_content with content "
         f"game, then place_content), up to {AD_SLOT_CAPACITY} for {CONTENT_LIFETIME:g} s each. "
         "Visitors pay a fee at the door of each, and go to a game hall only while it shows games; "
-        "the fees are paid out to the holders at paydays. A mall takes 1 x 2 parcels and "
-        f"{MALL_WORKLOAD:g} workload ({on_demand_cost(MALL_WORKLOAD)} coins hired); it needs no "
-        "content and draws visitors at once, but fewer, for a fee of "
-        f"{FEES['mall']} coins a person.",
+        "the fees are paid out to the holders at paydays. A mall takes 1 x 2 parcels "
+        f"(2 x 1 east_west), {MALL_WORKLOAD:g} workload, no content, fewer visitors, fee "
+        f"{FEES['mall']}.",
         BuildVenueArgs,
     ),
     ToolSpec(
@@ -769,10 +774,13 @@ class ResidentTools:
         kind: Literal["game_hall", "workspace", "mall"],
         source: JobSource,
         node_id: int | None = None,
+        orientation: Literal["north_south", "east_west"] | None = None,
     ) -> ToolResult:
         arguments: dict[str, Any] = {"parcel_id": parcel_id, "kind": kind, "source": source}
         if node_id is not None:
             arguments["node_id"] = node_id
+        if orientation is not None:
+            arguments["orientation"] = orientation
         return self.call("build_venue", arguments)
 
     def link_portals(self, parcel_id: str, other_parcel_id: str, toll: int) -> ToolResult:
@@ -878,6 +886,7 @@ class ResidentTools:
                         args.kind,
                         args.fee,
                         args.my_role == "owner",
+                        args.orientation,
                     )
                 )
             case BuyNodeArgs():
@@ -895,7 +904,11 @@ class ResidentTools:
                 seconds = job.ends_at - job.started_at
                 return f"job {job.id}: portal on {job.parcel_id} ready in {seconds:g} s"
             case BuildVenueArgs():
-                act(BuildVenue(me, args.parcel_id, args.kind, args.source, args.node_id))
+                act(
+                    BuildVenue(
+                        me, args.parcel_id, args.kind, args.source, args.node_id, args.orientation
+                    )
+                )
                 job = self.game.world.compute.jobs[-1]
                 seconds = job.ends_at - job.started_at
                 name = args.kind.replace("_", " ")
@@ -942,7 +955,16 @@ class ResidentTools:
             case CancelOrderArgs():
                 act(CancelOrder(me, args.order_id))
             case RespondToOfferArgs():
-                act(RespondToEvent(me, args.event_id, args.accept))
+                act(
+                    RespondToEvent(
+                        me,
+                        args.event_id,
+                        args.accept,
+                        cast("Orientation | None", args.orientation or None)
+                        if args.accept
+                        else None,
+                    )
+                )
             case WithdrawOfferArgs():
                 act(WithdrawEvent(me, args.event_id))
             case ProposeContractArgs():

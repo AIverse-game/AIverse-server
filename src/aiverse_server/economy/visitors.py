@@ -479,7 +479,9 @@ def _town(world: World) -> _Town:
             continue
         if pieces:
             places[facility.kind][parcel.id] = (
-                facility_centre(world.map, parcel.col, parcel.row, facility.kind),
+                facility_centre(
+                    world.map, parcel.col, parcel.row, facility.kind, facility.orientation
+                ),
                 pieces,
             )
     return _Town(places, kinds)

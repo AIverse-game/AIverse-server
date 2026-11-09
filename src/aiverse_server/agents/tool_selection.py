@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..core.land import ORIENTATIONS
 from ..economy.ads import ITEM_FOR
 from ..economy.compute import MAX_NODES, NODE_SECONDS, promised_builder, subscription_cost
 from ..economy.land import claimed, for_sale_at, plot_at, venue_room
@@ -81,7 +82,7 @@ def selected_tool_names(observation: Observation) -> set[str]:
     ):
         names.add("build_ad")
     if any(
-        (parcel.venue_room or parcel.mall_room) and parcel.promised_to is None
+        (parcel.venue_room or parcel.mall_orientations) and parcel.promised_to is None
         for parcel in observation.land.mine
     ) or any(
         permit.builder_id == me.id and permit.kind != "ad" for permit in observation.build_permits
@@ -170,9 +171,10 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
             venue_room(world, parcel, taken)
             and promised_builder(world, parcel.id, "game_hall") is None
         )
-        or (
-            venue_room(world, parcel, taken, "mall")
-            and promised_builder(world, parcel.id, "mall") is None
+        or any(
+            venue_room(world, parcel, taken, "mall", runs)
+            and promised_builder(world, parcel.id, "mall", runs) is None
+            for runs in ORIENTATIONS
         )
         for parcel in my_parcels
     ) or any(permit.kind != "ad" for permit in permits):

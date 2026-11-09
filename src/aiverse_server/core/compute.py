@@ -10,7 +10,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-from .land import FacilityKind
+from .land import ORIENTATIONS, FacilityKind, Orientation
 
 NodeKind = Literal["generative", "render"]
 """What a node does. Generative nodes build facilities; render nodes make content."""
@@ -91,8 +91,14 @@ class Permit:
     builder_id: str
     fee: int
     expires_at: float
+    orientation: Orientation = "north_south"
+    """Which way the owner has said the mall is to run; the default for any other kind."""
 
     def __post_init__(self) -> None:
+        if self.orientation not in ORIENTATIONS:
+            raise ValueError(f"unknown orientation {self.orientation!r}")
+        if self.kind != "mall" and self.orientation != "north_south":
+            raise ValueError(f"a permit for a {self.kind} has no orientation")
         if self.kind not in PERMIT_KINDS:
             raise ValueError(f"unknown permit kind {self.kind!r}")
         if self.owner_id == self.builder_id:
@@ -127,8 +133,14 @@ class Job:
     0 on one's own parcel."""
     fee_from: str | None = None
     """The parcel's owner who set `fee` aside, when it is not the job's owner."""
+    orientation: Orientation = "north_south"
+    """Which way the mall being built runs, see `core/land.py`; the default for any other job."""
 
     def __post_init__(self) -> None:
+        if self.orientation not in ORIENTATIONS:
+            raise ValueError(f"unknown orientation {self.orientation!r}")
+        if self.kind != "build_mall" and self.orientation != "north_south":
+            raise ValueError(f"job {self.id} builds nothing that has an orientation")
         if type(self.fee) is not int or self.fee < 0:
             raise ValueError(f"job {self.id} has a fee that is not a whole number >= 0")
         if self.fee and self.fee_from is None:

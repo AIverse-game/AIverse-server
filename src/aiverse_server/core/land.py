@@ -22,8 +22,15 @@ parcels for a game hall or a workspace, `MALL_COLS` x `MALL_ROWS` for a mall."""
 
 MALL_COLS = 1
 MALL_ROWS = 2
-"""Parcels a mall takes up from west to east and from north to south, 10 x 20 map units, with the
-parcel it is built on at its north-west corner."""
+"""Parcels a mall takes up from west to east and from north to south when it runs north to south,
+10 x 20 map units, with the parcel it is built on at its north-west corner."""
+
+Orientation = Literal["north_south", "east_west"]
+"""Which way a mall's long side runs: north to south, 1 x 2 parcels with its entrance on the south
+side, or east to west, 2 x 1 parcels with its entrance on the east side. Chosen by the parcel's
+owner; every other facility has the default."""
+
+ORIENTATIONS: tuple[Orientation, ...] = ("north_south", "east_west")
 
 CONTENT_KINDS: tuple[FacilityKind, ...] = ("ad", "game_hall")
 """The facilities that show content: an ad slot shows ads, a game hall games."""
@@ -49,10 +56,16 @@ class Facility:
     """The content shown in it, as the game times when each piece goes stale, soonest first;
     pieces that have gone stale may linger until the facility is next stocked, see
     `economy/ads.py`."""
+    orientation: Orientation = "north_south"
+    """Which way a mall runs; always the default for any other facility."""
 
     def __post_init__(self) -> None:
         if self.kind not in FACILITY_KINDS:
             raise ValueError(f"unknown facility kind {self.kind!r}")
+        if self.orientation not in ORIENTATIONS:
+            raise ValueError(f"unknown orientation {self.orientation!r}")
+        if self.kind != "mall" and self.orientation != "north_south":
+            raise ValueError(f"a {self.kind} has no orientation")
         if self.kind not in CONTENT_KINDS and self.contents:
             raise ValueError(f"a {self.kind} shows no content")
         if not math.isfinite(self.built_at) or self.built_at < 0:

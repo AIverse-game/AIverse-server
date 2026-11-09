@@ -51,7 +51,7 @@ from ..game.cues import CueKind
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 29
+PROTOCOL_VERSION = 30
 
 ERROR_MAX_LENGTH = 200
 
@@ -111,6 +111,8 @@ class BuildFacilityInput(_Message):
     parcel_id: str
     kind: Literal["ad", "portal", "game_hall", "workspace", "mall"]
     source: Literal["self", "on_demand"]
+    orientation: Literal["north_south", "east_west"] | None = None
+    """Which way a mall runs; north to south when not said."""
 
 
 class MakeContentInput(_Message):
@@ -418,6 +420,9 @@ class FacilityView(_Message):
     kind: Literal["ad", "portal", "game_hall", "workspace", "mall"]
     contents: int
     expires_in: list[float]
+    orientation: Literal["north_south", "east_west"] = "north_south"
+    """Which way a mall runs: north_south takes the parcel and the one south of it, east_west the
+    parcel and the one east of it."""
     income: IncomeView | None = None
     """What the facility was paid at the payday that last paid it; absent when none has."""
 
@@ -437,6 +442,8 @@ class JobView(_Message):
     kind: str
     parcel_id: str | None = None
     remaining_seconds: float
+    orientation: Literal["north_south", "east_west"] = "north_south"
+    """Which way the mall being built runs."""
 
 
 class ContentView(_Message):
@@ -716,6 +723,7 @@ def world_view(
                         for stale_at in parcel.facility.contents
                         if stale_at > world.time
                     ],
+                    orientation=parcel.facility.orientation,
                     income=income_view(world, parcel.id),
                 )
                 if parcel.facility is not None
@@ -730,6 +738,7 @@ def world_view(
                 kind=job.kind,
                 parcel_id=job.parcel_id,
                 remaining_seconds=max(job.ends_at - world.time, 0.0),
+                orientation=job.orientation,
             )
             for job in world.compute.jobs
         ],
@@ -926,7 +935,13 @@ def to_action(message: ActionMessage) -> Action:
                 return BuildAd(action.resident_id, action.parcel_id, action.source)
             if action.kind == "portal":
                 return BuildPortal(action.resident_id, action.parcel_id, action.source)
-            return BuildVenue(action.resident_id, action.parcel_id, action.kind, action.source)
+            return BuildVenue(
+                action.resident_id,
+                action.parcel_id,
+                action.kind,
+                action.source,
+                orientation=action.orientation,
+            )
         case MakeContentInput():
             return MakeContent(action.resident_id, action.source, content=action.content)
         case PlaceContentInput():

@@ -24,10 +24,11 @@ from ..core.events import (
     withdraw_event,
 )
 from ..core.inventory import InventoryError, InventoryErrorCode
+from ..core.land import Orientation
 from ..core.orders import Side
 from ..core.world import Position, World
 from ..economy.ads import AdsError, AdsErrorCode, place_content
-from ..economy.commissions import BuildCommission
+from ..economy.commissions import BuildCommission, answer_commission
 from ..economy.compute import (
     ComputeError,
     ComputeErrorCode,
@@ -116,6 +117,9 @@ class RespondToEvent:
     resident_id: str
     event_id: int
     accept: bool
+    orientation: Orientation | None = None
+    """Only when accepting a commission to build a mall on one's own parcel: which way it is to
+    run, see `commissions.answer_commission`."""
 
 
 @dataclass(frozen=True)
@@ -270,6 +274,8 @@ class OfferBuildCommission:
     kind: PermitKind
     fee: int
     as_owner: bool
+    orientation: Orientation = "north_south"
+    """Which way a mall runs; the owner's choice, or the builder's suggestion."""
 
 
 @dataclass(frozen=True)
@@ -317,6 +323,8 @@ class BuildVenue:
     kind: VenueKind
     source: JobSource
     node_id: int | None = None
+    orientation: Orientation | None = None
+    """Which way a mall runs, north to south when not said; on a permit the owner's word stands."""
 
 
 @dataclass(frozen=True)
@@ -528,6 +536,7 @@ def _carry_out(world: World, action: Action) -> World:
                     action.kind,
                     action.source,
                     action.node_id,
+                    action.orientation,
                 )
             except (ComputeError, InventoryError) as error:
                 raise ActionRejected(error.code, error.message) from error
@@ -579,6 +588,13 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
     try:
         if isinstance(action, WithdrawEvent):
             return withdraw_event(world, action.resident_id, action.event_id)
+        if action.orientation is not None:
+            if not action.accept:
+                raise ComputeError("invalid_orientation", "an orientation goes with accepting")
+            event = next((e for e in world.events.pending if e.id == action.event_id), None)
+            if event is None or event.recipient_id != action.resident_id:
+                return accept_event(world, action.resident_id, action.event_id)
+            world = answer_commission(world, event, action.orientation)
         if action.accept:
             return accept_event(world, action.resident_id, action.event_id)
         return reject_event(world, action.resident_id, action.event_id)
@@ -603,7 +619,9 @@ def _offer_build_commission(world: World, action: OfferBuildCommission) -> World
         if action.as_owner
         else (action.partner_id, action.resident_id)
     )
-    payload = BuildCommission(action.parcel_id, action.kind, owner_id, builder_id, action.fee)
+    payload = BuildCommission(
+        action.parcel_id, action.kind, owner_id, builder_id, action.fee, action.orientation
+    )
     try:
         return send_event(world, action.resident_id, action.partner_id, payload)[0]
     except (EventError, InventoryError, ComputeError) as error:
