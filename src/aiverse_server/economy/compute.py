@@ -40,8 +40,10 @@ from ..core.compute import (
     JobSource,
     Node,
     NodeKind,
+    Permit,
+    PermitKind,
 )
-from ..core.inventory import store_item, take_coins
+from ..core.inventory import add_coins, store_item, take_coins
 from ..core.land import Facility, FacilityKind, Parcel
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
@@ -55,8 +57,8 @@ SELF_RATE = 1.0
 NODE_RATE = 10.0
 """Workload a node does per game second."""
 
-AD_WORKLOAD = 120.0
-"""Workload of building an ad slot: two minutes of one's own compute, 12 seconds of a node."""
+AD_WORKLOAD = 180.0
+"""Workload of building an ad slot: three minutes of one's own compute, 18 seconds of a node."""
 
 CONTENT_WORKLOAD = 60.0
 """Workload of rendering a piece of content: a minute of one's own compute, 6 seconds of a
@@ -112,16 +114,24 @@ BUILT_BY: dict[JobKind, FacilityKind] = {
 }
 """The facility each building job leaves."""
 
-ON_DEMAND_PRICE = 3
-"""Coins per unit of workload of a job on a node hired for it alone."""
+ON_DEMAND_PRICE = 15
+"""Coins per unit of workload of a job on a node hired for it alone. Deliberately dear: an ad slot
+costs 2700 coins hired, a venue 3600, a game 1350, so hiring is a rare last resort."""
 
 SUBSCRIPTION_PRICE = 12
-"""Coins per second of a subscribed node, busy or idle. A node that never rests builds an ad slot
-in 12 seconds, so a subscription is cheaper per job than hiring once it is kept busy more than
-a third of the time."""
+"""Coins per second of a subscribed node, busy or idle. A node does 10 workload a second, so
+subscribed work costs 1.2 coins per workload against 15 hired: an ad slot 216 coins, a game 108,
+and the same node keeps going for the whole subscription. A subscription costs more in all than
+one hired job, but is cheaper per job once the node is kept busy more than about a twelfth of
+the time."""
 
-NODE_SECONDS = (30, 600)
-"""Least and most game seconds one subscription lasts."""
+NODE_SECONDS = (300, 1200)
+"""Least and most game seconds one subscription lasts. Subscriptions are meant to be long: a node
+is a standing workshop that is kept busy, not something to switch on for a single job."""
+
+PERMIT_SECONDS = 300.0
+"""How long a permit to build on another resident's parcel waits for the builder to start the
+job before it lapses and the owner's fee goes back."""
 
 MAX_NODES = 4
 """Subscribed nodes one resident may hold at a time."""
@@ -144,6 +154,11 @@ ComputeErrorCode = Literal[
     "wrong_node_kind",
     "node_expired",
     "too_many_portals",
+    "unknown_parcel",
+    "invalid_commission",
+    "invalid_fee",
+    "parcel_permitted",
+    "too_many_commissions",
 ]
 
 
@@ -209,10 +224,12 @@ def start_build_ad(
 ) -> World:
     """Start building an ad slot on the bare parcel `parcel_id` of the resident, on `source`;
     `node_id` names the node of a subscription and is refused for the other sources. The ad
-    slot appears when the job ends."""
+    slot appears when the job ends. The parcel may be another resident's when its owner gave the
+    resident a permit, see `commissions.py`; the owner's fee is then paid when the job ends."""
     _find(world, resident_id)
-    parcel = _bare_parcel(world, resident_id, parcel_id)
-    return _start_job(world, resident_id, "build_ad", parcel.id, source, node_id)
+    owner_id, permit = _owner_or_permit(world, resident_id, parcel_id, "ad")
+    parcel = _bare_parcel(world, owner_id, parcel_id)
+    return _start_job(world, resident_id, "build_ad", parcel.id, source, node_id, permit)
 
 
 def start_build_portal(
@@ -243,13 +260,15 @@ def start_build_venue(
     """Start building a game hall or a workspace, `kind`, on the bare parcel `parcel_id` of the
     resident, as `start_build_ad` does for an ad slot. A venue takes up the square of
     `venue_cells` parcels with that parcel at its north-west corner: all of them must be the
-    resident's, untaken, and in the same block."""
+    parcel owner's, untaken, and in the same block. The parcel may be another resident's when
+    its owner gave the resident a permit, as for an ad slot."""
     _find(world, resident_id)
     job = BUILD_JOB.get(kind)
     if job is None:
         raise ComputeError("unknown_venue_kind", f"no venues of kind {kind!r}")
-    parcel = _bare_parcel(world, resident_id, parcel_id, venue=True)
-    return _start_job(world, resident_id, job, parcel.id, source, node_id)
+    owner_id, permit = _owner_or_permit(world, resident_id, parcel_id, kind)
+    parcel = _bare_parcel(world, owner_id, parcel_id, venue=True)
+    return _start_job(world, resident_id, job, parcel.id, source, node_id, permit)
 
 
 def start_make_content(
@@ -276,6 +295,7 @@ def _start_job(
     parcel_id: str | None,
     source: JobSource,
     node_id: int | None,
+    permit: Permit | None = None,
 ) -> World:
     book = world.compute
     workload = WORKLOADS[kind]
@@ -309,6 +329,13 @@ def _start_job(
             raise ComputeError("invalid_source", f"no compute source {source!r}")
     if parcel_id is not None and any(job.parcel_id == parcel_id for job in book.jobs):
         raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
+    if parcel_id is not None and permit is None:
+        promised = promised_builder(world, parcel_id, kind in VENUE_JOBS)
+        if promised is not None:
+            raise ComputeError(
+                "parcel_permitted",
+                f"parcel {parcel_id} is promised to {promised} until the permit lapses",
+            )
     if cost:
         world = take_coins(world, resident_id, cost)
         world = record_transfer(world, resident_id, SYSTEM, cost, "compute")
@@ -321,8 +348,11 @@ def _start_job(
         node_id,
         world.time,
         ends_at,
+        permit.fee if permit is not None else 0,
+        permit.owner_id if permit is not None else None,
     )
-    book = replace(book, jobs=(*book.jobs, job), next_job_id=book.next_job_id + 1)
+    permits = tuple(p for p in book.permits if p is not permit)
+    book = replace(book, jobs=(*book.jobs, job), next_job_id=book.next_job_id + 1, permits=permits)
     return replace(world, compute=book)
 
 
@@ -346,6 +376,9 @@ def finish_jobs(world: World) -> World:
             for parcel in world.parcels
         )
         world = replace(world, parcels=parcels)
+        if job.fee and job.fee_from is not None:
+            world = add_coins(world, job.owner_id, job.fee)
+            world = record_transfer(world, job.fee_from, job.owner_id, job.fee, "commission")
     return world
 
 
@@ -366,24 +399,125 @@ def expire_nodes(world: World) -> World:
     return replace(world, compute=replace(book, nodes=nodes, jobs=jobs))
 
 
-def next_compute_due(world: World) -> float | None:
-    """Game time when the earliest job ends or node runs out, or None when there is none."""
+def expire_permits(world: World) -> World:
+    """Drop every permit that has lapsed by `world.time`, handing the owner's fee back. The same
+    world when none has."""
     book = world.compute
-    times = [job.ends_at for job in book.jobs] + [node.expires_at for node in book.nodes]
+    lapsed = [permit for permit in book.permits if permit.expires_at <= world.time]
+    if not lapsed:
+        return world
+    for permit in lapsed:
+        world = add_coins(world, permit.owner_id, permit.fee)
+    kept = tuple(permit for permit in book.permits if permit.expires_at > world.time)
+    return replace(world, compute=replace(book, permits=kept))
+
+
+def next_compute_due(world: World) -> float | None:
+    """Game time when the earliest job ends, node runs out or permit lapses, or None when there
+    is none."""
+    book = world.compute
+    times = (
+        [job.ends_at for job in book.jobs]
+        + [node.expires_at for node in book.nodes]
+        + [permit.expires_at for permit in book.permits]
+    )
     return min(times, default=None)
 
 
-def cancel_compute(world: World, resident_id: str | None = None) -> World:
-    """Drop the resident's jobs and nodes, or everyone's when `resident_id` is None. Nothing is
-    paid back and nothing is made."""
+def permit_coins(world: World, resident_id: str) -> int:
+    """Coins the resident has set aside as the owner of parcels others may build on: the fees of
+    permits not yet used and of jobs not yet finished."""
     book = world.compute
+    return sum(p.fee for p in book.permits if p.owner_id == resident_id) + sum(
+        job.fee for job in book.jobs if job.fee_from == resident_id
+    )
+
+
+def cancel_compute(world: World, resident_id: str | None = None) -> World:
+    """Drop the resident's jobs, nodes and permits as builder or owner, or everyone's when
+    `resident_id` is None. Nothing is paid back for compute and nothing is made, but a fee an
+    owner set aside for a dropped job or permit goes back to them."""
+    book = world.compute
+
+    def theirs(*ids: str | None) -> bool:
+        return resident_id is None or resident_id in ids
+
+    for job in book.jobs:
+        if theirs(job.owner_id) and job.fee and job.fee_from is not None:
+            world = add_coins(world, job.fee_from, job.fee)
+    for permit in book.permits:
+        if theirs(permit.owner_id, permit.builder_id):
+            world = add_coins(world, permit.owner_id, permit.fee)
     keep = ComputeBook(
-        tuple(n for n in book.nodes if resident_id is not None and n.owner_id != resident_id),
-        tuple(j for j in book.jobs if resident_id is not None and j.owner_id != resident_id),
+        tuple(n for n in book.nodes if not theirs(n.owner_id)),
+        tuple(j for j in book.jobs if not theirs(j.owner_id)),
         book.next_node_id,
         book.next_job_id,
+        tuple(p for p in book.permits if not theirs(p.owner_id, p.builder_id)),
     )
     return replace(world, compute=keep)
+
+
+VENUE_JOBS: tuple[JobKind, ...] = ("build_game_hall", "build_workspace")
+"""The jobs that build a venue, which takes up a square of parcels."""
+
+
+def promised_builder(world: World, parcel_id: str, venue: bool) -> str | None:
+    """The builder holding a permit for a parcel that a facility on `parcel_id`, a venue or not,
+    would take up, or None when none is promised. A permit for a venue promises every parcel
+    the venue would take up, not only the one it names."""
+
+    def cells(anchor_id: str, is_venue: bool) -> set[tuple[int, int]]:
+        anchor = next(p for p in world.parcels if p.id == anchor_id)
+        if is_venue:
+            return set(venue_footprint(world.map, anchor.col, anchor.row))
+        return {(anchor.col, anchor.row)}
+
+    wanted = cells(parcel_id, venue)
+    for permit in world.compute.permits:
+        if wanted & cells(permit.parcel_id, permit.kind != "ad"):
+            return permit.builder_id
+    return None
+
+
+def check_buildable(world: World, owner_id: str, parcel_id: str, kind: PermitKind) -> None:
+    """Refuse unless `owner_id` could build a facility of `kind` on `parcel_id` now: it is theirs,
+    bare, not taken up by a venue, with no job, and for a venue the whole square fits. Raises
+    `ComputeError`."""
+    _bare_parcel(world, owner_id, parcel_id, venue=kind != "ad")
+    if any(job.parcel_id == parcel_id for job in world.compute.jobs):
+        raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
+    if promised_builder(world, parcel_id, kind != "ad") is not None:
+        raise ComputeError(
+            "parcel_permitted", f"parcel {parcel_id} is already promised to a builder"
+        )
+
+
+def _owner_or_permit(
+    world: World, resident_id: str, parcel_id: str, kind: PermitKind
+) -> tuple[str, Permit | None]:
+    """Whose parcel `parcel_id` is, and the permit that lets `resident_id` build `kind` on it
+    when it is not theirs."""
+    parcel = next((p for p in world.parcels if p.id == parcel_id), None)
+    if parcel is None:
+        raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
+    if parcel.owner_id == resident_id:
+        return resident_id, None
+    permit = next(
+        (
+            p
+            for p in world.compute.permits
+            if p.parcel_id == parcel_id and p.builder_id == resident_id and p.kind == kind
+        ),
+        None,
+    )
+    if permit is None:
+        raise ComputeError(
+            "not_your_parcel",
+            f"parcel {parcel_id!r} is not {resident_id}'s, and its owner has not permitted "
+            f"{resident_id} to build a {kind.replace('_', ' ')} there",
+        )
+    return parcel.owner_id, permit
 
 
 def _bare_parcel(world: World, resident_id: str, parcel_id: str, *, venue: bool = False) -> Parcel:

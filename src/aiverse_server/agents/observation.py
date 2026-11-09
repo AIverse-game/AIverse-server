@@ -18,12 +18,13 @@ import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 
-from ..core.compute import Job
+from ..core.compute import Job, PermitKind
 from ..core.events import Event, pending_for, pending_from
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES, Parcel
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
 from ..economy.ads import CONTENT_LIFETIME
+from ..economy.commissions import BuildCommission, commission_coins
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -35,6 +36,7 @@ from ..economy.compute import (
     VENUE_WORKLOAD,
     job_seconds,
     on_demand_cost,
+    promised_builder,
 )
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
@@ -215,6 +217,9 @@ class MyParcelView:
     venue_room: bool = False
     """Whether a game hall or workspace could be started with this parcel at its north-west
     corner now: the parcels it would take up are all yours and untaken."""
+    promised_to: str | None = None
+    """The builder you agreed to let build here, see `build_permits`; nothing else can be started
+    on it until the permit is used or lapses. None when it is not promised."""
 
 
 @dataclass(frozen=True)
@@ -349,6 +354,39 @@ class LinkProposalView:
     toll: int
     """Coins one trip along the line would cost, split between the holders of both parcels'
     shares."""
+
+
+@dataclass(frozen=True)
+class BuildCommissionView:
+    """A proposal that someone builds a facility on a parcel for a fee, see `commissions.py`."""
+
+    event_id: int
+    from_id: str
+    to_id: str
+    parcel: str
+    centre: Position
+    kind: PermitKind
+    owner_id: str
+    """Whose parcel it is; the parcel's owner pays the fee."""
+    builder_id: str
+    fee: int
+    """Coins the owner pays the builder once the facility is finished. Set aside already when
+    the owner sent the proposal, and when the builder did, on acceptance."""
+
+
+@dataclass(frozen=True)
+class BuildPermitView:
+    """An agreed commission: the builder may build `kind` on the owner's parcel."""
+
+    parcel: str
+    centre: Position
+    kind: PermitKind
+    owner_id: str
+    builder_id: str
+    fee: int
+    """Coins set aside by the owner, paid to the builder when the facility is finished."""
+    expires_in: float
+    """Seconds left to start the job; after that the permit lapses and the fee goes back."""
 
 
 @dataclass(frozen=True)
@@ -589,6 +627,11 @@ class Observation:
     transport: TransportView | None = None
     link_proposals_to_me: tuple[LinkProposalView, ...] = ()
     my_link_proposals: tuple[LinkProposalView, ...] = ()
+    build_commissions_to_me: tuple[BuildCommissionView, ...] = ()
+    my_build_commissions: tuple[BuildCommissionView, ...] = ()
+    build_permits: tuple[BuildPermitView, ...] = ()
+    """Permits where the resident is the builder, who may build now, or the owner, whose
+    parcel is to be built on."""
     last_thinking_seconds: float | None = None
     """Game seconds the resident's previous round took, from its look to the end of the
     round, whether it went well or not; None in the first round."""
@@ -621,7 +664,8 @@ def observe(
             position=here,
             coins=me.coins,
             coins_in_offers=reserved_coins(world, resident_id)
-            + reserved_purchase_coins(world, resident_id),
+            + reserved_purchase_coins(world, resident_id)
+            + commission_coins(world, resident_id),
             coins_in_orders=order_coins(world.orders, resident_id),
             coins_in_contracts=contract_coins(world, resident_id),
             items=me.inventory.counts(),
@@ -659,6 +703,9 @@ def observe(
         transport=_transport_view(world, resident_id, here, standing=walk is None),
         link_proposals_to_me=_link_proposals(world, pending_for(world, resident_id)),
         my_link_proposals=_link_proposals(world, pending_from(world, resident_id)),
+        build_commissions_to_me=_build_commissions(world, pending_for(world, resident_id)),
+        my_build_commissions=_build_commissions(world, pending_from(world, resident_id)),
+        build_permits=_build_permits(world, resident_id),
         information_offers_to_me=_information_offers(pending_for(world, resident_id)),
         my_information_offers=_information_offers(pending_from(world, resident_id)),
         contract_proposals_to_me=_proposals(pending_for(world, resident_id)),
@@ -704,7 +751,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
     building = {
         job.parcel_id: max(job.ends_at - world.time, 0.0)
         for job in world.compute.jobs
-        if job.owner_id == resident_id and job.parcel_id is not None
+        if resident_id in (job.owner_id, job.fee_from) and job.parcel_id is not None
     }
     facilities = {parcel.id: parcel for parcel in world.parcels if parcel.facility}
     traffic = Traffic(world)
@@ -772,7 +819,8 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             round(world.crowd.viewed(square.id), 1),
             round(world.admissions.admitted_to(square.id), 1),
             holder if holder != square.id else None,
-            venue_room(world, parcel, taken),
+            venue_room(world, parcel, taken) and promised_builder(world, square.id, True) is None,
+            promised_builder(world, square.id, False),
         )
 
     return LandView(
@@ -1074,6 +1122,42 @@ def _link_proposals(world: World, events: tuple[Event, ...]) -> tuple[LinkPropos
             )
         )
     return tuple(views)
+
+
+def _build_commissions(world: World, events: tuple[Event, ...]) -> tuple[BuildCommissionView, ...]:
+    """The build commissions among `events`."""
+    return tuple(
+        BuildCommissionView(
+            event_id=event.id,
+            from_id=event.sender_id,
+            to_id=event.recipient_id,
+            parcel=event.payload.parcel_id,
+            centre=_centre_of(world, event.payload.parcel_id),
+            kind=event.payload.kind,
+            owner_id=event.payload.owner_id,
+            builder_id=event.payload.builder_id,
+            fee=event.payload.fee,
+        )
+        for event in events
+        if isinstance(event.payload, BuildCommission)
+    )
+
+
+def _build_permits(world: World, resident_id: str) -> tuple[BuildPermitView, ...]:
+    """The permits the resident holds as builder or has given as owner."""
+    return tuple(
+        BuildPermitView(
+            parcel=permit.parcel_id,
+            centre=_centre_of(world, permit.parcel_id),
+            kind=permit.kind,
+            owner_id=permit.owner_id,
+            builder_id=permit.builder_id,
+            fee=permit.fee,
+            expires_in=max(permit.expires_at - world.time, 0.0),
+        )
+        for permit in world.compute.permits
+        if resident_id in (permit.owner_id, permit.builder_id)
+    )
 
 
 def _centre_of(world: World, parcel_id: str) -> Position:

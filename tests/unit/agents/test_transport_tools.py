@@ -12,7 +12,7 @@ from aiverse_server.agents.tool_selection import (
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.land import Facility, Link, Parcel
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.compute import PORTAL_WORKLOAD, SELF_RATE
+from aiverse_server.economy.compute import ON_DEMAND_PRICE, PORTAL_WORKLOAD, SELF_RATE
 from aiverse_server.game.actions import LeaveGame, perform
 from aiverse_server.server.app import Game
 
@@ -192,7 +192,7 @@ def test_the_observation_shows_what_a_portal_costs_to_build() -> None:
 
     assert [(option.source, option.seconds, option.coins) for option in options] == [
         ("self", 180.0, 0),
-        ("on_demand", 18.0, 540),
+        ("on_demand", 18.0, PORTAL_WORKLOAD * ON_DEMAND_PRICE),
         ("subscription", 18.0, 0),
     ]
     assert '"portal":' in to_json(observation)

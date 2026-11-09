@@ -6,7 +6,7 @@ from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import MAX_TOLL, Facility, Link, Parcel
 from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.compute import PORTAL_WORKLOAD, SELF_RATE
+from aiverse_server.economy.compute import NODE_SECONDS, PORTAL_WORKLOAD, SELF_RATE
 from aiverse_server.economy.portals import (
     MAX_LINKS_PER_PORTAL,
     MAX_PORTALS,
@@ -456,7 +456,7 @@ def test_a_line_cannot_be_proposed_to_a_resident_who_left() -> None:
 
 def test_a_portal_needs_a_generative_node() -> None:
     world = replace(WORLD, parcels=(Parcel(2, 2, "a"),))
-    bought = perform(world, BuyNode("a", "render", 60))
+    bought = perform(world, BuyNode("a", "render", NODE_SECONDS[0]))
 
     with pytest.raises(ActionRejected) as raised:
         perform(bought, BuildPortal("a", "L2-2", "subscription", 1))

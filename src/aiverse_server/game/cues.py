@@ -10,6 +10,7 @@ from typing import Literal
 from ..core.world import World
 from .actions import (
     Action,
+    OfferBuildCommission,
     OfferInformation,
     OfferJointPurchase,
     OfferShares,
@@ -29,6 +30,7 @@ _TALKING = (
     | OfferInformation
     | OfferShares
     | OfferJointPurchase
+    | OfferBuildCommission
     | ProposeContract
 )
 

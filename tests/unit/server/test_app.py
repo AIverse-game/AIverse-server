@@ -367,7 +367,7 @@ def test_a_visitor_paying_at_a_door_is_not_news_but_the_payout_at_the_payday_is(
     assert let_in != ()
     assert quiet
     assert watcher.state is not None
-    assert me(game, "a").coins == 5_000 + 4
+    assert me(game, "a").coins == 5_000 + 8
 
 
 def test_an_agent_shows_thinking_while_its_brain_works_and_cues_what_it_did() -> None:

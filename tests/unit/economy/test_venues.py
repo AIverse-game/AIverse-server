@@ -12,6 +12,7 @@ from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
 from aiverse_server.economy.compute import (
     GAME_WORKLOAD,
     NODE_RATE,
+    NODE_SECONDS,
     SELF_RATE,
     VENUE_WORKLOAD,
     on_demand_cost,
@@ -83,7 +84,7 @@ def test_a_hired_node_builds_a_venue_faster_for_coins() -> None:
 
 
 def test_a_venue_needs_a_generative_node_and_a_bare_parcel_of_the_own() -> None:
-    world = perform(WORLD, BuyNode("a", "render", 60))
+    world = perform(WORLD, BuyNode("a", "render", NODE_SECONDS[0]))
 
     with pytest.raises(ActionRejected) as wrong_node:
         perform(world, BuildVenue("a", "L7-8", "game_hall", "subscription", 1))
@@ -110,7 +111,7 @@ def test_a_game_is_rendered_into_the_inventory_as_its_own_item() -> None:
 
 
 def test_a_game_needs_a_render_node_and_a_known_kind() -> None:
-    world = perform(WORLD, BuyNode("b", "generative", 60))
+    world = perform(WORLD, BuyNode("b", "generative", NODE_SECONDS[0]))
 
     with pytest.raises(ActionRejected) as wrong_node:
         perform(world, MakeContent("b", "subscription", 1, "game"))

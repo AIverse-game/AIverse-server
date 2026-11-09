@@ -14,7 +14,7 @@ activity log for others nearby to notice, see `perception.py`.
 from dataclasses import dataclass
 from typing import Literal
 
-from ..core.compute import JobSource, NodeKind
+from ..core.compute import JobSource, NodeKind, PermitKind
 from ..core.events import (
     EventError,
     EventErrorCode,
@@ -27,6 +27,7 @@ from ..core.inventory import InventoryError, InventoryErrorCode
 from ..core.orders import Side
 from ..core.world import Position, World
 from ..economy.ads import AdsError, AdsErrorCode, place_content
+from ..economy.commissions import BuildCommission
 from ..economy.compute import (
     ComputeError,
     ComputeErrorCode,
@@ -257,6 +258,21 @@ class OfferJointPurchase:
 
 
 @dataclass(frozen=True)
+class OfferBuildCommission:
+    """Propose to `partner_id` that a facility of `kind` is built on the parcel `parcel_id` for
+    `fee` coins, see `commissions.py`. With `as_owner` the parcel is the resident's and the
+    partner is asked to build on it; otherwise the parcel is the partner's and the resident
+    asks to build on it. The partner must agree before anything can be built."""
+
+    resident_id: str
+    partner_id: str
+    parcel_id: str
+    kind: PermitKind
+    fee: int
+    as_owner: bool
+
+
+@dataclass(frozen=True)
 class BuyNode:
     """Subscribe to a node of `kind` for `seconds`, paying the system, from anywhere, see
     `compute.py`."""
@@ -396,6 +412,7 @@ Action = (
     | LeaveGame
     | BuyParcel
     | OfferJointPurchase
+    | OfferBuildCommission
     | BuyNode
     | BuildAd
     | BuildPortal
@@ -481,6 +498,8 @@ def _carry_out(world: World, action: Action) -> World:
                 raise ActionRejected(error.code, error.message) from error
         case OfferJointPurchase():
             return _offer_joint_purchase(world, action)
+        case OfferBuildCommission():
+            return _offer_build_commission(world, action)
         case BuyNode():
             try:
                 return buy_node(world, action.resident_id, action.kind, action.seconds)
@@ -573,7 +592,21 @@ def _answer(world: World, action: RespondToEvent | WithdrawEvent) -> World:
         LandError,
         InformationError,
         NoteError,
+        ComputeError,
     ) as error:
+        raise ActionRejected(error.code, error.message) from error
+
+
+def _offer_build_commission(world: World, action: OfferBuildCommission) -> World:
+    owner_id, builder_id = (
+        (action.resident_id, action.partner_id)
+        if action.as_owner
+        else (action.partner_id, action.resident_id)
+    )
+    payload = BuildCommission(action.parcel_id, action.kind, owner_id, builder_id, action.fee)
+    try:
+        return send_event(world, action.resident_id, action.partner_id, payload)[0]
+    except (EventError, InventoryError, ComputeError) as error:
         raise ActionRejected(error.code, error.message) from error
 
 

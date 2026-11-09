@@ -79,7 +79,7 @@ def test_the_carried_part_of_a_coin_is_paid_with_the_next_fees() -> None:
     more = replace(first, admissions=admit(first.admissions, "L7-7", 1.0, FEES["workspace"]))
     second = settle_due(replace(more, time=2 * PAY_PERIOD))
 
-    assert coins(second, "a") == 10 + 4 + 0  # 0.5 + 4 = 4.5 → 4, and 0.5 left again
+    assert coins(second, "a") == 10 + 8 + 0  # 0.5 + 8 = 8.5 → 8, and 0.5 left again
     assert dict(second.admissions.unpaid) == {"L7-7": pytest.approx(0.5)}
 
 

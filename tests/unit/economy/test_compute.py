@@ -88,7 +88,7 @@ def test_a_hired_node_is_fast_and_paid_by_the_workload() -> None:
 
 
 def test_a_subscribed_node_costs_by_the_second_and_runs_one_job_at_a_time() -> None:
-    world = perform(WORLD, BuyNode("a", "generative", 60))
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
     world = perform(world, BuildAd("a", "L5-3", "subscription", node_id=1))
 
     with pytest.raises(ActionRejected) as busy:
@@ -96,7 +96,7 @@ def test_a_subscribed_node_costs_by_the_second_and_runs_one_job_at_a_time() -> N
     next_up = settle_due(replace(world, time=NODE_JOB_SECONDS))
     next_up = perform(next_up, BuildAd("a", "L6-3", "subscription", node_id=1))
 
-    assert coin_balance(world, "a") == 10_000 - 60 * SUBSCRIPTION_PRICE
+    assert coin_balance(world, "a") == 10_000 - NODE_SECONDS[0] * SUBSCRIPTION_PRICE
     assert busy.value.code == "source_busy"
     assert facility(next_up, "L5-3") is not None
     assert [job.parcel_id for job in next_up.compute.jobs] == ["L6-3"]
@@ -105,8 +105,8 @@ def test_a_subscribed_node_costs_by_the_second_and_runs_one_job_at_a_time() -> N
 def test_two_nodes_work_at_once_and_so_do_a_node_and_the_residents_own_compute() -> None:
     world = run(
         WORLD,
-        BuyNode("a", "generative", 60),
-        BuyNode("a", "generative", 60),
+        BuyNode("a", "generative", NODE_SECONDS[0]),
+        BuyNode("a", "generative", NODE_SECONDS[0]),
         BuildAd("a", "L5-3", "subscription", node_id=1),
         BuildAd("a", "L6-3", "subscription", node_id=2),
     )
@@ -147,15 +147,15 @@ def test_a_job_that_carries_on_does_not_use_up_the_residents_own_compute() -> No
 
 
 def test_a_job_ending_exactly_when_its_node_runs_out_still_finishes() -> None:
-    world = perform(WORLD, BuyNode("a", "generative", 30))
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
     started = perform(
-        replace(world, time=30.0 - NODE_JOB_SECONDS),
+        replace(world, time=NODE_SECONDS[0] - NODE_JOB_SECONDS),
         BuildAd("a", "L5-3", "subscription", node_id=1),
     )
 
-    done = settle_due(replace(started, time=30.0))
+    done = settle_due(replace(started, time=NODE_SECONDS[0]))
 
-    assert facility(done, "L5-3") == new_ad(30.0)
+    assert facility(done, "L5-3") == new_ad(NODE_SECONDS[0])
     assert done.compute == ComputeBook((), (), 2, 2)
 
 
@@ -173,7 +173,7 @@ def test_leaving_drops_a_job_that_carries_on_without_its_node() -> None:
 
 
 def test_a_job_that_is_not_slowed_when_it_fits_in_the_subscription_keeps_its_node() -> None:
-    world = perform(WORLD, BuyNode("a", "generative", 60))
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
 
     started = perform(world, BuildAd("a", "L5-3", "subscription", node_id=1))
 
@@ -181,7 +181,7 @@ def test_a_job_that_is_not_slowed_when_it_fits_in_the_subscription_keeps_its_nod
 
 
 def test_a_job_that_fits_in_the_subscription_is_not_slowed() -> None:
-    world = perform(WORLD, BuyNode("a", "generative", 60))
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
 
     started = perform(world, BuildAd("a", "L5-3", "subscription", node_id=1))
 
@@ -200,11 +200,13 @@ def test_a_node_that_has_run_out_cannot_start_a_job() -> None:
 
 def test_a_node_runs_out_when_its_time_is_up_after_its_last_job_finished() -> None:
     world = run(
-        WORLD, BuyNode("a", "generative", 30), BuildAd("a", "L5-3", "subscription", node_id=1)
+        WORLD,
+        BuyNode("a", "generative", NODE_SECONDS[0]),
+        BuildAd("a", "L5-3", "subscription", node_id=1),
     )
 
-    working = settle_due(replace(world, time=29.0))
-    over = settle_due(replace(world, time=30.0))
+    working = settle_due(replace(world, time=NODE_SECONDS[0] - 1.0))
+    over = settle_due(replace(world, time=NODE_SECONDS[0]))
 
     assert len(working.compute.nodes) == 1
     assert over.compute.nodes == ()
@@ -233,8 +235,8 @@ def test_the_resident_may_walk_while_the_job_runs() -> None:
         (BuildAd("a", "L5-3", "teleport"), "invalid_source"),  # type: ignore[arg-type]
         (BuyNode("a", "generative", NODE_SECONDS[0] - 1), "invalid_seconds"),
         (BuyNode("a", "generative", NODE_SECONDS[1] + 1), "invalid_seconds"),
-        (BuyNode("a", "laser", 60), "unknown_node_kind"),  # type: ignore[arg-type]
-        (BuyNode("nobody", "generative", 60), "unknown_resident"),
+        (BuyNode("a", "laser", NODE_SECONDS[0]), "unknown_node_kind"),  # type: ignore[arg-type]
+        (BuyNode("nobody", "generative", NODE_SECONDS[0]), "unknown_resident"),
     ],
 )
 def test_work_that_cannot_start_is_refused_and_changes_nothing(
@@ -247,7 +249,7 @@ def test_work_that_cannot_start_is_refused_and_changes_nothing(
 
 
 def test_a_node_of_another_resident_cannot_be_used() -> None:
-    world = perform(WORLD, BuyNode("b", "generative", 60))
+    world = perform(WORLD, BuyNode("b", "generative", NODE_SECONDS[0]))
 
     with pytest.raises(ActionRejected) as rejected:
         perform(world, BuildAd("a", "L5-3", "subscription", node_id=1))
@@ -290,25 +292,28 @@ def test_paid_work_needs_the_coins_and_a_refusal_keeps_them() -> None:
     with pytest.raises(ActionRejected) as hire:
         perform(poor, BuildAd("a", "L5-3", "on_demand"))
     with pytest.raises(ActionRejected) as subscribe:
-        perform(poor, BuyNode("a", "generative", 60))
+        perform(poor, BuyNode("a", "generative", NODE_SECONDS[0]))
 
     assert (hire.value.code, subscribe.value.code) == ("not_enough_coins",) * 2
 
 
 def test_a_resident_holds_only_so_many_nodes() -> None:
-    world = run(WORLD, *(BuyNode("a", "generative", 30) for _ in range(MAX_NODES)))
+    rich = replace(WORLD, residents=(resident("a", coins=100_000), resident("b")))
+    world = run(rich, *(BuyNode("a", "generative", NODE_SECONDS[0]) for _ in range(MAX_NODES)))
 
     with pytest.raises(ActionRejected) as rejected:
-        perform(world, BuyNode("a", "generative", 30))
+        perform(world, BuyNode("a", "generative", NODE_SECONDS[0]))
 
     assert rejected.value.code == "too_many_nodes"
 
 
 def test_leaving_drops_the_residents_jobs_and_nodes_without_a_refund_or_a_build() -> None:
     world = run(
-        WORLD, BuyNode("a", "generative", 60), BuildAd("a", "L5-3", "subscription", node_id=1)
+        WORLD,
+        BuyNode("a", "generative", NODE_SECONDS[0]),
+        BuildAd("a", "L5-3", "subscription", node_id=1),
     )
-    other = perform(world, BuyNode("b", "generative", 60))
+    other = perform(world, BuyNode("b", "generative", NODE_SECONDS[0]))
 
     left = perform(other, LeaveGame("a"))
     later = settle_due(replace(left, time=NODE_JOB_SECONDS))
@@ -316,11 +321,11 @@ def test_leaving_drops_the_residents_jobs_and_nodes_without_a_refund_or_a_build(
     assert [node.owner_id for node in left.compute.nodes] == ["b"]
     assert left.compute.jobs == ()
     assert facility(later, "L5-3") is None
-    assert coin_balance(left, "a") == 10_000 - 60 * SUBSCRIPTION_PRICE
+    assert coin_balance(left, "a") == 10_000 - NODE_SECONDS[0] * SUBSCRIPTION_PRICE
 
 
 def test_the_end_of_the_game_drops_every_job_and_node() -> None:
-    world = run(WORLD, BuyNode("b", "generative", 60), BuildAd("a", "L5-3", "self"))
+    world = run(WORLD, BuyNode("b", "generative", NODE_SECONDS[0]), BuildAd("a", "L5-3", "self"))
 
     ended = end_game(world)
 
@@ -331,7 +336,11 @@ def test_the_end_of_the_game_drops_every_job_and_node() -> None:
 def test_compute_prices_are_not_part_of_the_ranking_total() -> None:
     world = perform(WORLD, BuildAd("a", "L5-3", "on_demand"))
 
-    assert total_coins(world, "a") == coin_balance(world, "a") == 10_000 - 360
+    assert (
+        total_coins(world, "a")
+        == coin_balance(world, "a")
+        == 10_000 - AD_WORKLOAD * ON_DEMAND_PRICE
+    )
 
 
 CONTENT_SELF_SECONDS = CONTENT_WORKLOAD / SELF_RATE
@@ -367,7 +376,9 @@ def test_a_hired_node_renders_content_by_the_workload() -> None:
 
 
 def test_a_render_node_renders_content_one_piece_at_a_time_and_a_generative_one_cannot() -> None:
-    world = run(WORLD, BuyNode("a", "render", 60), BuyNode("a", "generative", 60))
+    world = run(
+        WORLD, BuyNode("a", "render", NODE_SECONDS[0]), BuyNode("a", "generative", NODE_SECONDS[0])
+    )
     started = perform(world, MakeContent("a", "subscription", node_id=1))
 
     with pytest.raises(ActionRejected) as busy:
@@ -384,7 +395,7 @@ def test_a_render_node_renders_content_one_piece_at_a_time_and_a_generative_one_
         "wrong_node_kind",
     )
     assert carried(done, "a") == 1
-    assert coin_balance(world, "a") == 10_000 - 120 * SUBSCRIPTION_PRICE
+    assert coin_balance(world, "a") == 10_000 - 2 * NODE_SECONDS[0] * SUBSCRIPTION_PRICE
 
 
 def test_hired_nodes_render_at_once_but_the_own_compute_does_one_job_at_a_time() -> None:
@@ -484,7 +495,7 @@ def test_two_jobs_on_one_parcel_are_rejected() -> None:
 
 
 def test_a_subscription_job_must_name_its_node_by_a_whole_number() -> None:
-    world = perform(WORLD, BuyNode("a", "generative", 60))
+    world = perform(WORLD, BuyNode("a", "generative", NODE_SECONDS[0]))
 
     with pytest.raises(ActionRejected) as rejected:
         perform(world, BuildAd("a", "L5-3", "subscription", node_id=True))

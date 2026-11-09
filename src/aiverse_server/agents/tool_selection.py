@@ -10,14 +10,14 @@ import json
 from typing import Any
 
 from ..economy.ads import ITEM_FOR
-from ..economy.compute import MAX_NODES, NODE_SECONDS, subscription_cost
+from ..economy.compute import MAX_NODES, NODE_SECONDS, promised_builder, subscription_cost
 from ..economy.land import claimed, for_sale_at, plot_at, venue_room
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "land": ("buy_parcel", "joint_buy_parcel"),
-    "compute": ("buy_node", "build_ad", "build_venue"),
+    "compute": ("buy_node", "build_ad", "build_venue", "commission_build"),
     "content": ("make_content", "place_content"),
     "transport": ("build_portal", "link_portals", "teleport"),
     "exchange": ("place_order", "cancel_order"),
@@ -71,11 +71,20 @@ def selected_tool_names(observation: Observation) -> set[str]:
     compute = observation.compute
     names.add("make_content")
     if any(
-        parcel.facility is None and parcel.building_ends_in is None and parcel.covered_by is None
+        parcel.facility is None
+        and parcel.building_ends_in is None
+        and parcel.covered_by is None
+        and parcel.promised_to is None
         for parcel in observation.land.mine
+    ) or any(
+        permit.builder_id == me.id and permit.kind == "ad" for permit in observation.build_permits
     ):
         names.add("build_ad")
-    if any(parcel.venue_room for parcel in observation.land.mine):
+    if any(
+        parcel.venue_room and parcel.promised_to is None for parcel in observation.land.mine
+    ) or any(
+        permit.builder_id == me.id and permit.kind != "ad" for permit in observation.build_permits
+    ):
         names.add("build_venue")
     if (
         len(compute.my_nodes) < compute.max_nodes
@@ -103,12 +112,15 @@ def selected_tool_names(observation: Observation) -> set[str]:
                 names.add("buy_parcel")
         if transport is not None and transport.here is not None and transport.here.lines:
             names.add("teleport")
+        if any(not resident.left and resident.id != me.id for resident in observation.residents):
+            names.add("commission_build")
         if (
             observation.offers_to_me
             or observation.information_offers_to_me
             or observation.share_offers_to_me
             or observation.joint_purchases_to_me
             or observation.link_proposals_to_me
+            or observation.build_commissions_to_me
         ):
             names.add("respond_to_offer")
         if any(parcel.shares.get(me.id) for parcel in observation.land.mine) or (
@@ -123,6 +135,7 @@ def selected_tool_names(observation: Observation) -> set[str]:
             or observation.my_share_offers
             or observation.my_joint_purchases
             or observation.my_link_proposals
+            or observation.my_build_commissions
         ):
             names.add("withdraw_offer")
         if observation.my_contract_proposals:
@@ -145,9 +158,16 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     taken = claimed(world)
     names.add("make_content")
     my_parcels = [parcel for parcel in world.parcels if parcel.owner_id == me.id]
-    if any((parcel.col, parcel.row) not in taken for parcel in my_parcels):
+    permits = [permit for permit in book.permits if permit.builder_id == me.id]
+    promised = {permit.parcel_id for permit in book.permits}
+    if any(
+        (parcel.col, parcel.row) not in taken and parcel.id not in promised for parcel in my_parcels
+    ) or any(permit.kind == "ad" for permit in permits):
         names.add("build_ad")
-    if any(venue_room(world, parcel, taken) for parcel in my_parcels):
+    if any(
+        venue_room(world, parcel, taken) and promised_builder(world, parcel.id, True) is None
+        for parcel in my_parcels
+    ) or any(permit.kind != "ad" for permit in permits):
         names.add("build_venue")
     if sum(node.owner_id == me.id for node in book.nodes) < MAX_NODES and me.coins >= (
         subscription_cost(NODE_SECONDS[0])
@@ -181,7 +201,15 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         if me.coins >= square.price:
             names.add("buy_parcel")
     if any(resident.id != me.id and not resident.left for resident in world.residents):
-        names.update(("offer_to_buy", "offer_to_sell", "offer_information", "propose_contract"))
+        names.update(
+            (
+                "offer_to_buy",
+                "offer_to_sell",
+                "offer_information",
+                "propose_contract",
+                "commission_build",
+            )
+        )
     if any(parcel.held_by(me.id) for parcel in world.parcels):
         names.add("offer_shares")
     here = plot_at(world, me.position).id

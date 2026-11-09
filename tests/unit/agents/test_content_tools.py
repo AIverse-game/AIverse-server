@@ -16,7 +16,12 @@ from aiverse_server.core.sponsors import Sponsor, SponsorBook
 from aiverse_server.core.visitors import Crowd
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME
-from aiverse_server.economy.compute import CONTENT_WORKLOAD, on_demand_cost
+from aiverse_server.economy.compute import (
+    CONTENT_WORKLOAD,
+    NODE_SECONDS,
+    on_demand_cost,
+    subscription_cost,
+)
 from aiverse_server.economy.sponsors import PAY_PERIOD
 from aiverse_server.server.app import Game
 
@@ -71,19 +76,24 @@ def test_a_hired_node_costs_coins_and_a_subscribed_render_node_is_named_by_id() 
     tools = ResidentTools(game, "a")
 
     hired = tools.make_content("on_demand")
-    bought = tools.buy_node(60, "render")
+    bought = tools.buy_node(NODE_SECONDS[0], "render")
     subscribed = tools.make_content("subscription", node_id=1)
 
     assert (hired.ok, hired.message) == (True, "job 1: a piece of content ready in 6 s")
-    assert (bought.ok, bought.message) == (True, "subscribed to render node 1 for 60 s")
+    assert (bought.ok, bought.message) == (
+        True,
+        f"subscribed to render node 1 for {NODE_SECONDS[0]} s",
+    )
     assert (subscribed.ok, subscribed.message) == (True, "job 2: a piece of content ready in 6 s")
-    assert game.world.residents[0].coins == 5_000 - on_demand_cost(CONTENT_WORKLOAD) - 60 * 12
+    assert game.world.residents[0].coins == 5_000 - on_demand_cost(
+        CONTENT_WORKLOAD
+    ) - subscription_cost(NODE_SECONDS[0])
 
 
 def test_a_generative_node_cannot_render_and_a_missing_node_id_is_refused() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
-    tools.buy_node(60)
+    tools.buy_node(NODE_SECONDS[0])
 
     wrong = tools.make_content("subscription", node_id=1)
     missing = tools.call("make_content", {"source": "subscription"})

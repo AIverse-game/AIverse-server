@@ -12,7 +12,7 @@ from dataclasses import replace
 
 from ..core.world import World
 from ..economy.admissions import next_admission_payday, pay_admissions
-from ..economy.compute import expire_nodes, finish_jobs, next_compute_due
+from ..economy.compute import expire_nodes, expire_permits, finish_jobs, next_compute_due
 from ..economy.contracts import expire_contracts, next_expiry
 from ..economy.exchange import expire_orders, next_order_expiry
 from ..economy.sponsors import next_payday, pay_sponsors
@@ -23,15 +23,16 @@ from ..residents.walking import finish_walks, next_arrival
 
 def settle_due(world: World) -> World:
     """Bring in the walkers who have arrived by `world.time`, logged for others nearby to
-    notice, finish the compute jobs that are done, drop the nodes that ran out, move the
-    visitors on, pay the ad slots their views, end the contracts that have lapsed and
-    withdraw the orders that have expired. Returns `world` itself when nothing is due."""
+    notice, finish the compute jobs that are done, drop the nodes that ran out and the permits
+    that lapsed, move the visitors on, pay the ad slots their views, end the contracts that have
+    lapsed and withdraw the orders that have expired. Returns `world` itself when nothing is
+    due."""
     target = world.time
     after = world
     while (due := next_due(after)) is not None and due <= target:
         timed = replace(after, time=due)
         arrived = record_activity(timed, finish_walks(timed))
-        built = expire_nodes(finish_jobs(arrived))
+        built = expire_permits(expire_nodes(finish_jobs(arrived)))
         after = expire_orders(expire_contracts(pay_admissions(pay_sponsors(advance_crowd(built)))))
     return world if after is world else replace(after, time=target)
 

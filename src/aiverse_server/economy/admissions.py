@@ -21,7 +21,7 @@ from ..core.world import World
 from .shares import split_income
 from .sponsors import latest_payday, next_payday_after
 
-FEES: dict[str, int] = {"workspace": 4, "game_hall": 6}
+FEES: dict[str, int] = {"workspace": 8, "game_hall": 12}
 """Coins one person pays to get into a facility of each kind."""
 
 _SLACK = 1e-9

@@ -240,7 +240,7 @@ def test_the_loop_wakes_for_an_offer_when_free() -> None:
 
 def test_the_loop_wakes_when_a_compute_job_finishes_even_while_walking() -> None:
     async def scenario() -> None:
-        # The ad slot is ready at 12 s, while the 56 unit walk, 22 s long, is still going.
+        # The ad slot is ready at 18 s, while the 56 unit walk, 22 s long, is still going.
         game, clock = make_game(replace(WORLD, parcels=(Parcel(5, 5, "a"),)))
         game.act(BuildAd("a", "L5-5", "on_demand"))
         game.act(MoveTo("a", Position(90, 90)))
@@ -248,7 +248,7 @@ def test_the_loop_wakes_when_a_compute_job_finishes_even_while_walking() -> None
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
 
-        clock.now = 12.0
+        clock.now = 18.0
         game.tick()
         await _until(lambda: len(brain.seen) == 2)
 
@@ -312,11 +312,11 @@ def test_the_loop_wakes_an_idle_resident_when_a_compute_job_finishes() -> None:
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
 
-        clock.now = 12.0
+        clock.now = 18.0
         game.tick()
         await _until(lambda: len(brain.seen) == 2)
 
-        assert brain.seen[0].compute.my_jobs[0].ends_in == 12.0
+        assert brain.seen[0].compute.my_jobs[0].ends_in == 18.0
         assert brain.seen[1].compute.my_jobs == ()
         task.cancel()
 
@@ -331,7 +331,7 @@ def test_the_loop_does_not_wake_for_a_job_that_is_still_running() -> None:
         task = asyncio.create_task(AgentRunner(game, "a", brain, Pace(0, 0, 60)).run())
         await _until(lambda: len(brain.seen) == 1)
 
-        clock.now = 12.0
+        clock.now = 18.0
         game.tick()
         await asyncio.sleep(0.05)
 

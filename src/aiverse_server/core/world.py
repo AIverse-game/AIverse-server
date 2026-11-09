@@ -596,12 +596,23 @@ class World:
         for job in self.compute.jobs:
             if job.owner_id not in ids or job.owner_id in left or self.ended:
                 raise ValueError(f"job {job.id} outlives its game or resident")
-            if job.parcel_id is not None and owners.get(job.parcel_id) != job.owner_id:
+            if job.parcel_id is not None and owners.get(job.parcel_id) != (
+                job.fee_from or job.owner_id
+            ):
                 raise ValueError(f"job {job.id} works on a parcel that is not its owner's")
+            if job.fee_from is not None and (job.fee_from not in ids or self.ended):
+                raise ValueError(f"job {job.id} outlives its game or the owner paying for it")
             if job.started_at > self.time:
                 raise ValueError(f"job {job.id} started after the current time")
             if any(p.id == job.parcel_id and p.facility is not None for p in self.parcels):
                 raise ValueError(f"job {job.id} builds on a parcel that already has a facility")
+        for permit in self.compute.permits:
+            if {permit.owner_id, permit.builder_id} - set(ids) or self.ended:
+                raise ValueError(f"permit for {permit.parcel_id} outlives its game or resident")
+            if left & {permit.owner_id, permit.builder_id}:
+                raise ValueError(f"permit for {permit.parcel_id} outlives its resident")
+            if owners.get(permit.parcel_id) != permit.owner_id:
+                raise ValueError(f"permit for {permit.parcel_id} is not from the parcel's owner")
         for order in self.orders.orders:
             if order.resident_id not in ids or order.resident_id in left or self.ended:
                 raise ValueError(f"order {order.id} outlives its game or resident")

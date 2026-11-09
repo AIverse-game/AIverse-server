@@ -29,6 +29,7 @@ from ..core.compute import JobSource, NodeKind
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, Position, Resident, World
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
+from ..economy.commissions import MAX_FEE
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -37,6 +38,7 @@ from ..economy.compute import (
     NODE_RATE,
     NODE_SECONDS,
     ON_DEMAND_PRICE,
+    PERMIT_SECONDS,
     PORTAL_WORKLOAD,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
@@ -62,6 +64,7 @@ from ..game.actions import (
     LinkPortals,
     MakeContent,
     MoveTo,
+    OfferBuildCommission,
     OfferInformation,
     OfferJointPurchase,
     OfferShares,
@@ -118,6 +121,27 @@ class JointBuyParcelArgs(_Args):
     )
 
 
+class CommissionBuildArgs(_Args):
+    partner_id: str = Field(description="Resident id you agree the building with.")
+    my_role: Literal["owner", "builder"] = Field(
+        description="owner: the parcel is yours; you ask the partner to build on it and you pay "
+        "the fee. builder: the parcel is the partner's; you ask to build on it and the partner "
+        "pays you the fee."
+    )
+    parcel_id: str = Field(
+        description="id of the owner's parcel to build on: bare, with no job, and for a venue "
+        "the whole square must be the owner's too."
+    )
+    kind: Literal["ad", "game_hall", "workspace"] = Field(
+        description="What is built: an ad slot, a game hall or a workspace."
+    )
+    fee: StrictInt = Field(
+        description=f"Coins the owner pays the builder when it is finished, 0 to {MAX_FEE}; "
+        "the owner's coins are set aside from the moment both sides have agreed (at once when "
+        "you are the owner)."
+    )
+
+
 class BuyNodeArgs(_Args):
     kind: Literal["generative", "render"] = Field(
         default="generative",
@@ -132,7 +156,8 @@ class BuyNodeArgs(_Args):
 
 class BuildAdArgs(_Args):
     parcel_id: str = Field(
-        description="id of one of your parcels with no facility and no job, not taken up by a "
+        description="id of one of your parcels, or one whose owner agreed to let you build an "
+        "ad slot there (build_permits), with no facility and no job, not taken up by a "
         "venue (land.mine[].covered_by is null)."
     )
     source: Literal["self", "on_demand", "subscription"] = Field(
@@ -167,8 +192,8 @@ class BuildVenueArgs(_Args):
     parcel_id: str = Field(
         description="id of the parcel at the north-west corner of the square the venue takes up: "
         "it, the parcels east and south of it that make up the square (observation field "
-        "land.mine[].venue_room says whether it fits), all in one block, yours, with no facility "
-        "and no job."
+        "land.mine[].venue_room says whether it fits), all in one block, yours or the owner's "
+        "who agreed to let you build there (build_permits), with no facility and no job."
     )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
@@ -294,7 +319,7 @@ class CancelOrderArgs(_Args):
 class RespondToOfferArgs(_Args):
     event_id: StrictInt = Field(
         description="event_id of an offer in offers_to_me, information_offers_to_me, "
-        "share_offers_to_me or joint_purchases_to_me, or a proposal in "
+        "share_offers_to_me, joint_purchases_to_me or build_commissions_to_me, or a proposal in "
         "contract_proposals_to_me or link_proposals_to_me."
     )
     accept: StrictBool = Field(description="true to accept, false to reject.")
@@ -303,8 +328,8 @@ class RespondToOfferArgs(_Args):
 class WithdrawOfferArgs(_Args):
     event_id: StrictInt = Field(
         description="event_id of an offer in my_offers, my_information_offers, "
-        "my_share_offers or my_joint_purchases, or a proposal in my_contract_proposals "
-        "or my_link_proposals."
+        "my_share_offers, my_joint_purchases or my_build_commissions, or a proposal in "
+        "my_contract_proposals or my_link_proposals."
     )
 
 
@@ -454,9 +479,28 @@ TOOLS = (
         JointBuyParcelArgs,
     ),
     ToolSpec(
+        "commission_build",
+        "Agree with another resident that one of them builds an ad slot, a game hall or a "
+        "workspace on the other's parcel, for a fee the parcel's owner pays. Only the buyer of a "
+        "parcel may have it built on, and only with their agreement: you propose, the partner "
+        "answers with respond_to_offer, and nothing happens before they accept. As the owner "
+        "you hire a builder who has compute to spare; as the builder you offer your compute to "
+        "an owner who has land but little. When it is accepted the fee is set aside from the "
+        "owner, and the builder may use build_ad or build_venue on that parcel for "
+        f"{PERMIT_SECONDS:g} s with their own compute or nodes; the fee is paid to them when the "
+        "facility is finished, and goes back to the owner if the permit lapses unused. The "
+        "facility belongs to the parcel: its income goes to the holders of the parcel's shares, "
+        "and only the owner puts content in it. Offer shares if the builder is to take part in "
+        "that income.",
+        CommissionBuildArgs,
+    ),
+    ToolSpec(
         "buy_node",
-        "Subscribe to a compute node for a stretch of time, from anywhere, even while walking. "
-        "A generative node builds facilities (build_ad, build_portal, build_venue), a render "
+        "Subscribe to a compute node for a long stretch of time, from anywhere, even while "
+        f"walking: {NODE_SECONDS[0]} to {NODE_SECONDS[1]} seconds, a standing workshop to keep "
+        "busy, not something for one job. "
+        "A generative node builds facilities (build_ad, build_portal, build_venue), on your own "
+        "parcels or on others' that their owners let you build on (commission_build); a render "
         "node makes content (make_content). It is yours until it runs out and does one job at "
         "a time at "
         f"{NODE_RATE:g} workload per second, {NODE_RATE / SELF_RATE:g} times your own compute; "
@@ -815,6 +859,17 @@ class ResidentTools:
                 return f"bought parcel {parcel.id}"
             case JointBuyParcelArgs():
                 act(OfferJointPurchase(me, args.partner_id, args.partner_pays, args.partner_shares))
+            case CommissionBuildArgs():
+                act(
+                    OfferBuildCommission(
+                        me,
+                        args.partner_id,
+                        args.parcel_id,
+                        args.kind,
+                        args.fee,
+                        args.my_role == "owner",
+                    )
+                )
             case BuyNodeArgs():
                 act(BuyNode(me, args.kind, args.seconds))
                 node = self.game.world.compute.nodes[-1]

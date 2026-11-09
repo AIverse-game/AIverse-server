@@ -34,6 +34,11 @@ MAKING_JOBS: tuple[JobKind, ...] = ("make_content", "make_game")
 
 JobSource = Literal["self", "on_demand", "subscription"]
 
+PermitKind = Literal["ad", "game_hall", "workspace"]
+"""What a permit lets its holder build on someone else's parcel."""
+
+PERMIT_KINDS: tuple[PermitKind, ...] = ("ad", "game_hall", "workspace")
+
 
 @dataclass(frozen=True)
 class Node:
@@ -56,6 +61,32 @@ class Node:
 
 
 @dataclass(frozen=True)
+class Permit:
+    """The owner of `parcel_id` agreed that `builder_id` builds a facility of `kind` there. The
+    owner's `fee` is set aside until the facility is finished; the permit lapses at
+    `expires_at` if the builder has not started the job by then, and the fee goes back."""
+
+    parcel_id: str
+    kind: PermitKind
+    owner_id: str
+    builder_id: str
+    fee: int
+    expires_at: float
+
+    def __post_init__(self) -> None:
+        if self.kind not in PERMIT_KINDS:
+            raise ValueError(f"unknown permit kind {self.kind!r}")
+        if self.owner_id == self.builder_id:
+            raise ValueError(f"permit for {self.parcel_id} is between one resident and themselves")
+        if type(self.fee) is not int or self.fee < 0:
+            raise ValueError(
+                f"permit for {self.parcel_id} has a fee that is not a whole number >= 0"
+            )
+        if not math.isfinite(self.expires_at):
+            raise ValueError(f"permit for {self.parcel_id} has a time that is not finite")
+
+
+@dataclass(frozen=True)
 class Job:
     """Work in progress that finishes at `ends_at` whether or not its owner is around."""
 
@@ -72,8 +103,19 @@ class Job:
     compute."""
     started_at: float
     ends_at: float
+    fee: int = 0
+    """Coins the parcel's owner set aside for the builder, paid when the facility is finished;
+    0 on one's own parcel."""
+    fee_from: str | None = None
+    """The parcel's owner who set `fee` aside, when it is not the job's owner."""
 
     def __post_init__(self) -> None:
+        if type(self.fee) is not int or self.fee < 0:
+            raise ValueError(f"job {self.id} has a fee that is not a whole number >= 0")
+        if self.fee and self.fee_from is None:
+            raise ValueError(f"job {self.id} has a fee but nobody pays it")
+        if self.fee_from is not None and self.kind in MAKING_JOBS:
+            raise ValueError(f"job {self.id} makes content on nobody's parcel but has a payer")
         if self.kind not in JOB_KINDS:
             raise ValueError(f"unknown job kind {self.kind!r}")
         if (self.kind not in MAKING_JOBS) != (self.parcel_id is not None):
@@ -88,12 +130,14 @@ class Job:
 
 @dataclass(frozen=True)
 class ComputeBook:
-    """Subscribed nodes and running jobs, oldest first, and the ids the next ones will get."""
+    """Subscribed nodes, running jobs and permits to build on others' parcels, oldest first, and
+    the ids the next nodes and jobs will get."""
 
     nodes: tuple[Node, ...] = ()
     jobs: tuple[Job, ...] = ()
     next_node_id: int = 1
     next_job_id: int = 1
+    permits: tuple[Permit, ...] = ()
 
     def __post_init__(self) -> None:
         for what, entries, next_id in (
@@ -110,6 +154,11 @@ class ComputeBook:
                         f"and below {next_id}"
                     )
                 previous = entry.id
+        permitted: set[str] = set()
+        for permit in self.permits:
+            if permit.parcel_id in permitted:
+                raise ValueError(f"parcel {permit.parcel_id} has more than one permit")
+            permitted.add(permit.parcel_id)
         nodes = {node.id: node for node in self.nodes}
         busy_nodes: set[int] = set()
         self_workers: set[str] = set()

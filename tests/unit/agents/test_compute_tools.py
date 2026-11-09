@@ -1,5 +1,7 @@
 """Buying nodes and building ad slots through the agent tools, and what a model is told."""
 
+from dataclasses import replace
+
 from aiverse_server.agents.observation import Observation, observe, to_json
 from aiverse_server.agents.tool_selection import (
     TOOL_GROUPS,
@@ -56,7 +58,7 @@ def test_building_on_ones_own_compute_is_free_and_takes_the_workload_over_its_ra
 
     built = ResidentTools(game, "a").build_ad("L5-5", "self")
 
-    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 120 s")
+    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 180 s")
     assert game.world.residents[0].coins == 5_000
     assert [job.parcel_id for job in game.world.compute.jobs] == ["L5-5"]
 
@@ -66,7 +68,7 @@ def test_hiring_a_node_for_one_job_costs_coins_and_is_quick() -> None:
 
     built = ResidentTools(game, "a").build_ad("L5-5", "on_demand")
 
-    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 12 s")
+    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 18 s")
     assert game.world.residents[0].coins == 5_000 - on_demand_cost(AD_WORKLOAD)
 
 
@@ -74,13 +76,16 @@ def test_a_subscription_is_bought_then_used_by_node_id() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
 
-    bought = tools.buy_node(60)
+    bought = tools.buy_node(NODE_SECONDS[0])
     built = tools.build_ad("L5-5", "subscription", node_id=1)
 
-    assert (bought.ok, bought.message) == (True, "subscribed to generative node 1 for 60 s")
-    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 12 s")
-    assert game.world.residents[0].coins == 5_000 - subscription_cost(60)
-    assert tools.calls[0].coins_change == -60 * SUBSCRIPTION_PRICE
+    assert (bought.ok, bought.message) == (
+        True,
+        f"subscribed to generative node 1 for {NODE_SECONDS[0]} s",
+    )
+    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 18 s")
+    assert game.world.residents[0].coins == 5_000 - subscription_cost(NODE_SECONDS[0])
+    assert tools.calls[0].coins_change == -NODE_SECONDS[0] * SUBSCRIPTION_PRICE
     assert tools.calls[1].coins_change == 0
 
 
@@ -89,7 +94,7 @@ def test_compute_can_be_started_while_walking() -> None:
     tools = ResidentTools(game, "a")
     tools.move_to(90, 90)
 
-    bought = tools.buy_node(30)
+    bought = tools.buy_node(NODE_SECONDS[0])
     built = tools.build_ad("L1-1", "self")
 
     assert bought.ok and built.ok
@@ -100,7 +105,7 @@ def test_a_finished_job_leaves_an_ad_slot_on_the_parcel() -> None:
     game, clock = make_game()
     ResidentTools(game, "a").build_ad("L5-5", "on_demand")
 
-    clock.now = 12.0
+    clock.now = 18.0
     seen = look(game, "a")
 
     mine = {parcel.id: parcel for parcel in seen.land.mine}
@@ -163,10 +168,11 @@ def test_tool_descriptions_quote_the_game_constants() -> None:
 
 
 def test_the_observation_lists_nodes_jobs_and_what_an_ad_slot_takes() -> None:
-    game, clock = make_game()
+    rich = replace(WORLD, residents=(replace(WORLD.residents[0], coins=10_000), WORLD.residents[1]))
+    game, clock = make_game(rich)
     tools = ResidentTools(game, "a")
-    tools.buy_node(60)
-    tools.buy_node(60)
+    tools.buy_node(NODE_SECONDS[0])
+    tools.buy_node(NODE_SECONDS[0])
     tools.build_ad("L5-5", "subscription", node_id=1)
     tools.build_ad("L1-1", "self")
     clock.now = 2.0
@@ -175,22 +181,22 @@ def test_the_observation_lists_nodes_jobs_and_what_an_ad_slot_takes() -> None:
 
     compute = seen.compute
     assert [(n.node_id, n.working_on, n.free_for, n.expires_in) for n in compute.my_nodes] == [
-        (1, 1, 10.0, 58.0),
-        (2, None, 0.0, 58.0),
+        (1, 1, 16.0, NODE_SECONDS[0] - 2.0),
+        (2, None, 0.0, NODE_SECONDS[0] - 2.0),
     ]
     assert [(j.job_id, j.source, j.ends_in) for j in compute.my_jobs] == [
-        (1, "subscription", 10.0),
-        (2, "self", 118.0),
+        (1, "subscription", 16.0),
+        (2, "self", 178.0),
     ]
     assert compute.own_job is not None and compute.own_job.parcel == "L1-1"
     assert [(o.source, o.seconds, o.coins) for o in compute.ad_slot] == [
-        ("self", 120.0, 0),
-        ("on_demand", 12.0, on_demand_cost(AD_WORKLOAD)),
-        ("subscription", 12.0, 0),
+        ("self", 180.0, 0),
+        ("on_demand", 18.0, on_demand_cost(AD_WORKLOAD)),
+        ("subscription", 18.0, 0),
     ]
     assert (compute.node_coins_per_second, compute.max_nodes) == (SUBSCRIPTION_PRICE, MAX_NODES)
     mine = {parcel.id: parcel.building_ends_in for parcel in seen.land.mine}
-    assert mine == {"L5-5": 10.0, "L1-1": 118.0}
+    assert mine == {"L5-5": 16.0, "L1-1": 178.0}
     assert '"compute":{"own_job"' in to_json(seen)
 
 
@@ -201,7 +207,7 @@ def test_the_parcel_underfoot_shows_its_facility_or_the_job_building_it() -> Non
     building = look(game, "a").land.here
     other = look(game, "b").land.here
 
-    assert building is not None and (building.facility, building.building_ends_in) == (None, 120.0)
+    assert building is not None and (building.facility, building.building_ends_in) == (None, 180.0)
     assert other is not None and other.building_ends_in is None
 
 
@@ -294,5 +300,14 @@ def test_discovering_the_compute_group_reveals_its_tools() -> None:
 
     reply = discover_tools({"group": "compute"}, names)
 
-    assert names == set(TOOL_GROUPS["compute"]) == {"buy_node", "build_ad", "build_venue"}
+    assert (
+        names
+        == set(TOOL_GROUPS["compute"])
+        == {
+            "buy_node",
+            "build_ad",
+            "build_venue",
+            "commission_build",
+        }
+    )
     assert '"ok":true' in reply
