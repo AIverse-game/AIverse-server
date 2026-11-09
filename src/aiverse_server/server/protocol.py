@@ -6,6 +6,7 @@ PROTOCOL_VERSION on incompatible changes.
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -46,6 +47,7 @@ from ..game.actions import (
     RejectionCode,
     Say,
 )
+from ..game.cues import CueKind
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
@@ -213,11 +215,32 @@ class WalkingView(_Message):
     """Time left until arrival when this was sent."""
 
 
+@dataclass(frozen=True)
+class AgentMood:
+    """What an agent's resident is showing, kept by the game for `AgentView`."""
+
+    thinking: bool = False
+    cue: CueKind | None = None
+    cue_seq: int = 0
+
+
+class CueView(_Message):
+    """A moment the resident acted out: spoke to someone, or something worked."""
+
+    kind: CueKind
+    seq: int
+    """Counts up over the whole game; a page plays a cue when it sees a `seq` it has not."""
+
+
 class AgentView(_Message):
     """Present on a resident an agent drives."""
 
     model: str | None = None
     """The language model asking, as the server calls it; left out for a scripted brain."""
+    thinking: Literal[True] | None = None
+    """Present while the agent waits for its brain's answer."""
+    cue: CueView | None = None
+    """The latest talk or success of the resident, absent before the first."""
 
 
 class ResidentView(_Message):
@@ -624,18 +647,28 @@ def income_view(world: World, parcel_id: str) -> IncomeView | None:
     return None if payout is None else IncomeView(at=payout.at, coins=payout.coins)
 
 
+def _agent_view(model: str | None, mood: AgentMood | None) -> AgentView:
+    if mood is None:
+        return AgentView(model=model)
+    cue = None if mood.cue is None else CueView(kind=mood.cue, seq=mood.cue_seq)
+    return AgentView(model=model, thinking=True if mood.thinking else None, cue=cue)
+
+
 def world_view(
     world: World,
     remaining_seconds: float,
     viewer: str | None = None,
     agents: Mapping[str, str | None] | None = None,
     agent_turns: Mapping[str, Sequence[AgentTurnView]] | None = None,
+    agent_moods: Mapping[str, AgentMood] | None = None,
 ) -> WorldView:
     """The world as a connection viewing as resident `viewer`, or as nobody, sees it: the
     same for everyone except whispers, offers, contracts and exchange orders, of which it sees
     only the viewer's. `agents` maps
-    the residents agents drive to the model each asks, None for a scripted brain."""
+    the residents agents drive to the model each asks, None for a scripted brain, and
+    `agent_moods` what each is showing."""
     driven = agents or {}
+    moods = agent_moods or {}
     places = ranks(world)
     deals = [
         event
@@ -722,7 +755,9 @@ def world_view(
                     target=_position_view(resident.walking.target),
                     remaining_seconds=max(resident.walking.arrives_at - world.time, 0.0),
                 ),
-                agent=AgentView(model=driven[resident.id]) if resident.id in driven else None,
+                agent=_agent_view(driven[resident.id], moods.get(resident.id))
+                if resident.id in driven
+                else None,
             )
             for resident in world.residents
         ],

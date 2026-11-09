@@ -33,6 +33,7 @@ from ..agents.runner import DEFAULT_PACE, AgentRunner, Brain, Pace, TurnRecord
 from ..core.world import Note, NoteTerm, World
 from ..game.actions import Action, ActionRejected, perform
 from ..game.clock import next_due, settle_due
+from ..game.cues import CueKind, cues, new_facility_owners
 from ..game.layout import create_default_world
 from ..game.lifecycle import (
     EARLY_ENDING_NOTICE_SECONDS,
@@ -49,6 +50,7 @@ from .protocol import (
     AGENT_TURN_LIMIT,
     PROTOCOL_VERSION,
     ActionResultMessage,
+    AgentMood,
     AgentRejectionCode,
     AgentResultMessage,
     AgentTurnView,
@@ -104,6 +106,7 @@ def handle_text(
     agents: Mapping[str, str | None] | None = None,
     llm_overrides: Sequence[LLMSettingName] = (),
     agent_turns: Mapping[str, Sequence[AgentTurnView]] | None = None,
+    agent_moods: Mapping[str, AgentMood] | None = None,
 ) -> Outcome:
     """Handles one client frame. Errors leave the connection open and the world unchanged.
     `remaining_seconds` is the game time left, `viewer` the resident the sender views as and
@@ -119,7 +122,7 @@ def handle_text(
             )
             return Outcome([mismatch], world, greeted, viewer)
         state = StateMessage(
-            world=world_view(world, remaining_seconds, viewer, agents, agent_turns)
+            world=world_view(world, remaining_seconds, viewer, agents, agent_turns, agent_moods)
         )
         welcome = WelcomeMessage(llm_overrides=list(llm_overrides))
         return Outcome([welcome, state], world, True, viewer)
@@ -130,7 +133,7 @@ def handle_text(
         if chosen is not None and all(resident.id != chosen for resident in world.residents):
             return Outcome([bad_message(f"no resident with id {chosen!r}")], world, greeted, viewer)
         state = StateMessage(
-            world=world_view(world, remaining_seconds, chosen, agents, agent_turns)
+            world=world_view(world, remaining_seconds, chosen, agents, agent_turns, agent_moods)
         )
         return Outcome([state], world, greeted, chosen)
     if isinstance(message, StartAgentMessage | StopAgentMessage):
@@ -279,6 +282,9 @@ class Game:
         self._llm_requests: dict[str, int] = {}
         self.agent_turns: dict[str, deque[AgentTurnView]] = {}
         self._turn_seq = 0
+        self._thinking: set[str] = set()
+        self._cues: dict[str, tuple[CueKind, int]] = {}
+        self._cue_seq = 0
         self._credential_redactors: list[tuple[int, Callable[[str], str]]] = []
 
     def remaining(self) -> float:
@@ -313,6 +319,8 @@ class Game:
                     else f"The game ends in {seconds:g} seconds."
                 )
                 after = announce(after, text)
+        for owner in new_facility_owners(timed, after):
+            self._cue(owner, "happy")
         self.world = after
         if after.ended and self._on_end is not None:
             # Like a failed record: the game is over either way, so only log it.
@@ -331,7 +339,11 @@ class Game:
         """Carry out a primitive for an agent: bring the world up to now, perform it, keep the
         result and tell everyone. Raises `ActionRejected`, leaving the world as it was."""
         self.tick()
-        self.commit(perform(self.world, action))
+        before = self.world
+        after = perform(before, action)
+        for resident_id, kind in cues(before, action):
+            self._cue(resident_id, kind)
+        self.commit(after)
 
     def commit(self, world: World) -> None:
         """Keep `world` as the shared one and, if it differs, send it to everyone. The one
@@ -394,6 +406,32 @@ class Game:
     def agents(self) -> dict[str, str | None]:
         """The residents agents drive, to the model each asks, None for a scripted brain."""
         return {resident_id: agent.model for resident_id, agent in self._agents.items()}
+
+    def agent_moods(self) -> dict[str, AgentMood]:
+        """What each agent's resident is showing, for the residents agents drive."""
+        moods: dict[str, AgentMood] = {}
+        for resident_id in self._agents:
+            cue = self._cues.get(resident_id)
+            moods[resident_id] = AgentMood(
+                thinking=resident_id in self._thinking,
+                cue=None if cue is None else cue[0],
+                cue_seq=0 if cue is None else cue[1],
+            )
+        return moods
+
+    def set_thinking(self, resident_id: str, thinking: bool) -> None:
+        """Mark the agent as waiting for its brain, or not, and tell everyone on a change."""
+        if (resident_id in self._thinking) == thinking:
+            return
+        if thinking:
+            self._thinking.add(resident_id)
+        else:
+            self._thinking.discard(resident_id)
+        self.broadcast_world()
+
+    def _cue(self, resident_id: str, kind: CueKind) -> None:
+        self._cue_seq += 1
+        self._cues[resident_id] = (kind, self._cue_seq)
 
     def start_agent(self, resident_id: str, brain: Brain, model: str | None = None) -> None:
         """Drive the resident with `brain` from now on, replacing any agent driving them, and
@@ -462,6 +500,7 @@ class Game:
         agent = self._agents.pop(resident_id, None)
         if agent is None:
             return False
+        self._thinking.discard(resident_id)
         self._count_requests(resident_id, agent)
         agent.task.cancel()
         return True
@@ -476,6 +515,7 @@ class Game:
         # Still listed only if its loop stopped by itself: the resident left or the game ended.
         if self._agents.get(resident_id) is agent:
             del self._agents[resident_id]
+            self._thinking.discard(resident_id)
             self._count_requests(resident_id, agent)
             self.broadcast_world()
 
@@ -527,10 +567,13 @@ class Game:
         per viewer, since only the whispers, deals and exchange orders differ."""
         remaining = self.remaining()
         agents = self.agents()
+        moods = self.agent_moods()
         texts: dict[str | None, str] = {}
         for outbox in self._outboxes:
             if outbox.viewer not in texts:
-                view = world_view(self.world, remaining, outbox.viewer, agents, self.agent_turns)
+                view = world_view(
+                    self.world, remaining, outbox.viewer, agents, self.agent_turns, moods
+                )
                 texts[outbox.viewer] = encode(StateMessage(world=view))
             outbox.put_state(texts[outbox.viewer])
         self._changed.set()
@@ -581,6 +624,7 @@ async def _receive_all(websocket: WebSocket, game: Game, outbox: Outbox) -> None
                 game.agents(),
                 game.fixed_llm_settings(),
                 game.agent_turns,
+                game.agent_moods(),
             )
             outbox.viewer = outcome.viewer
             if outcome.greeted and not greeted:

@@ -259,6 +259,7 @@ class AgentRunner:
             balance = resource_balance(self.game, self.resident_id)
             remark: str | None = None
             error: str | None = None
+            self.game.set_thinking(self.resident_id, True)
             try:
                 remark = await self.brain.take_turn(observation, tools)
             except asyncio.CancelledError:
@@ -269,6 +270,8 @@ class AgentRunner:
                 detail = self.game.redact(detail)
                 logger.error("agent for %s failed: %s", self.resident_id, detail[:500])
                 error = detail[:500]
+            finally:
+                self.game.set_thinking(self.resident_id, False)
             # The model may have waited without calling a tool or another world event.
             self.game.tick()
             if not cancelled:

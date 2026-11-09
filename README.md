@@ -144,6 +144,8 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 `leave_game` 让居民出局：与其有关的待处理报价撤销并退回预留，物品清空，金币保留并参与排名；居民仍留在地图上，之后其操作一律以 `resident_left` 拒绝。游戏结束后，所有操作以 `game_over` 拒绝。交易与答复事件的原语还不在协议中。
 
+居民的 `agent` 在不升协议版本的前提下多了两个可选字段（旧页面忽略）：`thinking: true` 表示 Agent 正在等大脑回答（`runner.py` 在大脑一轮的前后设置），`cue: {kind, seq}` 是它最近一次演出（`talk` 或 `happy`，`seq` 在整局内递增，页面见到新的 `seq` 才播放）；只有经 `Game.act` 做的原语和到点建成的设施产生提示，页面手动操作不产生。
+
 `world` 在协议 28 还包括 `map.parcelSize`、`map.blockCells`、`map.venueCells`（游戏厅和工作空间占的方块边长，单位是地块，默认世界为 2，即 20 × 20） 与按行排列的 `map.parcelPrices`、公开的 `parcels`（产权人、份额、设施种类、有效内容数、每份内容的 `expiresIn` 剩余秒数，以及上一个付给它钱的付款日里它收到的 `income`：`at` 是那个付款日的游戏时间，`coins` 是赞助商和入场费合计的整数金币，没有付过时省略；页面靠 `at` 变大判断是新的一笔）、`jobs`（进行中的工作及剩余秒数）；只有 `view_as` 选择居民后才有 `content`（`viewerId`、该居民携带的广告与游戏数量）。设施可为 `ad`、`portal`、`game_hall`、`workspace`；游戏厅和工作空间占一个 `venueCells` × `venueCells` 的方块，设施记在方块西北角的那块地上，方块里其余的地块没有设施，别的设施也不能建在上面（页面按 `venueCells` 自己推算）；建设来源为 `self` 或 `on_demand`，订阅节点尚未进入页面操作。
 
 `world` 的部分结构示意（省略 `parcelPrices`、`parcels`、`jobs` 等必填字段，不能直接作为完整协议消息复制使用）：
@@ -238,6 +240,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/residents/information_offer.py` | 信息报价：事件 `InformationOffer`（摘要、内容、价格），条款校验；成交时买方付金币、内容作为长期笔记写入买方记忆，卖方保留原信息 |
 | `src/aiverse_server/residents/speech.py` | 对话：听力半径、当众说或私聊 `say`（不花东西），听到的人在说话时定下 |
 | `src/aiverse_server/game/actions.py` | 操作原语：玩家与 AI 改变世界的唯一入口，校验并执行；含走路、答复事件、发起购买与出售、提议合约、交付与取消合约、退出游戏、买地、买节点、建广告位、做内容、把内容放进广告位、下单与撤单、说话 |
+| `src/aiverse_server/game/cues.py` | 页面演出用的提示：说话、报价算 `talk`，报价被同意、设施建成算 `happy`；不属于世界，由 `Game` 记在 Agent 居民名下 |
 | `src/aiverse_server/game/lifecycle.py` | 对局生命周期：能否行动与忙碌的检查、出局（停下行走，撤掉挂单）、结束、按金币总额排名、公告、默认时长 |
 | `src/aiverse_server/game/settings.py` | 读取并校验独立的游戏时间 YAML 配置 |
 | `src/aiverse_server/game/economy_report.py` | 由流水账与世界算出经济指标（居民间流量占比、各渠道、价格、合约、基尼系数、收入集中度），写成 JSON 与控制台摘要 |

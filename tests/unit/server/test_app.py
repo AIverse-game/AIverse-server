@@ -8,12 +8,13 @@ from aiverse_server.agents.observation import Observation
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.visitors import Crowd, Visitor
-from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.game.actions import ActionRejected, MoveTo
+from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
+from aiverse_server.game.actions import ActionRejected, MoveTo, OfferToBuy, RespondToEvent, Say
 from aiverse_server.game.clock import next_due
 from aiverse_server.game.layout import create_default_world
 from aiverse_server.game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from aiverse_server.server.app import Game, Outbox, create_app
+from aiverse_server.server.protocol import AgentMood
 
 WORLD = World(
     map=WorldMap(size=100),
@@ -367,3 +368,59 @@ def test_a_visitor_paying_at_a_door_is_not_news_but_the_payout_at_the_payday_is(
     assert quiet
     assert watcher.state is not None
     assert me(game, "a").coins == 5_000 + 4
+
+
+def test_an_agent_shows_thinking_while_its_brain_works_and_cues_what_it_did() -> None:
+    class SlowBrain:
+        def __init__(self) -> None:
+            self.release = asyncio.Event()
+
+        async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
+            await self.release.wait()
+            return None
+
+    async def scenario() -> tuple[bool, bool, tuple[str | None, int]]:
+        game, _ = make_game()
+        brain = SlowBrain()
+        game.start_agent("a", brain)
+        await asyncio.sleep(0)
+        during = game.agent_moods()["a"].thinking
+        game.act(Say("a", "hello"))
+        mood = game.agent_moods()["a"]
+        brain.release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await game.stop_agents()
+        return during, mood.thinking, (mood.cue, mood.cue_seq)
+
+    during, _, cue = asyncio.run(scenario())
+
+    assert during is True
+    assert cue == ("talk", 1)
+
+
+def test_accepting_an_offer_cues_both_agents_happy_and_stopping_clears_thinking() -> None:
+    class Waiting:
+        async def take_turn(self, observation: Observation, tools: ResidentTools) -> str | None:
+            await asyncio.sleep(1e6)
+            return None
+
+    seller = replace(WORLD.residents[1], inventory=Inventory((("bread", 5),)))
+    world = replace(WORLD, residents=(WORLD.residents[0], seller))
+
+    async def scenario() -> tuple[dict[str, AgentMood], dict[str, AgentMood]]:
+        game, _ = make_game(world)
+        game.start_agent("a", Waiting())
+        game.start_agent("b", Waiting())
+        await asyncio.sleep(0)
+        game.act(OfferToBuy("a", "b", "bread", 1, 5))
+        game.act(RespondToEvent("b", game.world.events.pending[0].id, accept=True))
+        moods = game.agent_moods()
+        game.stop_agent("a")
+        await asyncio.sleep(0)
+        return moods, game.agent_moods()
+
+    moods, after_stop = asyncio.run(scenario())
+
+    assert [(moods[i].cue, moods[i].thinking) for i in ("a", "b")] == [("happy", True)] * 2
+    assert "a" not in after_stop
