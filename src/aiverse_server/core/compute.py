@@ -15,6 +15,9 @@ NodeKind = Literal["generative", "render"]
 
 NODE_KINDS: tuple[NodeKind, ...] = ("generative", "render")
 
+SELF_JOBS = 3
+"""Most jobs one resident's own compute may hold at once: one running, the rest queued."""
+
 JobKind = Literal[
     "build_ad", "build_portal", "build_game_hall", "build_workspace", "make_content", "make_game"
 ]
@@ -161,7 +164,7 @@ class ComputeBook:
             permitted.add(permit.parcel_id)
         nodes = {node.id: node for node in self.nodes}
         busy_nodes: set[int] = set()
-        self_workers: set[str] = set()
+        self_jobs: dict[str, int] = {}
         parcels: set[str] = set()
         for job in self.jobs:
             if job.parcel_id is not None:
@@ -176,6 +179,8 @@ class ComputeBook:
                     raise ValueError(f"node {job.node_id} has more than one job")
                 busy_nodes.add(job.node_id)
             if job.source == "self":
-                if job.owner_id in self_workers:
-                    raise ValueError(f"{job.owner_id} has more than one job on their own compute")
-                self_workers.add(job.owner_id)
+                self_jobs[job.owner_id] = self_jobs.get(job.owner_id, 0) + 1
+                if self_jobs[job.owner_id] > SELF_JOBS:
+                    raise ValueError(
+                        f"{job.owner_id} has more than {SELF_JOBS} jobs on their own compute"
+                    )

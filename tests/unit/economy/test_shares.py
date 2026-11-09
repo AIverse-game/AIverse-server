@@ -259,11 +259,21 @@ def test_the_buyer_of_a_parcel_keeps_running_it_after_selling_every_share() -> N
     assert placed.parcels[0].facility.contents[-1] > world.time
 
 
-def test_a_holder_who_did_not_buy_the_parcel_cannot_put_content_in_it() -> None:
+def test_a_holder_who_did_not_buy_the_parcel_can_put_content_in_it() -> None:
     world = perform(offer(WORLD, 100, 0), RespondToEvent("b", 1, True))
     world = store_item(world, "b", CONTENT_ITEM, 1)
 
+    placed = perform(world, PlaceContent("b", "L7-7"))
+
+    assert placed.parcels[0].facility is not None
+    assert len(placed.parcels[0].facility.contents) == len(SLOT.contents) + 1
+
+
+def test_a_resident_with_no_shares_cannot_put_content_in_the_parcel() -> None:
+    world = perform(offer(WORLD, 40, 0), RespondToEvent("b", 1, True))
+    world = store_item(world, "c", CONTENT_ITEM, 1)
+
     with pytest.raises(ActionRejected) as rejected:
-        perform(world, PlaceContent("b", "L7-7"))
+        perform(world, PlaceContent("c", "L7-7"))
 
     assert rejected.value.code == "not_your_parcel"

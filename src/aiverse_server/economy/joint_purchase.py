@@ -5,7 +5,7 @@ event, see `events.py`: the partner pays `partner_pays` coins towards the price 
 `partner_shares` of the parcel's shares, see `shares.py`; the proposer pays the rest and keeps
 the other shares. Sending sets aside the proposer's part, so it cannot be spent twice. When the
 partner accepts and pays theirs, both pay the town and the parcel is theirs: the proposer is
-its buyer, who alone builds on it and puts content in it, as when buying alone, see
+its buyer, who alone builds on it, as when buying alone, see
 `land.py`. The partner need not be there. Rejecting or withdrawing gives the proposer's part
 back. If someone buys the parcel first, accepting fails and the offer stays pending, so it can
 still be rejected or withdrawn.

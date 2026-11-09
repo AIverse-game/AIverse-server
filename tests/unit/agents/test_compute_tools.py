@@ -58,7 +58,7 @@ def test_building_on_ones_own_compute_is_free_and_takes_the_workload_over_its_ra
 
     built = ResidentTools(game, "a").build_ad("L5-5", "self")
 
-    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 180 s")
+    assert (built.ok, built.message) == (True, "job 1: ad slot on L5-5 ready in 360 s")
     assert game.world.residents[0].coins == 5_000
     assert [job.parcel_id for job in game.world.compute.jobs] == ["L5-5"]
 
@@ -119,15 +119,13 @@ def test_refusals_come_back_as_failed_results_and_change_nothing() -> None:
     tools.build_ad("L5-5", "self")
     before = game.world
 
-    own_busy = tools.build_ad("L1-1", "self")
     same_parcel = tools.build_ad("L5-5", "on_demand")
     foreign = tools.build_ad("L2-2", "on_demand")
     no_node = tools.build_ad("L1-1", "subscription", node_id=9)
     short = tools.buy_node(NODE_SECONDS[0] - 1)
 
-    results = [own_busy, same_parcel, foreign, no_node, short]
+    results = [same_parcel, foreign, no_node, short]
     assert [r.code for r in results] == [
-        "source_busy",
         "parcel_busy",
         "not_your_parcel",
         "unknown_node",
@@ -186,17 +184,17 @@ def test_the_observation_lists_nodes_jobs_and_what_an_ad_slot_takes() -> None:
     ]
     assert [(j.job_id, j.source, j.ends_in) for j in compute.my_jobs] == [
         (1, "subscription", 16.0),
-        (2, "self", 178.0),
+        (2, "self", 358.0),
     ]
     assert compute.own_job is not None and compute.own_job.parcel == "L1-1"
     assert [(o.source, o.seconds, o.coins) for o in compute.ad_slot] == [
-        ("self", 180.0, 0),
+        ("self", 360.0, 0),
         ("on_demand", 18.0, on_demand_cost(AD_WORKLOAD)),
         ("subscription", 18.0, 0),
     ]
     assert (compute.node_coins_per_second, compute.max_nodes) == (SUBSCRIPTION_PRICE, MAX_NODES)
     mine = {parcel.id: parcel.building_ends_in for parcel in seen.land.mine}
-    assert mine == {"L5-5": 16.0, "L1-1": 178.0}
+    assert mine == {"L5-5": 16.0, "L1-1": 358.0}
     assert '"compute":{"own_job"' in to_json(seen)
 
 
@@ -207,7 +205,7 @@ def test_the_parcel_underfoot_shows_its_facility_or_the_job_building_it() -> Non
     building = look(game, "a").land.here
     other = look(game, "b").land.here
 
-    assert building is not None and (building.facility, building.building_ends_in) == (None, 180.0)
+    assert building is not None and (building.facility, building.building_ends_in) == (None, 360.0)
     assert other is not None and other.building_ends_in is None
 
 

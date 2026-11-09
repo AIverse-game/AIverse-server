@@ -19,6 +19,7 @@ from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME
 from aiverse_server.economy.compute import (
     CONTENT_WORKLOAD,
     NODE_SECONDS,
+    SELF_RATE,
     on_demand_cost,
     subscription_cost,
 )
@@ -63,10 +64,10 @@ def test_content_is_made_on_the_own_compute_for_free_and_arrives_in_the_inventor
     tools = ResidentTools(game, "b")
 
     made = tools.make_content("self")
-    clock.now = CONTENT_WORKLOAD
+    clock.now = CONTENT_WORKLOAD / SELF_RATE
     game.tick()
 
-    assert (made.ok, made.message) == (True, "job 1: a piece of content ready in 60 s")
+    assert (made.ok, made.message) == (True, "job 1: a piece of content ready in 120 s")
     assert game.world.residents[1].coins == 5_000
     assert game.world.residents[1].inventory.count(CONTENT_ITEM) == 1
 
@@ -185,7 +186,7 @@ def test_the_observation_lists_content_jobs_without_a_parcel() -> None:
     job = seen.compute.my_jobs[0]
     assert (job.kind, job.parcel, job.ends_in) == ("make_content", None, 6.0)
     assert [(o.source, o.seconds) for o in seen.compute.content] == [
-        ("self", 60.0),
+        ("self", 120.0),
         ("on_demand", 6.0),
         ("subscription", 6.0),
     ]

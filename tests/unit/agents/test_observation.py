@@ -1,7 +1,9 @@
 import json
 from dataclasses import replace
 
-from aiverse_server.agents.observation import Observation, observe, to_json
+from aiverse_server.agents.observation import Observation, RecentPayments, observe, to_json
+from aiverse_server.core.land import Facility, Parcel
+from aiverse_server.core.ledger import SYSTEM, record_transfer
 from aiverse_server.core.orders import Fill, OrderBook
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.game.actions import MoveTo, OfferToSell
@@ -105,3 +107,26 @@ def test_observation_json_is_compact_and_rounded() -> None:
 
     assert shown["time"] == 0.3
     assert shown["me"]["position"] == {"x": 50, "y": 50}
+
+
+def test_recent_payments_count_only_coins_residents_paid_each_other_in_the_window() -> None:
+    world = record_transfer(replace(WORLD, time=0.0), "a", "b", 300, "offer")
+    world = record_transfer(replace(world, time=100.0), "a", "b", 50, "offer")
+    world = record_transfer(replace(world, time=200.0), "a", "b", 100, "offer")
+    world = record_transfer(world, "a", SYSTEM, 999, "land")
+    game, clock = make_game(world)
+
+    clock.now = 400.0
+    seen = look(game, "a")
+
+    # The transfer at 0 is more than 300 seconds old; the one at 100 is exactly 300 seconds old.
+    assert seen.recent_payments == RecentPayments(count=2, coins=150)
+
+
+def test_a_holder_sees_the_parcel_it_shares_in_with_its_facility() -> None:
+    parcel = Parcel(1, 1, "b", Facility("ad", 0.0), (("a", 40), ("b", 60)))
+    game, _ = make_game(replace(WORLD, parcels=(parcel,)))
+
+    seen = look(game, "a")
+
+    assert [shared.id for shared in seen.land.mine] == ["L1-1"]

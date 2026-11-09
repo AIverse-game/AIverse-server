@@ -5,7 +5,8 @@ is its workload over the rate of the compute doing it. Work runs on its source, 
 need not stay by it; they can walk, talk and trade while it runs, and it finishes without them
 as long as they are still in the game. There are three sources:
 
-- `self`: every resident's own compute, free but slow, `SELF_RATE`, one job at a time;
+- `self`: every resident's own compute, free but slow, `SELF_RATE`; its jobs run one after
+  another, a new one queueing behind the rest, up to `SELF_QUEUE_LIMIT` waiting;
 - `on_demand`: a system node hired for one job, `NODE_RATE`, paid for by the workload at
   `ON_DEMAND_PRICE`;
 - `subscription`: a system node the resident subscribed to for a stretch of time with
@@ -34,6 +35,7 @@ from typing import Literal
 from ..core.compute import (
     MAKING_JOBS,
     NODE_KINDS,
+    SELF_JOBS,
     ComputeBook,
     Job,
     JobKind,
@@ -51,30 +53,34 @@ from .ads import CONTENT_ITEM, GAME_ITEM
 from .land import claimed, venue_fits, venue_footprint
 from .portals import MAX_PORTALS, portal_count
 
-SELF_RATE = 1.0
+SELF_RATE = 0.5
 """Workload a resident's own compute does per game second."""
+
+SELF_QUEUE_LIMIT = SELF_JOBS - 1
+"""Own-compute jobs that may wait behind the one running."""
 
 NODE_RATE = 10.0
 """Workload a node does per game second."""
 
 AD_WORKLOAD = 180.0
-"""Workload of building an ad slot: three minutes of one's own compute, 18 seconds of a node."""
+"""Workload of building an ad slot: six minutes of one's own compute at `SELF_RATE`, 18 seconds of
+a node."""
 
 CONTENT_WORKLOAD = 60.0
-"""Workload of rendering a piece of content: a minute of one's own compute, 6 seconds of a
+"""Workload of rendering a piece of content: two minutes of one's own compute, 6 seconds of a
 node."""
 
 PORTAL_WORKLOAD = 180.0
-"""Workload of building a portal: three minutes of one's own compute, 18 seconds of a node.
+"""Workload of building a portal: six minutes of one's own compute, 18 seconds of a node.
 Dearer than an ad slot, which earns by itself."""
 
 VENUE_WORKLOAD = 240.0
-"""Workload of building a game hall or a workspace: four minutes of one's own compute, 24 seconds
+"""Workload of building a game hall or a workspace: eight minutes of one's own compute, 24 seconds
 of a node. Dearest of the facilities, since a venue is worth more once visitors come."""
 
 GAME_WORKLOAD = 90.0
-"""Workload of rendering a game for a game hall: a minute and a half of one's own compute, 9
-seconds of a node. Dearer than an ad."""
+"""Workload of rendering a game for a game hall: three minutes of one's own compute, 9 seconds of
+a node. Dearer than an ad."""
 
 ContentKind = Literal["ad", "game"]
 """What a content job renders: an ad for an ad slot or a game for a game hall."""
@@ -150,6 +156,7 @@ ComputeErrorCode = Literal[
     "no_room_for_venue",
     "invalid_source",
     "source_busy",
+    "self_queue_full",
     "unknown_node",
     "wrong_node_kind",
     "node_expired",
@@ -321,8 +328,14 @@ def _start_job(
         if node_id is not None:
             raise ComputeError("invalid_source", f"{source!r} compute is not a node")
         if source == "self":
-            if any(job.owner_id == resident_id and job.source == "self" for job in book.jobs):
-                raise ComputeError("source_busy", "your own compute is already at work")
+            own = [job for job in book.jobs if job.owner_id == resident_id and job.source == "self"]
+            if len(own) >= SELF_JOBS:
+                raise ComputeError(
+                    "self_queue_full",
+                    f"your own compute already has {len(own)} jobs, running or queued",
+                )
+            if own:
+                ends_at = max(job.ends_at for job in own) + job_seconds(workload, "self")
         elif source == "on_demand":
             cost = on_demand_cost(workload)
         else:

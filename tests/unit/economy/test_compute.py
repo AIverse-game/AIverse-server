@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from aiverse_server.core.compute import ComputeBook, Job, Node
+from aiverse_server.core.compute import SELF_JOBS, ComputeBook, Job, Node
 from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.ledger import SYSTEM
@@ -257,15 +257,22 @@ def test_a_node_of_another_resident_cannot_be_used() -> None:
     assert rejected.value.code == "unknown_node"
 
 
-def test_one_job_at_a_time_per_source_and_per_parcel() -> None:
+def test_the_own_compute_queues_jobs_and_refuses_past_its_limit() -> None:
+    world = run(WORLD, MakeContent("a", "self"), MakeContent("a", "self"), MakeContent("a", "self"))
+
+    with pytest.raises(ActionRejected) as full:
+        perform(world, MakeContent("a", "self"))
+
+    assert full.value.code == "self_queue_full"
+
+
+def test_one_job_per_parcel_even_on_the_own_compute() -> None:
     world = perform(WORLD, BuildAd("a", "L5-3", "self"))
 
-    with pytest.raises(ActionRejected) as own:
-        perform(world, BuildAd("a", "L6-3", "self"))
     with pytest.raises(ActionRejected) as parcel:
         perform(world, BuildAd("a", "L5-3", "on_demand"))
 
-    assert (own.value.code, parcel.value.code) == ("source_busy", "parcel_busy")
+    assert parcel.value.code == "parcel_busy"
 
 
 def test_a_bad_source_is_reported_before_a_busy_parcel() -> None:
@@ -398,25 +405,24 @@ def test_a_render_node_renders_content_one_piece_at_a_time_and_a_generative_one_
     assert coin_balance(world, "a") == 10_000 - 2 * NODE_SECONDS[0] * SUBSCRIPTION_PRICE
 
 
-def test_hired_nodes_render_at_once_but_the_own_compute_does_one_job_at_a_time() -> None:
+def test_hired_nodes_render_at_once_and_the_own_compute_works_through_its_queue() -> None:
     world = run(WORLD, MakeContent("a", "on_demand"), MakeContent("a", "on_demand"))
-    world = perform(world, MakeContent("a", "self"))
+    world = run(world, MakeContent("a", "self"), MakeContent("a", "self"))
 
-    with pytest.raises(ActionRejected) as rejected:
-        perform(world, MakeContent("a", "self"))
-    done = settle_due(replace(world, time=CONTENT_SELF_SECONDS))
+    first = settle_due(replace(world, time=CONTENT_SELF_SECONDS))
+    second = settle_due(replace(world, time=2 * CONTENT_SELF_SECONDS))
 
-    assert rejected.value.code == "source_busy"
-    assert carried(done, "a") == 3
+    assert carried(first, "a") == 3
+    assert carried(second, "a") == 4
 
 
-def test_the_own_compute_does_one_job_at_a_time_whatever_its_kind() -> None:
+def test_a_job_queued_on_the_own_compute_ends_after_the_one_before_it() -> None:
     world = perform(WORLD, MakeContent("a", "self"))
 
-    with pytest.raises(ActionRejected) as rejected:
-        perform(world, BuildAd("a", "L5-3", "self"))
+    queued = perform(world, BuildAd("a", "L5-3", "self"))
 
-    assert rejected.value.code == "source_busy"
+    first, second = queued.compute.jobs
+    assert second.ends_at - first.ends_at == SELF_SECONDS
 
 
 def test_leaving_drops_content_jobs_and_nothing_is_made() -> None:
@@ -450,14 +456,14 @@ CONTENT_JOB = Job(2, "a", "make_content", None, "on_demand", None, 0.0, 6.0)
         (
             lambda: ComputeBook(
                 (),
-                (
-                    replace(JOB, id=1, source="self", node_id=None),
-                    replace(JOB, id=2, source="self", node_id=None, parcel_id="L6-3"),
+                tuple(
+                    replace(JOB, id=i, source="self", node_id=None, parcel_id=f"L{i}-3")
+                    for i in range(1, SELF_JOBS + 2)
                 ),
                 1,
-                3,
+                SELF_JOBS + 2,
             ),
-            "more than one job on their own",
+            f"more than {SELF_JOBS} jobs on their own",
         ),
     ],
 )

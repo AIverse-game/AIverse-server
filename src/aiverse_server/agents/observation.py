@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, field
 from ..core.compute import Job, PermitKind
 from ..core.events import Event, pending_for, pending_from
 from ..core.land import AD_SLOT_CAPACITY, MAX_TOLL, PARCEL_SHARES, Parcel
+from ..core.ledger import SYSTEM
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
 from ..economy.ads import CONTENT_LIFETIME
@@ -141,6 +142,16 @@ class MyFillView:
     item: str
     quantity: int
     price: int
+
+
+@dataclass(frozen=True)
+class RecentPayments:
+    """What residents paid each other in the past five minutes, across the whole town: the
+    deals that really happened, not the offers. Coins from or to the system, such as land,
+    compute and what visitors pay, are not counted."""
+
+    count: int
+    coins: int
 
 
 @dataclass(frozen=True)
@@ -499,7 +510,7 @@ class JointPurchaseView:
     """Coins the recipient pays when they accept."""
     to_shares: int
     """Shares of the parcel's 100 the recipient gets; the proposer keeps the rest and alone
-    builds on it and puts content in it."""
+    builds on it."""
     parcel_taken: bool
     """Someone has bought the parcel meanwhile: accepting would fail, so the proposer should
     withdraw it, or the recipient reject it."""
@@ -632,6 +643,8 @@ class Observation:
     build_permits: tuple[BuildPermitView, ...] = ()
     """Permits where the resident is the builder, who may build now, or the owner, whose
     parcel is to be built on."""
+    recent_payments: RecentPayments = RecentPayments(count=0, coins=0)
+    """Payments between residents over the past five minutes, see `RecentPayments`."""
     last_thinking_seconds: float | None = None
     """Game seconds the resident's previous round took, from its look to the end of the
     round, whether it went well or not; None in the first round."""
@@ -673,6 +686,7 @@ def observe(
             arrives_in=max(walk.arrives_at - world.time, 0.0) if walk is not None else None,
         ),
         exchange=_exchange_view(world, resident_id),
+        recent_payments=_recent_payments(world),
         compute=_compute_view(world, resident_id),
         land=_land_view(world, resident_id, here, standing=walk is None),
         nearby_residents=tuple(
@@ -780,7 +794,13 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         if standing_on.owner_id is not None or for_sale_at(world, here) is not None
         else None
     )
-    mine = [square for square in squares if square.owner_id == resident_id]
+    # Shares in a facility let a resident put content in it, so those parcels are listed too.
+    shared = {
+        parcel.id
+        for parcel in world.parcels
+        if parcel.facility is not None and parcel.held_by(resident_id) > 0
+    }
+    mine = [square for square in squares if square.owner_id == resident_id or square.id in shared]
     cells = world.map.block_cells
     best = sorted(
         # One suggestion per block, its middle parcel, since a block is bought whole.
@@ -964,6 +984,16 @@ def _options(workload: float) -> tuple[AdOption, ...]:
 
 def _soonest(job: Job) -> tuple[float, int]:
     return job.ends_at, job.id
+
+
+def _recent_payments(world: World) -> RecentPayments:
+    paid = [
+        transfer
+        for transfer in world.ledger.transfers
+        if SYSTEM not in (transfer.payer, transfer.payee)
+        and world.time - TREND_SECONDS <= transfer.time <= world.time
+    ]
+    return RecentPayments(count=len(paid), coins=sum(transfer.amount for transfer in paid))
 
 
 def _exchange_view(world: World, resident_id: str) -> ExchangeView:

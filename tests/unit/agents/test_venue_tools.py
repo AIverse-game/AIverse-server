@@ -14,6 +14,7 @@ from aiverse_server.core.world import Inventory, Position, Resident, World, Worl
 from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
 from aiverse_server.economy.compute import (
     GAME_WORKLOAD,
+    SELF_RATE,
     VENUE_WORKLOAD,
     on_demand_cost,
 )
@@ -61,10 +62,10 @@ def test_a_venue_is_built_on_the_own_compute_and_appears_when_the_job_ends() -> 
     tools = ResidentTools(game, "a")
 
     built = tools.build_venue("L1-1", "workspace", "self")
-    clock.now = VENUE_WORKLOAD
+    clock.now = VENUE_WORKLOAD / SELF_RATE
     game.tick()
 
-    assert (built.ok, built.message) == (True, "job 1: workspace on L1-1 ready in 240 s")
+    assert (built.ok, built.message) == (True, "job 1: workspace on L1-1 ready in 480 s")
     facility = next(p.facility for p in game.world.parcels if p.id == "L1-1")
     assert facility is not None and facility.kind == "workspace"
 
@@ -100,10 +101,10 @@ def test_a_game_is_rendered_and_goes_into_the_hall() -> None:
     tools = ResidentTools(game, "b")
 
     made = tools.make_content("self", content="game")
-    clock.now = GAME_WORKLOAD
+    clock.now = GAME_WORKLOAD / SELF_RATE
     game.tick()
 
-    assert (made.ok, made.message) == (True, "job 1: a game ready in 90 s")
+    assert (made.ok, made.message) == (True, "job 1: a game ready in 180 s")
     assert game.world.residents[1].inventory.count(GAME_ITEM) == 1
 
 
@@ -148,12 +149,12 @@ def test_the_observation_shows_the_hall_its_games_and_what_venues_and_games_cost
         0,
     )
     assert [(o.source, o.seconds) for o in seen.compute.venue] == [
-        ("self", 240.0),
+        ("self", 480.0),
         ("on_demand", 24.0),
         ("subscription", 24.0),
     ]
     assert [(o.source, o.seconds) for o in seen.compute.game] == [
-        ("self", 90.0),
+        ("self", 180.0),
         ("on_demand", 9.0),
         ("subscription", 9.0),
     ]

@@ -3,9 +3,9 @@
 Content is an item made by render jobs, see `compute.py`, and carried, traded and sold like
 any other. Each facility that shows content takes its own kind: `CONTENT_ITEM` for ad slots,
 `GAME_ITEM` for game halls, see `ITEM_FOR`. A resident puts a piece into the matching
-facility on their own parcel, `place_content`, where it is shown for `CONTENT_LIFETIME` game
-seconds and then goes stale; the clock starts when it is put in, so a piece in hand never
-spoils. A facility shows at most `AD_SLOT_CAPACITY` pieces at once.
+facility on a parcel they own or hold shares in, `place_content`, where it is shown for
+`CONTENT_LIFETIME` game seconds and then goes stale; the clock starts when it is put in, so a
+piece in hand never spoils. A facility shows at most `AD_SLOT_CAPACITY` pieces at once.
 
 A game hall shows games and a workspace shows nothing, see `compute.py` for how they are built;
 both earn from the fees visitors pay at the door, see `admissions.py`, and a game hall draws
@@ -51,13 +51,13 @@ def shown(facility: Facility, time: float) -> int:
 
 
 def place_content(world: World, resident_id: str, parcel_id: str) -> World:
-    """Put one piece of the resident's content into the ad slot or game hall on their parcel
-    `parcel_id`, from anywhere: the kind of content the facility takes, see `ITEM_FOR`.
-    `InventoryError` when they carry none."""
+    """Put one piece of the resident's content into the ad slot or game hall on a parcel
+    `parcel_id` they own or hold shares in, from anywhere: the kind of content the facility
+    takes, see `ITEM_FOR`. `InventoryError` when they carry none."""
     if not any(resident.id == resident_id for resident in world.residents):
         raise AdsError("unknown_resident", f"no resident with id {resident_id!r}")
     parcel = next((p for p in world.parcels if p.id == parcel_id), None)
-    if parcel is None or parcel.owner_id != resident_id:
+    if parcel is None or (parcel.owner_id != resident_id and parcel.held_by(resident_id) == 0):
         raise AdsError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     facility = parcel.facility
     if facility is None or facility.kind not in ITEM_FOR:

@@ -7,6 +7,7 @@ import pytest
 
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.world import Position, Resident, World, WorldMap
+from aiverse_server.economy.compute import SELF_RATE, VENUE_WORKLOAD
 from aiverse_server.economy.land import claimed, facility_centre, venue_room
 from aiverse_server.game.actions import ActionRejected, BuildAd, BuildPortal, BuildVenue, perform
 from aiverse_server.game.clock import settle_due
@@ -36,7 +37,7 @@ def reject(world: World, action: BuildAd | BuildPortal | BuildVenue) -> str:
 
 def with_workspace_at_origin() -> World:
     building = perform(WORLD, BuildVenue("a", "L0-0", "workspace", "self"))
-    return settle_due(replace(building, time=240.0))
+    return settle_due(replace(building, time=VENUE_WORKLOAD / SELF_RATE))
 
 
 def test_a_venue_is_refused_where_its_square_would_leave_the_block() -> None:

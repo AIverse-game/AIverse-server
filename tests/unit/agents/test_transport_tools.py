@@ -191,7 +191,7 @@ def test_the_observation_shows_what_a_portal_costs_to_build() -> None:
     options = observation.compute.portal
 
     assert [(option.source, option.seconds, option.coins) for option in options] == [
-        ("self", 180.0, 0),
+        ("self", 360.0, 0),
         ("on_demand", 18.0, PORTAL_WORKLOAD * ON_DEMAND_PRICE),
         ("subscription", 18.0, 0),
     ]

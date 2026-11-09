@@ -8,8 +8,8 @@ shares change hands by the block too: an offer names any parcel of a block and m
 shares of all its parcels, so every parcel of a block always has the same holders. Several
 residents holding a block together is how they share its facilities' income. A holder may have
 at most `MAX_PENDING_PER_PAIR` offers waiting for the same recipient. Shares are only about money:
-the buyer of the parcel stays the one who builds on it and puts content in it, see
-`Parcel.owner_id`.
+the buyer of the parcel stays the one who builds on it, and any holder may put content in its
+facility, see `Parcel.owner_id`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.

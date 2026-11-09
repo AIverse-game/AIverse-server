@@ -17,6 +17,7 @@ from ..economy.compute import (
     NODE_SECONDS,
     ON_DEMAND_PRICE,
     PERMIT_SECONDS,
+    SELF_QUEUE_LIMIT,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
     VENUE_WORKLOAD,
@@ -40,7 +41,7 @@ from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
 from ..residents.memory import SHORT_TERM_SECONDS
 from ..residents.speech import HEARING_RADIUS
 from ..residents.walking import WALK_SPEED
-from .observation import BOOK_LEVELS_SHOWN, VOLUME_WINDOW
+from .observation import BOOK_LEVELS_SHOWN, TREND_SECONDS, VOLUME_WINDOW
 
 
 def system_prompt(
@@ -97,7 +98,8 @@ yours; it earns only through ad slots, workspaces or game halls built on its par
 takes one parcel; a workspace or a game hall takes up {VENUE_CELLS} x {VENUE_CELLS} parcels, so a
 block holds one venue and the parcels left over for ad slots.
 - Compute is a speed: a job of W workload takes W / rate seconds. Your own compute is free,
-{SELF_RATE:g} workload/s, one job at a time of any kind, but slow. A node does {NODE_RATE:g}/s,
+{SELF_RATE:g} workload/s, one at a time of any kind, with up to {SELF_QUEUE_LIMIT} more queued
+behind it, but slow. A node does {NODE_RATE:g}/s,
 {NODE_RATE / SELF_RATE:g} times faster, one job at a time. There are two ways to get a node.
 Hiring one for a single job costs {ON_DEMAND_PRICE} coins per workload: very dear, only for an
 emergency. Subscribing with buy_node is for the long run: {lo}-{hi}s at a time, never less,
@@ -120,8 +122,8 @@ has {permit_s:g}s to start the job (build_ad or build_venue on that parcel) with
 compute or nodes; the fee is paid when the facility is finished, and goes back to the owner if
 the builder does not start in time. The facility belongs to the parcel: its income goes to the
 holders of the parcel's shares, so a builder who wants a part of it asks for shares as well
-(offer_shares), and only the owner puts content in it. So an owner with land and little compute,
-and a builder with a busy node and no land, each do better together than alone.
+(offer_shares), and any holder of its shares may put content in it. So an owner with land and
+little compute, and a builder with a busy node and no land, each do better together than alone.
 - build_ad starts an ad slot on a parcel of yours from anywhere. It is {AD_WORKLOAD:g} workload:
 {own_s:g}s on your own compute, {hired_s:g}s and {hired_coins} coins on a hired node. You need not
 stay: walk, talk and trade meanwhile, and it appears when the job ends.
@@ -147,7 +149,7 @@ because they are cheap.
 - The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
-Only the buyer of a parcel builds on it and puts content in it, whoever holds its shares.
+Only the buyer of a parcel builds on it; whoever holds its shares may put content in it.
 - To buy a block together, stand in it and joint_buy_parcel to a partner: they pay part of the
 price for a number of shares, you pay the rest at once and keep the other shares and the
 running of it. It is bought when they accept; if someone buys it first, withdraw.
@@ -157,6 +159,9 @@ nearer to them, fewer to crowded ones, paying the fee at each door; then they le
 again, and each stands for more people as the game goes on. Some trips follow the working route
 instead, see build_venue.
 The land observation shows how many people are passing each parcel now.
+The observation's recent_payments counts the coins residents paid each other in the past
+{TREND_SECONDS / 60:g} minutes, so you can see whether anyone is actually buying from another
+resident.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
 - build_venue builds a game hall or a workspace on a square of {VENUE_CELLS} x {VENUE_CELLS}
 parcels with the parcel you name at its north-west corner; all of them must be yours, bare and in

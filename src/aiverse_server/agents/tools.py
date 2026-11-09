@@ -243,7 +243,8 @@ class MakeContentArgs(_Args):
 
 class PlaceContentArgs(_Args):
     parcel_id: str = Field(
-        description="id of one of your parcels with an ad slot, or a game hall for games."
+        description="id of a parcel you own or hold shares in, with an ad slot or a game hall "
+        "for games."
     )
 
 
@@ -475,7 +476,7 @@ TOOLS = (
         "partner_shares of its shares, which split its income; you pay the rest, set aside "
         "until they answer, and keep the other shares. The parcel is bought when they accept; "
         "if someone buys it first, accepting fails and you should withdraw. You alone build on "
-        "it and put content in it, however the shares are split.",
+        "it; its holders, however the shares are split, may each put content in it.",
         JointBuyParcelArgs,
     ),
     ToolSpec(
@@ -490,8 +491,8 @@ TOOLS = (
         f"{PERMIT_SECONDS:g} s with their own compute or nodes; the fee is paid to them when the "
         "facility is finished, and goes back to the owner if the permit lapses unused. The "
         "facility belongs to the parcel: its income goes to the holders of the parcel's shares, "
-        "and only the owner puts content in it. Offer shares if the builder is to take part in "
-        "that income.",
+        "and any holder of its shares may put content in it. Offer shares if the builder is to "
+        "take part in that income.",
         CommissionBuildArgs,
     ),
     ToolSpec(
@@ -513,7 +514,8 @@ TOOLS = (
         "Start building an ad slot on one of your parcels, from anywhere, even while walking; "
         "you need not stay, it appears when the job ends. It takes "
         f"{AD_WORKLOAD:g} workload: {job_seconds(AD_WORKLOAD, 'self'):g} s on your own compute "
-        f"(free, one job at a time), {job_seconds(AD_WORKLOAD, 'on_demand'):g} s on a node hired "
+        "(free, one at a time, later jobs queue), "
+        f"{job_seconds(AD_WORKLOAD, 'on_demand'):g} s on a node hired "
         f"for it ({ON_DEMAND_PRICE} coins per workload, {on_demand_cost(AD_WORKLOAD)} coins), "
         "or on one of your subscribed generative nodes (if the node runs out first, the rest of "
         f"the job carries on at your own speed, {SELF_RATE:g} workload per second). "
@@ -525,7 +527,7 @@ TOOLS = (
         "Start building a portal on one of your parcels, from anywhere, even while walking; it "
         f"appears when the job ends. Up to {MAX_PORTALS} portals, built or being built. It "
         f"takes {PORTAL_WORKLOAD:g} workload: {job_seconds(PORTAL_WORKLOAD, 'self'):g} s on "
-        f"your own compute (free, one job at a time), "
+        f"your own compute (free, one at a time, later jobs queue), "
         f"{job_seconds(PORTAL_WORKLOAD, 'on_demand'):g} s on a node hired for it "
         f"({on_demand_cost(PORTAL_WORKLOAD)} coins), or on one of your subscribed generative "
         "nodes. A portal earns nothing itself: it matters through its lines (link_portals) "
@@ -540,7 +542,8 @@ TOOLS = (
         "parcel you name at its north-west corner, so nothing else can be built on those "
         "parcels. It takes "
         f"{VENUE_WORKLOAD:g} workload: {job_seconds(VENUE_WORKLOAD, 'self'):g} s on your own "
-        f"compute (free, one job at a time), {job_seconds(VENUE_WORKLOAD, 'on_demand'):g} s on a "
+        "compute (free, one at a time, later jobs queue), "
+        f"{job_seconds(VENUE_WORKLOAD, 'on_demand'):g} s on a "
         f"node hired for it ({on_demand_cost(VENUE_WORKLOAD)} coins), or on one of your "
         "subscribed generative nodes. A game hall shows games (make_content with content "
         f"game, then place_content), up to {AD_SLOT_CAPACITY} for {CONTENT_LIFETIME:g} s each. "
@@ -570,8 +573,9 @@ TOOLS = (
         "Render one piece of content, from anywhere, even while walking; it joins the items "
         "you carry when the job ends, and you may sell it or put it in a matching facility of "
         f"yours. An ad ({CONTENT_ITEM!r}, for an ad slot) takes {CONTENT_WORKLOAD:g} workload: "
-        f"{job_seconds(CONTENT_WORKLOAD, 'self'):g} s on your own compute (free, one job at a "
-        f"time), {job_seconds(CONTENT_WORKLOAD, 'on_demand'):g} s on a node hired for it "
+        f"{job_seconds(CONTENT_WORKLOAD, 'self'):g} s on your own compute (free, one at a time, "
+        f"later jobs queue), "
+        f"{job_seconds(CONTENT_WORKLOAD, 'on_demand'):g} s on a node hired for it "
         f"({on_demand_cost(CONTENT_WORKLOAD)} coins), or on one of your subscribed render nodes. "
         f"A game ({GAME_ITEM!r}, for a game hall) takes {GAME_WORKLOAD:g}: "
         f"{job_seconds(GAME_WORKLOAD, 'self'):g} s, {on_demand_cost(GAME_WORKLOAD)} coins hired.",
