@@ -195,6 +195,11 @@ reserve items. At most {MAX_ORDERS} resting orders per resident, and self-trades
 cancel_order works while busy. exchange shows {BOOK_LEVELS_SHOWN} price levels per side,
 latest price, volume over {VOLUME_WINDOW:g}s, your orders and fills, and eight recent
 anonymous trades.
+Example: you carry one ad_content and the book has no bid. place_order with side sell, item
+ad_content, quantity 1, price 800 sets that piece aside and rests it at 800. A buyer who later
+places a buy at 800 or more trades with it at 800: you receive 800 coins, the buyer gets back any
+difference, and the fill appears in your fills. Until then the order sits in your my_orders;
+cancel_order gives the piece back if you change your mind.
 - A contract promises 1-{MAX_DELIVERIES} deliveries of an item, each for a fixed payment,
 within at most {MAX_CONTRACT_SECONDS}s. It starts on acceptance. The buyer's payments are
 reserved; deliver transfers carried items and pays the supplier immediately. The supplier
