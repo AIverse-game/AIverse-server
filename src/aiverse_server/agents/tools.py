@@ -51,6 +51,7 @@ from ..economy.compute import (
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
+from ..economy.joint_purchase import JOINT_PURCHASE_SECONDS
 from ..economy.portals import MAX_LINKS_PER_PORTAL, MAX_PORTALS, MIN_LINK_DISTANCE
 from ..economy.sponsors import PAY_PERIOD
 from ..game.actions import (
@@ -116,7 +117,7 @@ class JointBuyParcelArgs(_Args):
     partner_id: str = Field(description="Resident id you buy the parcel with.")
     partner_pays: StrictInt = Field(
         description="Coins the partner pays towards the parcel's price, from 0 up to the price; "
-        "you pay the rest, which is set aside now."
+        "you pay the rest. Both pay when the partner accepts."
     )
     partner_shares: StrictInt = Field(
         description=f"Shares of the parcel's {PARCEL_SHARES} the partner gets, 1 to "
@@ -484,21 +485,23 @@ TOOLS = (
         "joint_buy_parcel",
         "Propose to another resident buying the parcel you stand in together, when you cannot "
         "or would rather not pay it all. They pay partner_pays of its price and get "
-        "partner_shares of its shares, which split its income; you pay the rest, set aside "
-        "until they answer, and keep the other shares. The parcel is bought when they accept; "
-        "if someone buys it first, accepting fails and you should withdraw. You alone build on "
-        "it; its holders, however the shares are split, may each put content in it.",
+        "partner_shares of its shares, which split its income; you pay the rest and keep the "
+        "other shares. Nothing is locked while the offer waits: the parcel is bought, and you "
+        "both pay, when they accept, so you each need the coins then. The offer lapses after "
+        f"{JOINT_PURCHASE_SECONDS:g} seconds; if someone buys the parcel first, accepting fails "
+        "and you should withdraw. Both of you may build on it and put content in it, however "
+        "the shares are split.",
         JointBuyParcelArgs,
     ),
     ToolSpec(
         "commission_build",
         "Agree with another resident that one of them builds an ad slot, a game hall or a "
-        "workspace on the other's parcel, for a fee the parcel's owner pays. Only the buyer of a "
-        "parcel may have it built on, and only with their agreement: you propose, the partner "
-        "answers with respond_to_offer, and nothing happens before they accept. As the owner "
-        "you hire a builder who has compute to spare; as the builder you offer your compute to "
-        "an owner who has land but little. When it is accepted the fee is set aside from the "
-        "owner, and the builder may use build_ad or build_venue on that parcel for "
+        "workspace on the other's parcel, for a fee the parcel's owner pays. A parcel may have it "
+        "built on only with the agreement of its owner or a holder of its shares: you propose, "
+        "the partner answers with respond_to_offer, and nothing happens before they accept. As "
+        "the owner you hire a builder who has compute to spare; as the builder you offer your "
+        "compute to an owner who has land but little. When it is accepted the fee is set aside "
+        "from the owner, and the builder may use build_ad or build_venue on that parcel for "
         f"{PERMIT_SECONDS:g} s with their own compute or nodes; the fee is paid to them when the "
         "facility is finished, and goes back to the owner if the permit lapses unused. The "
         "facility belongs to the parcel: its income goes to the holders of the parcel's shares, "
@@ -637,7 +640,7 @@ TOOLS = (
         "a block's shares split what its facilities earn in proportion, at every payday, "
         "whoever built them. Use it to pay for work or share a block with a partner. Nothing "
         "moves until they accept and pay, and you keep earning on the shares until then. "
-        "Whoever bought the block still alone builds on it and stocks it with content.",
+        "Any holder of its shares may build on it and stock it with content.",
         OfferSharesArgs,
     ),
     ToolSpec(

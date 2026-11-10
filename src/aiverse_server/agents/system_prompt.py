@@ -27,6 +27,7 @@ from ..economy.compute import (
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
+from ..economy.joint_purchase import JOINT_PURCHASE_SECONDS
 from ..economy.land import PARCEL_SIZE, plots
 from ..economy.sponsors import PAY_PERIOD, default_sponsors
 from ..economy.visitors import (
@@ -156,8 +157,9 @@ a parcel gives you all of them. offer_shares hands some to another resident for 
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
 Whoever holds any shares of a parcel may build on it and put content in it.
 - To buy a block together, stand in it and joint_buy_parcel to a partner: they pay part of the
-price for a number of shares, you pay the rest at once and keep the other shares. Both of
-you may build on it. It is bought when they accept; if someone buys it first, withdraw.
+price for a number of shares, you pay the rest and keep the other shares. Both of you may
+build on it. No coins are locked while it waits: you both pay when they accept, and it lapses
+after {JOINT_PURCHASE_SECONDS:g}s. If someone buys it first, withdraw.
 - {VISITOR_COUNT} scripted visitors come in at the middle of the map and go to workspaces and game
 halls showing games, more to ones with more pieces (a workspace counts as {WORKSPACE_PIECES},
 a mall as {MALL_PIECES}) and nearer to them, fewer to crowded ones, paying the fee at each door;

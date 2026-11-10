@@ -3,12 +3,13 @@
 A resident standing in a parcel nobody owns proposes to another, with a `JointPurchase`, an
 event, see `events.py`: the partner pays `partner_pays` coins towards the price and gets
 `partner_shares` of the parcel's shares, see `shares.py`; the proposer pays the rest and keeps
-the other shares. Sending sets aside the proposer's part, so it cannot be spent twice. When the
-partner accepts and pays theirs, both pay the town and the parcel is theirs: the proposer is
-its buyer, and both hold shares and so both may build on it, see `compute.py` and `land.py`.
-The partner need not be there. Rejecting or withdrawing gives the proposer's part back. If
-someone buys the parcel first, accepting fails and the offer stays pending, so it can still be
-rejected or withdrawn.
+the other shares. Nothing is set aside while the offer waits, so neither side's coins are
+locked: when the partner accepts, both pay the town at once and the parcel is theirs, and if
+either cannot pay then, accepting fails and the offer stays pending. The proposer is its buyer,
+and both hold shares and so both may build on it, see `compute.py` and `land.py`. The partner
+need not be there. An offer lapses `JOINT_PURCHASE_SECONDS` after it was sent, see
+`expire_joint_purchases`. If someone buys the parcel first, accepting fails and the offer stays
+pending, so it can still be rejected or withdrawn.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -16,11 +17,11 @@ untouched; on error nothing changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from ..core.events import EventPayload
-from ..core.inventory import add_coins, take_coins
+from ..core.inventory import take_coins
 from ..core.land import PARCEL_SHARES
 from ..core.ledger import SYSTEM, record_transfer
 from .land import add_block, check_for_sale, plot
@@ -31,14 +32,8 @@ if TYPE_CHECKING:
     from ..core.world import World
 
 
-def reserved_purchase_coins(world: World, resident_id: str) -> int:
-    """Coins the resident has set aside in joint purchases they proposed that still wait for an
-    answer."""
-    return sum(
-        event.payload.proposer_pays(world)
-        for event in world.events.pending
-        if event.sender_id == resident_id and isinstance(event.payload, JointPurchase)
-    )
+JOINT_PURCHASE_SECONDS = 300.0
+"""How long a joint purchase waits for an answer before it lapses."""
 
 
 @dataclass(frozen=True)
@@ -51,6 +46,8 @@ class JointPurchase(EventPayload):
     """Coins the recipient pays of the price; the sender pays the rest."""
     partner_shares: int
     """Shares the recipient gets; the sender gets the other `PARCEL_SHARES` minus these."""
+    expires_at: float
+    """Game time when the offer lapses, see `World.time`."""
 
     def proposer_pays(self, world: World) -> int:
         return plot(world, self.col, self.row).price - self.partner_pays
@@ -79,8 +76,10 @@ class JointPurchase(EventPayload):
                 "too_many_offers",
                 f"you already have {MAX_PENDING_PER_PAIR} joint purchases waiting for them",
             )
-        own = self.proposer_pays(world)
-        return take_coins(world, event.sender_id, own) if own else world
+        # Nothing is reserved, but a proposer who cannot pay now is told at once.
+        if own := self.proposer_pays(world):
+            take_coins(world, event.sender_id, own)
+        return world
 
     def on_accept(self, world: World, event: Event) -> World:
         square = plot(world, self.col, self.row)
@@ -90,6 +89,7 @@ class JointPurchase(EventPayload):
             world = record_transfer(world, event.recipient_id, SYSTEM, self.partner_pays, "land")
         own = self.proposer_pays(world)
         if own:
+            world = take_coins(world, event.sender_id, own)
             world = record_transfer(world, event.sender_id, SYSTEM, own, "land")
         shares = (
             (event.sender_id, PARCEL_SHARES - self.partner_shares),
@@ -97,6 +97,28 @@ class JointPurchase(EventPayload):
         )
         return add_block(world, self.col, self.row, event.sender_id, shares)
 
-    def on_decline(self, world: World, event: Event) -> World:
-        own = self.proposer_pays(world)
-        return add_coins(world, event.sender_id, own) if own else world
+
+def expire_joint_purchases(world: World) -> World:
+    """Take every joint purchase whose time is up by `world.time` off the queue; the same world
+    when none is."""
+    lapsed = {
+        event.id
+        for event in world.events.pending
+        if isinstance(event.payload, JointPurchase) and event.payload.expires_at <= world.time
+    }
+    if not lapsed:
+        return world
+    pending = tuple(event for event in world.events.pending if event.id not in lapsed)
+    return replace(world, events=replace(world.events, pending=pending))
+
+
+def next_joint_purchase_expiry(world: World) -> float | None:
+    """Game time when the earliest waiting joint purchase lapses, or None when none waits."""
+    return min(
+        (
+            event.payload.expires_at
+            for event in world.events.pending
+            if isinstance(event.payload, JointPurchase)
+        ),
+        default=None,
+    )

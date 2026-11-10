@@ -49,7 +49,7 @@ from ..economy.compute import (
 )
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
-from ..economy.joint_purchase import JointPurchase, reserved_purchase_coins
+from ..economy.joint_purchase import JointPurchase
 from ..economy.land import (
     PARCEL_SIZE,
     Plot,
@@ -103,7 +103,7 @@ class Me:
     coins: int
     """Spendable coins."""
     coins_in_offers: int
-    """Coins set aside in purchase offers and joint purchases still waiting for an answer."""
+    """Coins set aside in purchase offers and build commissions still waiting for an answer."""
     coins_in_orders: int
     """Coins set aside in buy orders resting on the exchange."""
     coins_in_contracts: int
@@ -525,15 +525,17 @@ class JointPurchaseView:
     price: int
     """What the parcel costs from the town."""
     from_pays: int
-    """Coins the proposer pays, set aside already."""
+    """Coins the proposer pays when the recipient accepts; nothing is set aside before."""
     to_pays: int
     """Coins the recipient pays when they accept."""
     to_shares: int
-    """Shares of the parcel's 100 the recipient gets; the proposer keeps the rest and alone
-    builds on it."""
+    """Shares of the parcel's 100 the recipient gets; the proposer keeps the rest. Both may
+    build on it."""
     parcel_taken: bool
     """Someone has bought the parcel meanwhile: accepting would fail, so the proposer should
     withdraw it, or the recipient reject it."""
+    expires_in: float
+    """Game seconds until the offer lapses if nobody answers."""
 
 
 @dataclass(frozen=True)
@@ -697,7 +699,6 @@ def observe(
             position=here,
             coins=me.coins,
             coins_in_offers=reserved_coins(world, resident_id)
-            + reserved_purchase_coins(world, resident_id)
             + commission_coins(world, resident_id),
             coins_in_orders=order_coins(world.orders, resident_id),
             coins_in_contracts=contract_coins(world, resident_id),
@@ -1245,6 +1246,7 @@ def _joint_purchases(world: World, events: tuple[Event, ...]) -> tuple[JointPurc
                 to_pays=proposal.partner_pays,
                 to_shares=proposal.partner_shares,
                 parcel_taken=square.owner_id is not None,
+                expires_in=max(proposal.expires_at - world.time, 0.0),
             )
         )
     return tuple(views)

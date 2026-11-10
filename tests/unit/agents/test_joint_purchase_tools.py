@@ -9,6 +9,7 @@ from aiverse_server.agents.tool_selection import (
 from aiverse_server.agents.tools import ResidentTools
 from aiverse_server.core.land import Parcel
 from aiverse_server.core.world import Position, Resident, World, WorldMap
+from aiverse_server.economy.joint_purchase import JOINT_PURCHASE_SECONDS
 from aiverse_server.economy.visitors import people_near
 from aiverse_server.server.app import Game
 
@@ -68,7 +69,7 @@ def test_bad_terms_come_back_as_failed_results_and_the_world_stays() -> None:
     assert game.world.events.pending == ()
 
 
-def test_the_observation_shows_the_proposal_to_both_and_counts_the_set_aside_coins() -> None:
+def test_the_observation_shows_the_proposal_to_both_and_locks_no_coins() -> None:
     game = make_game()
     propose(ResidentTools(game, "a"))
 
@@ -86,7 +87,8 @@ def test_the_observation_shows_the_proposal_to_both_and_counts_the_set_aside_coi
     assert offer.people_near == people_near(game.world, offer.centre)
     assert from_a.my_joint_purchases == to_b.joint_purchases_to_me
     assert (to_b.my_joint_purchases, from_a.joint_purchases_to_me) == ((), ())
-    assert from_a.me.coins == 5_000 - 1_540 and from_a.me.coins_in_offers == 1_540
+    assert offer.expires_in == JOINT_PURCHASE_SECONDS
+    assert from_a.me.coins == 5_000 and from_a.me.coins_in_offers == 0
     assert [r.coins for r in from_a.residents if r.id == "a"] == [5_000]
 
 

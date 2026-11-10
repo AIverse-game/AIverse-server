@@ -6,7 +6,7 @@ from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import PARCEL_SHARES, Parcel
 from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.joint_purchase import reserved_purchase_coins
+from aiverse_server.economy.joint_purchase import JOINT_PURCHASE_SECONDS
 from aiverse_server.economy.shares import MAX_PENDING_PER_PAIR
 from aiverse_server.game.actions import (
     ActionRejected,
@@ -18,6 +18,7 @@ from aiverse_server.game.actions import (
     WithdrawEvent,
     perform,
 )
+from aiverse_server.game.clock import next_due, settle_due
 from aiverse_server.game.lifecycle import end_game, ranks, total_coins
 
 
@@ -50,11 +51,10 @@ def coins(world: World, *ids: str) -> tuple[int, ...]:
     return tuple(coin_balance(world, resident_id) for resident_id in ids)
 
 
-def test_proposing_sets_the_proposers_part_aside_and_buys_nothing() -> None:
+def test_proposing_locks_no_coins_and_buys_nothing() -> None:
     world = propose()
 
-    assert coins(world, "a", "b") == (5_000 - (PRICE - 1_000), 5_000)
-    assert reserved_purchase_coins(world, "a") == PRICE - 1_000
+    assert coins(world, "a", "b") == (5_000, 5_000)
     assert total_coins(world, "a") == 5_000
     assert world.parcels == ()
     assert len(world.events.pending) == 1
@@ -69,7 +69,7 @@ def test_accepting_buys_the_parcel_for_both_with_shares_as_agreed() -> None:
     assert coins(bought, "a", "b") == (5_000 - 1_540, 5_000 - 1_000)
     paid = [(t.payer, t.payee, t.amount, t.channel) for t in bought.ledger.transfers]
     assert sorted(paid) == [("a", SYSTEM, 1_540, "land"), ("b", SYSTEM, 1_000, "land")]
-    assert (reserved_purchase_coins(bought, "a"), bought.events.pending) == (0, ())
+    assert bought.events.pending == ()
     assert total_coins(bought, "a") + total_coins(bought, "b") == 10_000 - PRICE
 
 
@@ -92,7 +92,7 @@ def test_the_partner_pays_nothing_to_get_shares_for_free_or_everything_to_fund_i
         LeaveGame("a"),
     ],
 )
-def test_the_proposers_part_comes_back_when_the_offer_ends_without_a_purchase(
+def test_nothing_changes_hands_when_the_offer_ends_without_a_purchase(
     ending: RespondToEvent | WithdrawEvent | LeaveGame,
 ) -> None:
     world = propose()
@@ -104,7 +104,7 @@ def test_the_proposers_part_comes_back_when_the_offer_ends_without_a_purchase(
     assert (closed.events.pending, closed.ledger.transfers) == ((), ())
 
 
-def test_the_proposers_part_comes_back_when_the_game_ends_first() -> None:
+def test_nothing_changes_hands_when_the_game_ends_first() -> None:
     world = propose()
 
     ended = end_game(world)
@@ -209,7 +209,7 @@ def test_the_limit_on_waiting_joint_purchases_is_per_partner() -> None:
     assert len(another.events.pending) == MAX_PENDING_PER_PAIR + 1
 
 
-def test_the_proposers_part_comes_back_when_the_partner_leaves() -> None:
+def test_nothing_changes_hands_when_the_partner_leaves() -> None:
     world = propose()
 
     closed = perform(world, LeaveGame("b"))
@@ -250,3 +250,55 @@ def test_both_holders_of_a_jointly_bought_parcel_may_build_on_it() -> None:
 
     assert [job.owner_id for job in by_partner.compute.jobs] == ["b"]
     assert [job.owner_id for job in by_buyer.compute.jobs] == ["a"]
+
+
+def test_a_proposer_who_spent_their_coins_meanwhile_makes_accepting_fail_but_it_stays_pending() -> (
+    None
+):
+    world = propose()
+    broke = replace(
+        world,
+        residents=tuple(replace(r, coins=0) if r.id == "a" else r for r in world.residents),
+    )
+
+    with pytest.raises(ActionRejected) as rejected:
+        perform(broke, RespondToEvent("b", 1, True))
+
+    assert rejected.value.code == "not_enough_coins"
+    assert "'a'" in rejected.value.message
+    assert (broke.parcels, len(broke.events.pending)) == ((), 1)
+
+
+def test_an_unanswered_offer_lapses_and_can_no_longer_be_accepted() -> None:
+    world = propose()
+    lapses_at = next_due(world)
+
+    before = settle_due(replace(world, time=JOINT_PURCHASE_SECONDS - 0.1))
+    after = settle_due(replace(world, time=JOINT_PURCHASE_SECONDS))
+    with pytest.raises(ActionRejected) as late:
+        perform(after, RespondToEvent("b", 1, True))
+
+    assert lapses_at == JOINT_PURCHASE_SECONDS
+    assert len(before.events.pending) == 1
+    assert after.events.pending == ()
+    assert late.value.code == "unknown_event"
+    assert coins(after, "a", "b") == (5_000, 5_000)
+
+
+def test_an_offer_accepted_just_before_it_lapses_still_buys_the_parcel() -> None:
+    world = propose()
+
+    late = settle_due(replace(world, time=JOINT_PURCHASE_SECONDS - 0.1))
+    bought = perform(late, RespondToEvent("b", 1, True))
+
+    assert bought.parcels[0].owner_id == "a"
+
+
+def test_an_offer_sent_later_in_the_game_lapses_that_long_after_it_was_sent() -> None:
+    world = propose(replace(WORLD, time=100.0))
+
+    still = settle_due(replace(world, time=100.0 + JOINT_PURCHASE_SECONDS - 0.1))
+    gone = settle_due(replace(world, time=100.0 + JOINT_PURCHASE_SECONDS))
+
+    assert len(still.events.pending) == 1
+    assert gone.events.pending == ()

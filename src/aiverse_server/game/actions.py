@@ -54,7 +54,7 @@ from ..economy.exchange import (
     cancel_order,
     place_order,
 )
-from ..economy.joint_purchase import JointPurchase
+from ..economy.joint_purchase import JOINT_PURCHASE_SECONDS, JointPurchase
 from ..economy.land import LandError, LandErrorCode, buy_parcel, check_for_sale, plot_at
 from ..economy.portals import LinkProposal, PortalsError, PortalsErrorCode, link_portals, teleport
 from ..economy.shares import ShareOffer, SharesError, SharesErrorCode
@@ -251,9 +251,9 @@ class BuyParcel:
 class OfferJointPurchase:
     """Propose to `partner_id` buying the parcel the resident stands in together, see
     `joint_purchase.py`: the partner pays `partner_pays` coins of the price and gets
-    `partner_shares` of the parcel's shares, the resident pays the rest, which is set aside at
-    once, and keeps the other shares and the running of the parcel. The parcel is bought when
-    the partner accepts."""
+    `partner_shares` of the parcel's shares, the resident pays the rest and keeps the other
+    shares. Nothing is set aside: the parcel is bought, and both pay, when the partner accepts
+    within `JOINT_PURCHASE_SECONDS`."""
 
     resident_id: str
     partner_id: str
@@ -631,7 +631,13 @@ def _offer_build_commission(world: World, action: OfferBuildCommission) -> World
 def _offer_joint_purchase(world: World, action: OfferJointPurchase) -> World:
     here = next(r.position for r in world.residents if r.id == action.resident_id)
     square = plot_at(world, here)
-    payload = JointPurchase(square.col, square.row, action.partner_pays, action.partner_shares)
+    payload = JointPurchase(
+        square.col,
+        square.row,
+        action.partner_pays,
+        action.partner_shares,
+        world.time + JOINT_PURCHASE_SECONDS,
+    )
     try:
         check_for_sale(world, square)
         return send_event(world, action.resident_id, action.partner_id, payload)[0]
