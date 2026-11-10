@@ -11,8 +11,10 @@ from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy.ads import (
     CONTENT_ITEM,
     CONTENT_LIFETIME,
+    GAME_HALF_LIFE,
     GAME_ITEM,
     GAME_LIFETIME,
+    appeal,
 )
 from aiverse_server.economy.ads import (
     shown as shown_pieces,
@@ -187,15 +189,32 @@ def test_a_workspace_and_a_bare_parcel_show_nothing() -> None:
     assert on_bare.value.code == "no_content_facility"
 
 
-def test_a_game_hall_holds_no_more_than_an_ad_slot_does() -> None:
+def test_a_full_game_hall_drops_its_oldest_game_to_take_a_new_one() -> None:
     world = stocked(game=AD_SLOT_CAPACITY + 1)
-    for _ in range(AD_SLOT_CAPACITY):
-        world = perform(world, PlaceContent("a", "L2-2"))
+    for time in range(AD_SLOT_CAPACITY):
+        world = perform(at(world, float(time)), PlaceContent("a", "L2-2"))
 
-    with pytest.raises(ActionRejected) as full:
-        perform(world, PlaceContent("a", "L2-2"))
+    replaced = perform(at(world, 100.0), PlaceContent("a", "L2-2"))
 
-    assert full.value.code == "slot_full"
+    hall = next(p.facility for p in replaced.parcels if p.id == "L2-2")
+    assert hall is not None
+    assert hall.contents == tuple(GAME_LIFETIME + time for time in (1.0, 2.0, 3.0, 4.0, 100.0))
+
+
+def test_a_game_draws_half_as_much_for_every_half_life_it_has_been_in_the_hall() -> None:
+    hall = Facility("game_hall", 0.0, (GAME_LIFETIME + 100.0,))
+
+    fresh = appeal(hall, 100.0)
+    aged = appeal(hall, 100.0 + GAME_HALF_LIFE)
+    old = appeal(hall, 100.0 + 2 * GAME_HALF_LIFE)
+
+    assert (fresh, aged, old) == (1.0, 0.5, 0.25)
+
+
+def test_an_ad_is_worth_one_piece_until_it_goes_stale() -> None:
+    slot = Facility("ad", 0.0, (200.0,))
+
+    assert (appeal(slot, 199.0), appeal(slot, 200.0)) == (1.0, 0.0)
 
 
 def test_a_game_hall_earns_nothing_and_never_wakes_the_clock() -> None:

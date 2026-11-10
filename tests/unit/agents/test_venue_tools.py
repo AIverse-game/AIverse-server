@@ -9,7 +9,7 @@ from aiverse_server.agents.tool_selection import (
     selected_tool_names,
 )
 from aiverse_server.agents.tools import TOOLS, ResidentTools
-from aiverse_server.core.land import Facility, Parcel
+from aiverse_server.core.land import AD_SLOT_CAPACITY, Facility, Parcel
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
 from aiverse_server.economy.ads import CONTENT_ITEM, GAME_ITEM, GAME_LIFETIME
 from aiverse_server.economy.compute import (
@@ -159,6 +159,28 @@ def test_the_observation_shows_the_hall_its_games_and_what_venues_and_games_cost
         ("subscription", 9.0),
     ]
     assert '"game":[{"source":"self"' in to_json(seen)
+
+
+def test_placing_a_game_is_offered_for_a_full_hall_but_placing_an_ad_is_not_for_a_full_slot() -> (
+    None
+):
+    full_hall = Facility("game_hall", 0.0, (GAME_LIFETIME,) * AD_SLOT_CAPACITY)
+    full_slot = Facility("ad", 0.0, (1_000.0,) * AD_SLOT_CAPACITY)
+    hall_world = replace(WORLD, parcels=(Parcel(7, 7, "a", full_hall),))
+    slot_world = replace(
+        WORLD,
+        residents=(
+            replace(WORLD.residents[0], inventory=Inventory(((CONTENT_ITEM, 1),))),
+            WORLD.residents[1],
+        ),
+        parcels=(Parcel(7, 7, "a", full_slot),),
+    )
+
+    hall = selected_tool_names(look(make_game(hall_world)[0], "a"))
+    slot = selected_tool_names(look(make_game(slot_world)[0], "a"))
+
+    assert "place_content" in hall
+    assert "place_content" not in slot
 
 
 def test_building_a_venue_is_offered_with_a_bare_parcel_and_placing_with_a_matching_item() -> None:

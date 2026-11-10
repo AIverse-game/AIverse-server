@@ -18,14 +18,15 @@ their way to a venue, see `_count_views`.
 Where to next, `_head_for`: among the venues it may go to, it picks by a multinomial logit,
 so every venue has a chance but better ones more. The utility is `APPEAL` times the log of one
 plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`, a mall as
-`MALL_PIECES`), less
-`WALK_COST` per second of walking and `CROWD_COST` per `CROWD_CAPACITY` visitors already going
-or standing there, plus noise. The walk is the shorter of walking on foot and going through a
-network of portals, see `portals.Router`, so the lines change which ad slots are passed, and
-whether a visitor takes one is its own choice. Visitors use the lines for nothing. Where the map
-has islands the walk keeps to them and crosses from one to the next only by the bridges, see
-`islands.py`; residents are not held to that. With no venue to go to the visitor roams to a
-random spot nearby, on its own island, and looks again.
+`MALL_PIECES`, a game as less the longer it has been in its hall, see `ads.appeal`), less
+`WALK_COST` per second of walking, `CROWD_COST` per `CROWD_CAPACITY` visitors already going
+or standing there and `SAME_KIND_COST` for a venue of the kind it has just left, plus noise.
+The walk is the shorter of walking on foot and going through a network of portals, see
+`portals.Router`, so the lines change which ad slots are passed, and whether a visitor takes
+one is its own choice. Visitors use the lines for nothing. Where the map has islands the walk
+keeps to them and crosses from one to the next only by the bridges, see `islands.py`;
+residents are not held to that. With no venue to go to the visitor roams to a random spot
+nearby, on its own island, and looks again.
 
 Choices are random but the dice are not stateful: each is a hash of the crowd's seed, the
 visitor, its trip, its step and what is being chosen, so the same game plays out the same way.
@@ -49,7 +50,7 @@ from dataclasses import dataclass, replace
 from ..core.visitors import Crowd, Goal, Visitor
 from ..core.world import Position, World
 from .admissions import FEES, admit
-from .ads import shown
+from .ads import appeal
 from .islands import on_island
 from .land import facility_centre, town_centre
 from .portals import Router
@@ -121,6 +122,10 @@ WALK_COST = 0.05
 CROWD_COST = 2.0
 """Utility lost when as many visitors as `CROWD_CAPACITY` are already going to or standing at a
 slot."""
+
+SAME_KIND_COST = 1.5
+"""Utility lost for going on to a venue of the same kind as the one just left: visitors like some
+variety, so a workspace next to a game hall draws more than a second game hall."""
 
 CROWD_CAPACITY = 8
 """Visitors a slot can take before it crowds; more make it less attractive, in proportion."""
@@ -395,12 +400,14 @@ def _pick(
     }
     best: float | None = None
     chosen: tuple[str, Position] | None = None
+    left_kind = town.kinds.get(avoid) if avoid is not None else None
     for parcel_id, (centre, pieces) in sorted(options.items()):
         seconds = router.to(centre).distance / VISITOR_SPEED
         utility = (
             APPEAL * math.log(1 + pieces)
             - WALK_COST * seconds
             - CROWD_COST * heading[parcel_id] / CROWD_CAPACITY
+            - (SAME_KIND_COST if town.kinds[parcel_id] == left_kind else 0.0)
             + _gumbel(_dice(seed, visitor, f"pick:{parcel_id}"))
         )
         if best is None or utility > best:
@@ -474,7 +481,7 @@ def _town(world: World) -> _Town:
         elif facility.kind == "mall":
             pieces = MALL_PIECES
         elif facility.kind in ("ad", "game_hall"):
-            pieces = shown(facility, world.time)
+            pieces = appeal(facility, world.time)
         else:
             continue
         if pieces:

@@ -559,7 +559,7 @@ TOOLS = (
         f"{job_seconds(VENUE_WORKLOAD, 'on_demand'):g} s on a "
         f"node hired for it ({on_demand_cost(VENUE_WORKLOAD)} coins), or on one of your "
         "subscribed generative nodes. A game hall shows games (make_content with content "
-        f"game, then place_content), up to {AD_SLOT_CAPACITY} games that never go stale. "
+        f"game, then place_content), up to {AD_SLOT_CAPACITY} games that draw less as they age. "
         "Visitors pay a fee at the door of each, and go to a game hall only while it shows games; "
         "the fees are paid out to the holders at paydays. A mall takes 1 x 2 parcels "
         f"(2 x 1 east_west), {MALL_WORKLOAD:g} workload, no content, fewer visitors, fee "
@@ -601,7 +601,8 @@ TOOLS = (
         f"Put one piece of {CONTENT_ITEM!r} you carry into the ad slot on one of your parcels, "
         f"or of {GAME_ITEM!r} into a game hall, from anywhere. A facility shows up to "
         f"{AD_SLOT_CAPACITY} pieces; an ad is shown for {CONTENT_LIFETIME:g} s from now and then "
-        "goes stale, while a game stays in a game hall and never goes stale. "
+        "goes stale, while a game stays in a game hall but draws fewer visitors the longer it has "
+        "been there, and a full hall drops its oldest game for a new one. "
         f"Every {PAY_PERIOD:g} s the sponsors pay an ad slot for the people who passed "
         "it while it showed content; a game hall earns from the fees visitors pay at its door, "
         "and draws them only while it shows games.",

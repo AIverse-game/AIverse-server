@@ -10,7 +10,7 @@ from aiverse_server.core.land import Facility, Link, Parcel
 from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy import visitors
-from aiverse_server.economy.ads import CONTENT_LIFETIME
+from aiverse_server.economy.ads import CONTENT_LIFETIME, GAME_LIFETIME
 from aiverse_server.economy.visitors import (
     DWELL,
     MAX_STOPS,
@@ -48,8 +48,8 @@ def slot(col: int, row: int, pieces: int = 1) -> Parcel:
 
 
 def hall(col: int, row: int, games: int = 1) -> Parcel:
-    """A game hall showing `games` games that stay fresh for a long while."""
-    return Parcel(col, row, "a", Facility("game_hall", 0.0, (CONTENT_LIFETIME * 10,) * games))
+    """A game hall showing `games` games, all put in at time 0."""
+    return Parcel(col, row, "a", Facility("game_hall", 0.0, (GAME_LIFETIME,) * games))
 
 
 def workspace(col: int, row: int) -> Parcel:
@@ -144,6 +144,38 @@ def test_a_visitor_does_not_go_straight_back_to_the_venue_it_has_just_left() -> 
         picks.append(the_visitor(at(world, 1.0)).stop)
 
     assert picks == ["L8-7"] * 30
+
+
+def test_a_visitor_goes_on_to_another_kind_of_venue_rather_than_one_like_the_one_it_left() -> None:
+    picks = []
+    for seed in range(30):
+        leaving = visitor(
+            phase="staying",
+            until=1.0,
+            at=Position(85, 55),
+            target=Position(85, 55),
+            goal="place",
+            stop="L8-5",
+            stops_left=2,
+        )
+        world = world_of(
+            hall(8, 5), hall(8, 6), workspace(9, 5), crowd=crowd_of(leaving, seed=seed)
+        )
+        picks.append(the_visitor(at(world, 1.0)).stop)
+
+    assert picks.count("L9-5") > picks.count("L8-6")
+
+
+def test_a_game_that_has_been_in_the_hall_longer_draws_fewer_visitors() -> None:
+    def picks_of_the_older_hall(placed_at: float) -> int:
+        older = Parcel(5, 5, "a", Facility("game_hall", 0.0, (GAME_LIFETIME + placed_at,)))
+        picks = 0
+        for seed in range(60):
+            world = world_of(older, hall(4, 4), crowd=crowd_of(visitor(), seed=seed))
+            picks += the_visitor(at(replace(world, time=5.0), 5.0)).stop == "L5-5"
+        return picks
+
+    assert picks_of_the_older_hall(-3_000.0) < picks_of_the_older_hall(0.0)
 
 
 def test_a_visitor_who_has_seen_enough_walks_out_and_stays_away_before_coming_again() -> None:

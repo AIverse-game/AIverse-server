@@ -10,13 +10,13 @@ from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy import visitors
 from aiverse_server.economy.admissions import FEES
-from aiverse_server.economy.ads import CONTENT_LIFETIME
+from aiverse_server.economy.ads import CONTENT_LIFETIME, GAME_LIFETIME
 from aiverse_server.economy.visitors import DWELL, VISITOR_SPEED, new_crowd, visitor_weight
 from aiverse_server.game.clock import settle_due
 
 ENTRANCE = Position(50, 50)
 WORKSPACE = Facility("workspace", 0.0)
-HALL = Facility("game_hall", 0.0, (CONTENT_LIFETIME * 10,) * 2)
+HALL = Facility("game_hall", 0.0, (GAME_LIFETIME,) * 2)
 
 
 @pytest.fixture(autouse=True)

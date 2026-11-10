@@ -31,7 +31,7 @@ from ..core.land import (
 from ..core.ledger import SYSTEM
 from ..core.orders import order_coins
 from ..core.world import Contract, ContractEnd, Position, World
-from ..economy.ads import CONTENT_LIFETIME
+from ..economy.ads import CONTENT_LIFETIME, ITEM_FOR, appeal
 from ..economy.commissions import BuildCommission, commission_coins
 from ..economy.compute import (
     AD_WORKLOAD,
@@ -244,6 +244,11 @@ class MyParcelView:
     """The ways a mall could be started with this parcel at its north-west corner now: north_south
     takes it and the parcel south of it, east_west it and the parcel east of it, in the same block,
     yours and untaken. Empty when it cannot."""
+    content_appeal: float = 0.0
+    """What the content its ad slot or game hall shows is worth to visitors now, in pieces: an ad
+    counts one; a game counts less the longer it has been in the hall, halving every
+    `GAME_HALF_LIFE` seconds. A hall with old games draws less than its game count says; a fresh
+    game replaces the oldest when the hall is full."""
 
 
 @dataclass(frozen=True)
@@ -440,7 +445,8 @@ class LandView:
     """Pieces of content an ad slot shows at once."""
     ad_content_lasts: float
     """Seconds a piece of ad content is shown for once put in an ad slot. Games in a game hall
-    never go stale, so this does not apply to them."""
+    never go stale, but draw fewer visitors the longer they have been there, see
+    `MyParcelView.content_appeal`."""
     pay_period: float
     """Seconds between paydays, which fall at multiples of it."""
     sponsors: tuple[SponsorView, ...]
@@ -868,6 +874,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
                 if venue_room(world, parcel, taken, "mall", runs, resident_id)
                 and promised_builder(world, square.id, "mall", runs) is None
             ),
+            _appeal(world, facilities.get(square.id)),
         )
 
     return LandView(
@@ -924,6 +931,13 @@ def _sponsor_views(world: World) -> tuple[SponsorView, ...]:
         )
         for sponsor in book.sponsors
     )
+
+
+def _appeal(world: World, parcel: Parcel | None) -> float:
+    """What the content shown on `parcel` is worth to visitors now, in pieces, to a tenth."""
+    if parcel is None or parcel.facility is None or parcel.facility.kind not in ITEM_FOR:
+        return 0.0
+    return round(appeal(parcel.facility, world.time), 1)
 
 
 def _goes_stale_in(world: World, parcel: Parcel | None) -> tuple[float, ...]:

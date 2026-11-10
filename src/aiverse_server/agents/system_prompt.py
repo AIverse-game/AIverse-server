@@ -7,7 +7,7 @@ the observation carries the current state and prices.
 from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
 from ..economy.admissions import FEES
-from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
+from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_HALF_LIFE, GAME_ITEM
 from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -179,8 +179,10 @@ and {FEES["game_hall"]} for a game hall, per person; the fees are paid to the ho
 with the sponsors' pay. {ROUTE_SHARE:.0%} of the trips are a working route, a workspace and then a
 game hall showing games, and the others pick any venue. A workspace needs no content. A game hall
 draws nobody until it shows games (make_content content=game, {GAME_WORKLOAD:g} workload, then
-place_content); a game stays in the hall and never goes stale, but the hall holds only
-{AD_SLOT_CAPACITY} games at once, so once it is full no more can go in. A game
+place_content); a game stays in the hall but draws half as many visitors for every
+{GAME_HALF_LIFE:g}s it has been there, and the hall holds {AD_SLOT_CAPACITY} games at once: a
+new game in a full hall pushes out the oldest, so fresh games keep a hall busy. Visitors also
+like variety: after a venue they go on less often to one of the same kind. A game
 is its own item, {GAME_ITEM!r}; an ad slot cannot show it.
 - A mall is a venue too (build_venue kind=mall): 1 x 2 parcels, one in the north-west corner and
 the one south of it, in one block, and cheaper at {MALL_WORKLOAD:g} workload ({mall_own_s:g}s on

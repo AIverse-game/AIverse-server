@@ -101,7 +101,11 @@ def selected_tool_names(observation: Observation) -> set[str]:
     if any(
         parcel.facility in ITEM_FOR
         and me.items.get(ITEM_FOR[parcel.facility])
-        and len(parcel.content_goes_stale_in) < observation.land.slot_capacity
+        # A full game hall takes a new game by dropping its oldest; a full ad slot takes none.
+        and (
+            parcel.facility == "game_hall"
+            or len(parcel.content_goes_stale_in) < observation.land.slot_capacity
+        )
         for parcel in observation.land.mine
     ):
         names.add("place_content")

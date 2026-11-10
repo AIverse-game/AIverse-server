@@ -8,7 +8,7 @@ from aiverse_server.core.ledger import SYSTEM
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy.land import grid_size, plot, plot_at, plots
 from aiverse_server.game.actions import ActionRejected, BuyParcel, LeaveGame, perform
-from aiverse_server.game.layout import create_default_world
+from aiverse_server.game.layout import STARTING_COINS, create_default_world
 
 
 def resident(resident_id: str, x: float, y: float, coins: int = 5_000) -> Resident:
@@ -77,3 +77,11 @@ def test_the_default_map_is_a_15_by_15_grid_with_nothing_owned() -> None:
 
     assert len(squares) == 225
     assert all(square.owner_id is None for square in squares)
+
+
+def test_the_dearest_block_is_within_the_starting_coins_but_still_most_of_them() -> None:
+    prices = [square.price for square in plots(create_default_world()) if not square.lobby]
+
+    assert max(prices) < STARTING_COINS
+    assert max(prices) > STARTING_COINS * 0.75
+    assert min(prices) < STARTING_COINS * 0.4

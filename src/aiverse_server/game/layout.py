@@ -18,7 +18,7 @@ VENUE_CELLS = 2
 BLOCKS = 5
 """Blocks along each side; the middle one is the spawn lobby."""
 
-BLOCK_PRICE_FACTOR = 5
+BLOCK_PRICE_FACTOR = 4
 """A block costs this many times what a single parcel at its place on the map would."""
 
 MAP_SIZE = BLOCKS * BLOCK_CELLS * PARCEL_SIZE

@@ -5,8 +5,10 @@ any other. Each facility that shows content takes its own kind: `CONTENT_ITEM` f
 `GAME_ITEM` for game halls, see `ITEM_FOR`. A resident puts a piece into the matching
 facility on a parcel they own or hold shares in, `place_content`, where it is shown for
 `CONTENT_LIFETIME` game seconds and then goes stale; a game in a game hall stays for
-`GAME_LIFETIME`, which is effectively forever. The clock starts when it is put in, so a piece in
-hand never spoils. A facility shows at most `AD_SLOT_CAPACITY` pieces at once.
+`GAME_LIFETIME`, which is effectively forever, but draws fewer visitors the longer it has been
+there, see `appeal`. The clock starts when it is put in, so a piece in hand never spoils. A
+facility shows at most `AD_SLOT_CAPACITY` pieces at once; a full game hall drops its oldest game
+to take a new one, a full ad slot refuses.
 
 A game hall shows games and a workspace shows nothing, see `compute.py` for how they are built;
 both earn from the fees visitors pay at the door, see `admissions.py`, and a game hall draws
@@ -40,6 +42,11 @@ GAME_LIFETIME = 1e9
 """Game seconds a game is shown for once it is put in a game hall: far longer than any game
 lasts, so a game once placed never goes stale. Finite, since facility times must be finite."""
 
+GAME_HALF_LIFE = 600.0
+"""Game seconds in which a game in a game hall loses half of its pull on visitors: a game counts
+as `0.5 ** (age / GAME_HALF_LIFE)` pieces, so the longer it has been there the less it draws, and
+a hall wants fresh games. See `appeal`."""
+
 LIFETIME_FOR: dict[FacilityKind, float] = {"ad": CONTENT_LIFETIME, "game_hall": GAME_LIFETIME}
 """How long each facility that shows content keeps a piece of it."""
 
@@ -58,6 +65,22 @@ def shown(facility: Facility, time: float) -> int:
     return sum(stale_at > time for stale_at in facility.contents)
 
 
+def appeal(facility: Facility, time: float) -> float:
+    """What the content in `facility` is worth to visitors at `time`, in pieces: an ad counts as
+    one for as long as it is fresh; a game in a game hall as `GAME_HALF_LIFE` says, by how long it
+    has been there. The pieces are told apart by the time they were put in, which is when they
+    go stale less `GAME_LIFETIME`."""
+    if facility.kind != "game_hall":
+        return float(shown(facility, time))
+    return float(
+        sum(
+            0.5 ** ((time - (stale_at - GAME_LIFETIME)) / GAME_HALF_LIFE)
+            for stale_at in facility.contents
+            if stale_at > time
+        )
+    )
+
+
 def place_content(world: World, resident_id: str, parcel_id: str) -> World:
     """Put one piece of the resident's content into the ad slot or game hall on a parcel
     `parcel_id` they own or hold shares in, from anywhere: the kind of content the facility
@@ -73,6 +96,9 @@ def place_content(world: World, resident_id: str, parcel_id: str) -> World:
             "no_content_facility", f"parcel {parcel_id} has no ad slot or game hall to show it"
         )
     fresh = tuple(stale_at for stale_at in facility.contents if stale_at > world.time)
+    if len(fresh) >= AD_SLOT_CAPACITY and facility.kind == "game_hall":
+        # The oldest game draws the least, so a full hall makes room by dropping it.
+        fresh = fresh[1:]
     if len(fresh) >= AD_SLOT_CAPACITY:
         raise AdsError(
             "slot_full", f"the {facility.kind} on {parcel_id} already shows {len(fresh)}"

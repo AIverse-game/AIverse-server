@@ -3,7 +3,7 @@ from aiverse_server.agents.tools import TOOLS
 from aiverse_server.core.land import AD_SLOT_CAPACITY
 from aiverse_server.core.world import NOTE_LENGTH_LIMIT
 from aiverse_server.economy.admissions import FEES
-from aiverse_server.economy.ads import CONTENT_LIFETIME, GAME_ITEM
+from aiverse_server.economy.ads import CONTENT_LIFETIME, GAME_HALF_LIFE, GAME_ITEM
 from aiverse_server.economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
@@ -76,7 +76,8 @@ def test_the_prompt_explains_venues_with_the_game_constants() -> None:
     assert f"{ROUTE_SHARE:.0%} of the trips are a working route" in prompt
     assert f"make_content content=game, {GAME_WORKLOAD:g} workload" in prompt
     assert "A game hall draws nobody until it shows games" in prompt
-    assert "a game stays in the hall and never goes stale" in prompt
+    assert f"draws half as many visitors for every {GAME_HALF_LIFE:g}s" in prompt
+    assert "a new game in a full hall pushes out the oldest" in prompt
 
 
 def test_the_prompt_says_how_close_and_how_long_a_passer_by_must_be_to_count() -> None:
