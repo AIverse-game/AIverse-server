@@ -11,14 +11,20 @@ from typing import Any
 
 from ..core.land import ORIENTATIONS
 from ..economy.ads import ITEM_FOR
-from ..economy.compute import MAX_NODES, NODE_SECONDS, promised_builder, subscription_cost
+from ..economy.compute import (
+    MAX_NODES,
+    NODE_SECONDS,
+    garden_room,
+    promised_builder,
+    subscription_cost,
+)
 from ..economy.land import claimed, for_sale_at, plot_at, venue_room
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "land": ("buy_parcel", "joint_buy_parcel"),
-    "compute": ("buy_node", "build_ad", "build_venue", "commission_build"),
+    "compute": ("buy_node", "build_ad", "build_garden", "build_venue", "commission_build"),
     "content": ("make_content", "place_content"),
     "transport": ("build_portal", "link_portals", "teleport"),
     "exchange": ("place_order", "cancel_order"),
@@ -81,6 +87,8 @@ def selected_tool_names(observation: Observation) -> set[str]:
         permit.builder_id == me.id and permit.kind == "ad" for permit in observation.build_permits
     ):
         names.add("build_ad")
+    if any(parcel.garden_room for parcel in observation.land.mine):
+        names.add("build_garden")
     if any(
         (parcel.venue_room or parcel.mall_orientations) and parcel.promised_to is None
         for parcel in observation.land.mine
@@ -172,6 +180,8 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         (parcel.col, parcel.row) not in taken and parcel.id not in promised for parcel in my_parcels
     ) or any(permit.kind == "ad" for permit in permits):
         names.add("build_ad")
+    if any(parcel.owner_id == me.id and garden_room(world, parcel, taken) for parcel in my_parcels):
+        names.add("build_garden")
     if any(
         (
             venue_room(world, parcel, taken, resident_id=me.id)

@@ -109,7 +109,7 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 31。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 32。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
@@ -146,7 +146,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 居民的 `agent` 在不升协议版本的前提下多了两个可选字段（旧页面忽略）：`thinking: true` 表示 Agent 正在等大脑回答（`runner.py` 在大脑一轮的前后设置），`cue: {kind, seq}` 是它最近一次演出（`talk` 或 `happy`，`seq` 在整局内递增，页面见到新的 `seq` 才播放）；只有经 `Game.act` 做的原语和到点建成的设施产生提示，页面手动操作不产生。
 
-`world` 在协议 31 还包括 `map.parcelSize`、`map.blockCells`、`map.venueCells`（游戏厅和工作空间占的方块边长，单位是地块，默认世界为 2，即 20 × 20） 与按行排列的 `map.parcelPrices`、公开的 `parcels`（产权人、份额、设施种类、有效内容数、每份内容的 `expiresIn` 剩余秒数，以及上一个付给它钱的付款日里它收到的 `income`：`at` 是那个付款日的游戏时间，`coins` 是赞助商和入场费合计的整数金币，没有付过时省略；页面靠 `at` 变大判断是新的一笔）、`jobs`（进行中的工作及剩余秒数）；只有 `view_as` 选择居民后才有 `content`（`viewerId`、该居民携带的广告与游戏数量）。设施可为 `ad`、`portal`、`game_hall`、`workspace`、`mall`；游戏厅和工作空间占一个 `venueCells` × `venueCells` 的方块，商场占两块（西北角在设施所在的地块，`orientation` 为 `north_south` 时向南一块、`east_west` 时向东一块，设施和进行中的工作的视图都带这个字段），设施记在方块西北角的那块地上，方块里其余的地块没有设施，别的设施也不能建在上面（页面按 `venueCells` 自己推算）；建设来源为 `self` 或 `on_demand`，订阅节点尚未进入页面操作。
+`world` 在协议 32 还包括 `map.parcelSize`、`map.blockCells`、`map.venueCells`（游戏厅和工作空间占的方块边长，单位是地块，默认世界为 2，即 20 × 20） 与按行排列的 `map.parcelPrices`、公开的 `parcels`（产权人、份额、设施种类、有效内容数、每份内容的 `expiresIn` 剩余秒数，以及上一个付给它钱的付款日里它收到的 `income`：`at` 是那个付款日的游戏时间，`coins` 是赞助商和入场费合计的整数金币，没有付过时省略；页面靠 `at` 变大判断是新的一笔）、`jobs`（进行中的工作及剩余秒数）；只有 `view_as` 选择居民后才有 `content`（`viewerId`、该居民携带的广告与游戏数量）。设施可为 `ad`、`portal`、`game_hall`、`workspace`、`mall`、`garden`（占一块地，与广告位同样的建设来源）；`game` 带 `ended`、`remainingSeconds` 和 `elapsedSeconds`（发出时的游戏时间，对局结束后不再增长，页面的花园季节与昼夜按它算）；游戏厅和工作空间占一个 `venueCells` × `venueCells` 的方块，商场占两块（西北角在设施所在的地块，`orientation` 为 `north_south` 时向南一块、`east_west` 时向东一块，设施和进行中的工作的视图都带这个字段），设施记在方块西北角的那块地上，方块里其余的地块没有设施，别的设施也不能建在上面（页面按 `venueCells` 自己推算）；建设来源为 `self` 或 `on_demand`，订阅节点尚未进入页面操作。
 
 `world` 的部分结构示意（省略 `parcelPrices`、`parcels`、`jobs` 等必填字段，不能直接作为完整协议消息复制使用）：
 
@@ -201,7 +201,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | 子包 | 内容 |
 | --- | --- |
 | `core/` | 世界模型与各玩法共用的机制：居民、坐标、物品栏与金币、事件队列、金币流水账、挂单簿模型、地块；只依赖 `core/` 内的模块 |
-| `economy/` | 经济：算力与节点、地块、脚本访客、赞助商、挂单交易所、交易报价、合约 |
+| `economy/` | 经济：算力与节点、地块、花园、脚本访客、赞助商、挂单交易所、交易报价、合约 |
 | `residents/` | 居民的行动与认知：行走、感知、记忆、对话、信息售卖 |
 | `game/` | 一局的规则与调度：操作原语、生命周期、到点结算、开局布局、经济报告 |
 | `server/` | 对外接口：FastAPI 应用与 WebSocket、协议 |
@@ -222,8 +222,9 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/core/events.py` | 事件队列：可扩展的事件种类（`EventPayload` 及其发送、同意、拒绝钩子），发送、答复、撤回与收件箱查询 |
 | `src/aiverse_server/core/orders.py` | 交易所的订单、成交与挂单簿模型，挂单预留的金币与物品 |
 | `src/aiverse_server/economy/exchange.py` | 挂单交易所：下单、价格优先与时间优先的连续撮合、撤单、到期，挂单簿深度、最近成交价与成交量 |
-| `src/aiverse_server/economy/compute.py` | 算力：速率与价格常量，买节点（生成式、渲染式）、开工建广告位、传送门、游戏厅、工作空间或做内容（广告或游戏）、完工、节点和许可到期、取消 |
+| `src/aiverse_server/economy/compute.py` | 算力：速率与价格常量，买节点（生成式、渲染式）、开工建广告位、传送门、花园、游戏厅、工作空间或做内容（广告或游戏）、完工、节点和许可到期、取消 |
 | `src/aiverse_server/economy/ads.py` | 广告位、游戏厅与内容：内容物品 `ad_content`（广告位）和 `game_content`（游戏厅）、放进对应的设施（广告展示 300 秒后过期；游戏不过期但吸引力每 600 秒减半，游戏厅最多 5 份，放满时新游戏顶掉最旧的一份；广告位放满则拒绝 `slot_full`）；收入见 `sponsors.py` 和 `admissions.py` |
+| `src/aiverse_server/economy/gardens.py` | 花园：一块地的小设施，建成时镇上一次性奖励地主 `GARDEN_REWARD`（渠道 `garden_reward`），在的时候同街区所有设施的外来收入（赞助商付的、入场费，不含居民之间的过路费）加成 `GARDEN_BONUS` 十分之一（镇上另付，渠道 `garden_bonus`，按份额分给持有人），一个街区至多一座（建成或在建），只有地主能建；也吸引少量访客（`visitors.py` 的 `GARDEN_PIECES`，入场费 4 金币） |
 | `src/aiverse_server/economy/payouts.py` | 设施上一个付款日收到的钱 `latest_payout`（赞助商与入场费两本账合计，带付款日时间 `at`），给协议里设施的 `income` 用 |
 | `src/aiverse_server/economy/shares.py` | 地块份额：按份额分账 `split_income`，份额报价事件 `ShareOffer`（持有人把份额转给别人，可收费，可免费），已承诺的份额不能再承诺 |
 | `src/aiverse_server/economy/commissions.py` | 在别人的地块上建：委托事件 `BuildCommission`（地主或建造者提议、对方同意，酬金由地主预留，同意后生成许可，建成时付给建造者），预留酬金的汇总 `commission_coins` |
@@ -232,7 +233,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/economy/portals.py` | 传送门与线路（[虚拟设施](../aiverse-client/docs/design/facilities.md)第 5 步）：线路提议事件 `LinkProposal`、`link_portals`、居民传送 `teleport`（过路费按份额分给两端的持有人）、有效距离 `effective_distance`（线路让偏远地块离中央更近，备用，流量暂不用）、数量与间距上限 |
 | `src/aiverse_server/economy/islands.py` | 岛与桥：每个街区是一座岛（每边缩进 `ISLAND_INSET` = 2，与客户端一致），相邻的岛在相对两侧的中点有一座桥；`walk_from` 给出访客从一点到另一点的最短步行（岛内直线，跨岛过桥，没有岛的地图一律直线）的距离和各段直线，`on_island` 把游荡的目标留在自己的岛上；居民不受限制 |
 | `src/aiverse_server/economy/visitors.py` | 脚本访客（[虚拟设施](../aiverse-client/docs/design/facilities.md)第 7 步）：200 个访客（都是游客）从地图中央入口进来，按带随机项的偏好（内容份数、走路时间、拥挤度）每趟去 2～4 个场馆（工作空间、展示着游戏的游戏厅）并在门口付入场费再离开，广告位不是目的地；每趟有 30% 走一条大致的工作路线（工作游客，除此之外和其他游客没有区别）：先去工作空间再去展示着游戏的游戏厅；入场费见 `admissions.py`；走传送门由自己选；路过展示着内容的广告位够 4 秒的算一次展示，累计到各地块 `Crowd.views`，由赞助商付钱；`Traffic` 统计此刻经过某处的人数；随机用种子加编号的哈希，不用有状态的随机数 |
-| `src/aiverse_server/economy/admissions.py` | 入场费（第 7 步第三部分）：工作空间 4、游戏厅 6 金币每人的价 `FEES`，`admit` 在门口收费，`pay_admissions` 在付款日整枚硬币地按份额付给持有人（零头留到下次，渠道 `visitors`），`next_admission_payday` |
+| `src/aiverse_server/economy/admissions.py` | 入场费（第 7 步第三部分）：每人的价 `FEES`（工作空间 8、游戏厅 12、商场 2、花园 4 金币），`admit` 在门口收费，`pay_admissions` 在付款日整枚硬币地按份额付给持有人（零头留到下次，渠道 `visitors`），`next_admission_payday` |
 | `src/aiverse_server/economy/sponsors.py` | 赞助商（第 7 步第二部分）：三个赞助商 `default_sponsors`，每 30 秒的付款日 `pay_sponsors`（出价高的先买、预算不够按同一比例缩水、按份额分给持有人，渠道 `sponsors`），预算充值与上限，付款日 `latest_payday`、下一个付款日 `next_payday` |
 | `src/aiverse_server/economy/trade.py` | 交易事件：购买报价 `PurchaseOffer` 与出售报价 `SaleOffer`，条款校验、预留与互换 |
 | `src/aiverse_server/economy/contracts.py` | 合约：提议事件 `ContractProposal`，签订时预留买方全部货款，交付 `deliver` 自动付款，供货方取消、到期、出局与结束时退回余款 |
@@ -304,7 +305,7 @@ uv run aiverse-server --agent r1=llm --agent r2=llm
 
 ## 经济报告
 
-世界里有一本金币流水账（`core/ledger.py`）：金币每次真实转手都记一条，包括游戏时间、付款方、收款方、金额、渠道，买物品时还记物品和数量。系统一方记为 `system`。渠道包括 `offer`（报价成交）、`contract_payment`、`contract_forfeit`（押金赔给买方）、`information`、`exchange`（交易所成交）、`land`（向镇上买地块）、`sponsors`（赞助商按展示付给广告位，按份额分给地块的持有人，每人一条，见 `economy/sponsors.py`）、`visitors`（走工作路线的游客付给工作空间和游戏厅的入场费，在付款日按份额分给持有人，见 `economy/admissions.py`）、`shares`（转让地块份额的价款，见 `economy/shares.py`）、`toll`（传送的过路费，付给两端地块的持有人，见 `economy/portals.py`）。预留和退回（报价、合约托管、挂单）不记。流水账最多保留 20000 条，超出时丢掉最早的并计数。
+世界里有一本金币流水账（`core/ledger.py`）：金币每次真实转手都记一条，包括游戏时间、付款方、收款方、金额、渠道，买物品时还记物品和数量。系统一方记为 `system`。渠道包括 `offer`（报价成交）、`contract_payment`、`contract_forfeit`（押金赔给买方）、`information`、`exchange`（交易所成交）、`land`（向镇上买地块）、`sponsors`（赞助商按展示付给广告位，按份额分给地块的持有人，每人一条，见 `economy/sponsors.py`）、`visitors`（走工作路线的游客付给工作空间和游戏厅的入场费，在付款日按份额分给持有人，见 `economy/admissions.py`）、`shares`（转让地块份额的价款，见 `economy/shares.py`）、`toll`（传送的过路费，付给两端地块的持有人，见 `economy/portals.py`）、`garden_reward`（花园建成时镇上付给地主的一次性奖励）、`garden_bonus`（同街区有花园时镇上在每笔赞助商收入和入场费之外多付的十分之一，按份额分给持有人，见 `economy/gardens.py`）。预留和退回（报价、合约托管、挂单）不记。流水账最多保留 20000 条，超出时丢掉最早的并计数。
 
 对局结束时，命令行入口在日志目录写 `summary.json`，并在控制台打印几行摘要（`game/economy_report.py`）。主要字段：
 

@@ -37,18 +37,21 @@ from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
     GAME_WORKLOAD,
+    GARDEN_WORKLOAD,
     MALL_WORKLOAD,
     MAX_NODES,
     NODE_SECONDS,
     PORTAL_WORKLOAD,
     SUBSCRIPTION_PRICE,
     VENUE_WORKLOAD,
+    garden_room,
     job_seconds,
     on_demand_cost,
     promised_builder,
 )
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, depth, last_price, volume_since
+from ..economy.gardens import block_has_garden
 from ..economy.joint_purchase import JointPurchase
 from ..economy.land import (
     PARCEL_SIZE,
@@ -244,6 +247,12 @@ class MyParcelView:
     """The ways a mall could be started with this parcel at its north-west corner now: north_south
     takes it and the parcel south of it, east_west it and the parcel east of it, in the same block,
     yours and untaken. Empty when it cannot."""
+    garden_room: bool = False
+    """Whether you could start a garden on this parcel now: yours, bare and untaken, and the
+    block has no garden, built or being built."""
+    garden_in_block: bool = False
+    """Whether a finished garden stands in this parcel's block, which adds a tenth to every
+    income of the block's facilities."""
     content_appeal: float = 0.0
     """What the content its ad slot or game hall shows is worth to visitors now, in pieces: an ad
     counts one; a game counts less the longer it has been in the hall, halving every
@@ -322,6 +331,8 @@ class ComputeView:
     """Time and coins for a game hall or a workspace on each source."""
     mall: tuple[AdOption, ...]
     """Time and coins for a mall on each source."""
+    garden: tuple[AdOption, ...]
+    """Time and coins for a garden on each source."""
     content: tuple[AdOption, ...]
     """Time and coins for a piece of ad content on each source."""
     game: tuple[AdOption, ...]
@@ -874,6 +885,8 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
                 if venue_room(world, parcel, taken, "mall", runs, resident_id)
                 and promised_builder(world, square.id, "mall", runs) is None
             ),
+            parcel.owner_id == resident_id and garden_room(world, parcel, taken),
+            block_has_garden(world, square.id),
             _appeal(world, facilities.get(square.id)),
         )
 
@@ -1000,6 +1013,7 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
         ),
         venue=_options(VENUE_WORKLOAD),
         mall=_options(MALL_WORKLOAD),
+        garden=_options(GARDEN_WORKLOAD),
         content=(
             AdOption("self", job_seconds(CONTENT_WORKLOAD, "self"), 0),
             AdOption(

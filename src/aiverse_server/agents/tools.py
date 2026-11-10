@@ -36,6 +36,7 @@ from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
     GAME_WORKLOAD,
+    GARDEN_WORKLOAD,
     MALL_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
@@ -51,6 +52,7 @@ from ..economy.compute import (
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import DEFAULT_LIFETIME, LIFETIME_RANGE, MAX_PRICE, MAX_QUANTITY
+from ..economy.gardens import GARDEN_REWARD
 from ..economy.joint_purchase import JOINT_PURCHASE_SECONDS
 from ..economy.portals import MAX_LINKS_PER_PORTAL, MAX_PORTALS, MIN_LINK_DISTANCE
 from ..economy.sponsors import PAY_PERIOD
@@ -58,6 +60,7 @@ from ..game.actions import (
     Action,
     ActionRejected,
     BuildAd,
+    BuildGarden,
     BuildPortal,
     BuildVenue,
     BuyNode,
@@ -150,8 +153,8 @@ class CommissionBuildArgs(_Args):
 class BuyNodeArgs(_Args):
     kind: Literal["generative", "render"] = Field(
         default="generative",
-        description="generative: builds facilities (build_ad, build_portal, build_venue); render: "
-        "makes content (make_content).",
+        description="generative: builds facilities (the build_ tools); render: makes content "
+        "(make_content).",
     )
     seconds: StrictInt = Field(
         description=f"How long the subscription lasts, {NODE_SECONDS[0]} to {NODE_SECONDS[1]} "
@@ -180,6 +183,21 @@ class BuildPortalArgs(_Args):
     parcel_id: str = Field(
         description="id of one of your parcels with no facility and no job, not taken up by a "
         "venue (land.mine[].covered_by is null)."
+    )
+    source: Literal["self", "on_demand", "subscription"] = Field(
+        description="self: your own compute, free; on_demand: a node hired for this job, "
+        "paid now; subscription: one of your generative nodes, named in node_id."
+    )
+    node_id: StrictInt | None = Field(
+        default=None,
+        description="id of one of your idle generative nodes in compute.my_nodes; only with "
+        "source subscription.",
+    )
+
+
+class BuildGardenArgs(_Args):
+    parcel_id: str = Field(
+        description="id of one of your parcels with land.mine[].garden_room true."
     )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
@@ -514,8 +532,9 @@ TOOLS = (
         "Subscribe to a compute node for a long stretch of time, from anywhere, even while "
         f"walking: {NODE_SECONDS[0]} to {NODE_SECONDS[1]} seconds, a standing workshop to keep "
         "busy, not something for one job. "
-        "A generative node builds facilities (build_ad, build_portal, build_venue), on your own "
-        "parcels or on others' that their owners let you build on (commission_build); a render "
+        "A generative node builds facilities (the build_ tools), "
+        "on your own parcels or on others' that their owners let you build on "
+        "(commission_build); a render "
         "node makes content (make_content). It is yours until it runs out and does one job at "
         "a time at "
         f"{NODE_RATE:g} workload per second, {NODE_RATE / SELF_RATE:g} times your own compute; "
@@ -547,6 +566,16 @@ TOOLS = (
         "nodes. A portal earns nothing itself: it matters through its lines (link_portals) "
         "and trips (teleport).",
         BuildPortalArgs,
+    ),
+    ToolSpec(
+        "build_garden",
+        "Start building a garden on one of your parcels; one per block. It takes "
+        f"{GARDEN_WORKLOAD:g} workload, like build_ad ({job_seconds(GARDEN_WORKLOAD, 'self'):g} s "
+        f"on your own compute, {on_demand_cost(GARDEN_WORKLOAD)} coins hired). "
+        f"Done, the town pays you {GARDEN_REWARD} coins once, and the sponsor pay and "
+        f"door fees of the block's facilities are a tenth higher. It draws a few visitors, fee "
+        f"{FEES['garden']}.",
+        BuildGardenArgs,
     ),
     ToolSpec(
         "build_venue",
@@ -775,6 +804,14 @@ class ResidentTools:
             arguments["node_id"] = node_id
         return self.call("build_portal", arguments)
 
+    def build_garden(
+        self, parcel_id: str, source: JobSource, node_id: int | None = None
+    ) -> ToolResult:
+        arguments: dict[str, Any] = {"parcel_id": parcel_id, "source": source}
+        if node_id is not None:
+            arguments["node_id"] = node_id
+        return self.call("build_garden", arguments)
+
     def build_venue(
         self,
         parcel_id: str,
@@ -910,6 +947,11 @@ class ResidentTools:
                 job = self.game.world.compute.jobs[-1]
                 seconds = job.ends_at - job.started_at
                 return f"job {job.id}: portal on {job.parcel_id} ready in {seconds:g} s"
+            case BuildGardenArgs():
+                act(BuildGarden(me, args.parcel_id, args.source, args.node_id))
+                job = self.game.world.compute.jobs[-1]
+                seconds = job.ends_at - job.started_at
+                return f"job {job.id}: garden on {job.parcel_id} ready in {seconds:g} s"
             case BuildVenueArgs():
                 act(
                     BuildVenue(

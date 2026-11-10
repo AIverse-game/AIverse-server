@@ -26,6 +26,7 @@ JobKind = Literal[
     "build_game_hall",
     "build_workspace",
     "build_mall",
+    "build_garden",
     "make_content",
     "make_game",
 ]
@@ -37,6 +38,7 @@ JOB_KINDS: tuple[JobKind, ...] = (
     "build_game_hall",
     "build_workspace",
     "build_mall",
+    "build_garden",
     "make_content",
     "make_game",
 )

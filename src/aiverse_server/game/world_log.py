@@ -41,6 +41,7 @@ from ..residents.information_offer import InformationOffer
 from .actions import (
     Action,
     BuildAd,
+    BuildGarden,
     BuildPortal,
     BuildVenue,
     BuyNode,
@@ -162,12 +163,14 @@ def _action_entry(before: World, action: Action, after: World) -> WorldLogEntry 
                 quantity=action.seconds,
                 coins=_spent(before, after, me),
             )
-        case BuildAd() | BuildPortal() | BuildVenue():
+        case BuildAd() | BuildPortal() | BuildGarden() | BuildVenue():
             facility = (
                 "ad"
                 if isinstance(action, BuildAd)
                 else "portal"
                 if isinstance(action, BuildPortal)
+                else "garden"
+                if isinstance(action, BuildGarden)
                 else action.kind
             )
             return _entry(

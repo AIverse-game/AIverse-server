@@ -37,6 +37,7 @@ from ..game.actions import (
     Action,
     ActionRejected,
     BuildAd,
+    BuildGarden,
     BuildPortal,
     BuildVenue,
     BuyParcel,
@@ -51,7 +52,7 @@ from ..game.cues import CueKind
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 31
+PROTOCOL_VERSION = 32
 
 ERROR_MAX_LENGTH = 200
 
@@ -109,7 +110,7 @@ class BuildFacilityInput(_Message):
     type: Literal["build_facility"]
     resident_id: str
     parcel_id: str
-    kind: Literal["ad", "portal", "game_hall", "workspace", "mall"]
+    kind: Literal["ad", "portal", "game_hall", "workspace", "mall", "garden"]
     source: Literal["self", "on_demand"]
     orientation: Literal["north_south", "east_west"] | None = None
     """Which way a mall runs; north to south when not said."""
@@ -417,7 +418,7 @@ class IncomeView(_Message):
 
 
 class FacilityView(_Message):
-    kind: Literal["ad", "portal", "game_hall", "workspace", "mall"]
+    kind: Literal["ad", "portal", "game_hall", "workspace", "mall", "garden"]
     contents: int
     expires_in: list[float]
     orientation: Literal["north_south", "east_west"] = "north_south"
@@ -456,6 +457,9 @@ class GameView(_Message):
     ended: bool
     remaining_seconds: float
     """Time left when this was sent; 0 once the game has ended."""
+    elapsed_seconds: float
+    """Game time when this was sent, in seconds since the game began; it stops when the game
+    ends. The page's seasons and daylight follow it."""
 
 
 class ResourceBalanceView(_Message):
@@ -800,6 +804,7 @@ def world_view(
         game=GameView(
             ended=world.ended,
             remaining_seconds=0.0 if world.ended else max(remaining_seconds, 0.0),
+            elapsed_seconds=world.time,
         ),
         exchange=_exchange_view(world, viewer),
         speech=[
@@ -983,6 +988,8 @@ def to_action(message: ActionMessage) -> Action:
                 return BuildAd(action.resident_id, action.parcel_id, action.source)
             if action.kind == "portal":
                 return BuildPortal(action.resident_id, action.parcel_id, action.source)
+            if action.kind == "garden":
+                return BuildGarden(action.resident_id, action.parcel_id, action.source)
             return BuildVenue(
                 action.resident_id,
                 action.parcel_id,

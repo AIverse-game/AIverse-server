@@ -114,6 +114,16 @@ def test_facility_state_and_manual_actions_use_authoritative_rules() -> None:
             "BuildVenue",
         ),
         (
+            {
+                "type": "build_facility",
+                "residentId": "a",
+                "parcelId": "L1-1",
+                "kind": "garden",
+                "source": "self",
+            },
+            "BuildGarden",
+        ),
+        (
             {"type": "make_content", "residentId": "a", "content": "game", "source": "self"},
             "MakeContent",
         ),
@@ -122,6 +132,15 @@ def test_facility_state_and_manual_actions_use_authoritative_rules() -> None:
         message = parse_client_message(json.dumps({"type": "action", "action": payload}))
         assert isinstance(message, protocol.ActionMessage)
         assert type(protocol.to_action(message)).__name__ == expected
+
+
+def test_the_game_shows_how_much_game_time_has_passed_and_a_garden_is_a_facility() -> None:
+    world = replace(WORLD, parcels=(Parcel(1, 1, "a", Facility("garden", 0.0)),), time=42.5)
+
+    view = world_view(world, 90).model_dump(by_alias=True, exclude_none=True)
+
+    assert view["game"] == {"ended": False, "remainingSeconds": 90.0, "elapsedSeconds": 42.5}
+    assert view["parcels"][0]["facility"]["kind"] == "garden"
 
 
 def test_a_facility_shows_what_it_was_paid_at_its_latest_payday() -> None:

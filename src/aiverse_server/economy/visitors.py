@@ -3,14 +3,14 @@ layout of the town and not fixed beforehand.
 
 There are `VISITOR_COUNT` of them, each standing for more and more people as the game goes on,
 `visitor_weight`. A visitor comes in through the entrance, the middle of the map, and makes a few
-stops at venues, a workspace, a mall or a game hall showing games, paying the system-set fee at
-each door, see `admissions.py`. On `ROUTE_SHARE` of the trips the visitor is a working tourist: it
-differs from the others in nothing but its route, a workspace and then a game hall showing games,
-in that order. A stop with nowhere to go on the route is skipped, and with none left the visitor
-leaves. Then the visitor walks back out and stays away a while before coming again. Nothing about
-it is stored beyond where it set off from and to, and when: where it is in between is worked out
-from that, `visitor_position`, and something happens only when a walk or a stay ends,
-`advance_crowd`, at the times `next_visit` gives.
+stops at venues, a workspace, a mall, a garden or a game hall showing games, paying the
+system-set fee at each door, see `admissions.py`. On `ROUTE_SHARE` of the trips the visitor is
+a working tourist: it differs from the others in nothing but its route, a workspace and then a
+game hall showing games, in that order. A stop with nowhere to go on the route is skipped, and
+with none left the visitor leaves. Then the visitor walks back out and stays away a while before
+coming again. Nothing about it is stored beyond where it set off from and to, and when: where it
+is in between is worked out from that, `visitor_position`, and something happens only when a walk
+or a stay ends, `advance_crowd`, at the times `next_visit` gives.
 
 Nobody goes to look at an ad slot. Ad slots earn only from the visitors who pass close by on
 their way to a venue, see `_count_views`.
@@ -18,7 +18,8 @@ their way to a venue, see `_count_views`.
 Where to next, `_head_for`: among the venues it may go to, it picks by a multinomial logit,
 so every venue has a chance but better ones more. The utility is `APPEAL` times the log of one
 plus the pieces of content shown (a workspace counts as `WORKSPACE_PIECES`, a mall as
-`MALL_PIECES`, a game as less the longer it has been in its hall, see `ads.appeal`), less
+`MALL_PIECES`, a garden as `GARDEN_PIECES`, a game as less the longer it has been in its hall,
+see `ads.appeal`), less
 `WALK_COST` per second of walking, `CROWD_COST` per `CROWD_CAPACITY` visitors already going
 or standing there and `SAME_KIND_COST` for a venue of the kind it has just left, plus noise.
 The walk is the shorter of walking on foot and going through a network of portals, see
@@ -76,10 +77,11 @@ DWELL: dict[str, tuple[float, float]] = {
     "workspace": (20.0, 40.0),
     "game_hall": (10.0, 20.0),
     "mall": (15.0, 30.0),
+    "garden": (20.0, 40.0),
 }
 """Game seconds a visitor stays at a venue of each kind, least and most."""
 
-VENUE_KINDS: tuple[str, ...] = ("workspace", "game_hall", "mall")
+VENUE_KINDS: tuple[str, ...] = ("workspace", "game_hall", "mall", "garden")
 """The venues a visitor may go to, see `_pick`."""
 
 ROUTE_SHARE = 0.3
@@ -94,6 +96,14 @@ MALL_PIECES = 0.4
 """A mall shows no content and draws visitors from the day it is built, but as an ad slot
 showing this many pieces would: less than a workspace, far less than a game hall with games.
 Visitors only look in, and are not on the working route."""
+
+GARDEN_PIECES = 0.6
+"""A garden shows no content either, and draws visitors as an ad slot showing this many pieces
+would: more than a mall, less than a workspace and far less than a game hall with games. It is a
+place to rest in for a while, so visitors stay longer than at a mall, and it is not on the working
+route. Its fee is 4 coins, half a workspace's: a garden that drew visitors from the other venues
+of its block for one coin each would cost its owner more than the tenth it adds, see
+`gardens.py`."""
 
 MIN_AWAY = 20.0
 MAX_AWAY = 60.0
@@ -232,7 +242,7 @@ class _Town:
     places: dict[str, dict[str, tuple[Position, float]]]
     """By kind of facility, then parcel: the centre and the pieces of content. Ad slots showing
     content are in it, to count the people passing them, and so are the venues visitors can go
-    to: every workspace and mall, and each game hall showing games."""
+    to: every workspace, mall and garden, and each game hall showing games."""
     kinds: Mapping[str, str]
     """The kind of facility on each parcel that has one."""
 
@@ -468,6 +478,7 @@ def _town(world: World) -> _Town:
         "workspace": {},
         "game_hall": {},
         "mall": {},
+        "garden": {},
     }
     kinds = {}
     for parcel in world.parcels:
@@ -480,6 +491,8 @@ def _town(world: World) -> _Town:
             pieces = WORKSPACE_PIECES
         elif facility.kind == "mall":
             pieces = MALL_PIECES
+        elif facility.kind == "garden":
+            pieces = GARDEN_PIECES
         elif facility.kind in ("ad", "game_hall"):
             pieces = appeal(facility, world.time)
         else:

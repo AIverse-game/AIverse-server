@@ -36,6 +36,7 @@ from ..economy.compute import (
     VenueKind,
     buy_node,
     start_build_ad,
+    start_build_garden,
     start_build_portal,
     start_build_venue,
     start_make_content,
@@ -313,6 +314,18 @@ class BuildPortal:
 
 
 @dataclass(frozen=True)
+class BuildGarden:
+    """Start building a garden on the resident's own bare parcel `parcel_id`, on the same
+    sources as `BuildAd`, see `compute.py` and `gardens.py`. The garden appears when the job
+    ends, and the town pays the parcel's owner a reward then."""
+
+    resident_id: str
+    parcel_id: str
+    source: JobSource
+    node_id: int | None = None
+
+
+@dataclass(frozen=True)
 class BuildVenue:
     """Start building a game hall, a workspace or a mall, `kind`, on the resident's own bare parcel
     `parcel_id`, on the same sources as `BuildAd`, see `compute.py`. It appears when the job
@@ -424,6 +437,7 @@ Action = (
     | BuyNode
     | BuildAd
     | BuildPortal
+    | BuildGarden
     | BuildVenue
     | LinkPortals
     | Teleport
@@ -446,6 +460,7 @@ def perform(world: World, action: Action) -> World:
             | BuyNode
             | BuildAd
             | BuildPortal
+            | BuildGarden
             | BuildVenue
             | LinkPortals
             | MakeContent
@@ -523,6 +538,13 @@ def _carry_out(world: World, action: Action) -> World:
         case BuildPortal():
             try:
                 return start_build_portal(
+                    world, action.resident_id, action.parcel_id, action.source, action.node_id
+                )
+            except (ComputeError, InventoryError) as error:
+                raise ActionRejected(error.code, error.message) from error
+        case BuildGarden():
+            try:
+                return start_build_garden(
                     world, action.resident_id, action.parcel_id, action.source, action.node_id
                 )
             except (ComputeError, InventoryError) as error:

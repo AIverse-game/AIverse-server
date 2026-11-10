@@ -97,7 +97,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                         "rank": 1,
                     },
                 ],
-                "game": {"ended": False, "remainingSeconds": GAME_DURATION},
+                "game": {"ended": False, "remainingSeconds": GAME_DURATION, "elapsedSeconds": 0},
                 "exchange": {
                     "books": [
                         {"item": "ad_content", "bids": [], "asks": []},
@@ -369,7 +369,11 @@ def test_remaining_time_counts_down(client: TestClient, clock: FakeClock) -> Non
         clock.now = 100
         world = greet(ws)
 
-    assert world["game"] == {"ended": False, "remainingSeconds": GAME_DURATION - 100}
+    assert world["game"] == {
+        "ended": False,
+        "remainingSeconds": GAME_DURATION - 100,
+        "elapsedSeconds": 100,
+    }
 
 
 def test_the_first_frame_after_the_deadline_ends_the_game_for_everyone(
@@ -389,7 +393,11 @@ def test_the_first_frame_after_the_deadline_ends_the_game_for_everyone(
     # The game ends before the frame is handled, so the move is refused.
     assert reply["code"] == "game_over"
     for world in ended:
-        assert world["game"] == {"ended": True, "remainingSeconds": 0}
+        assert world["game"] == {
+            "ended": True,
+            "remainingSeconds": 0,
+            "elapsedSeconds": GAME_DURATION,
+        }
         assert positions(world)["a"] == {"x": 0, "y": 50}
     assert latest["game"]["ended"] is True
 
@@ -401,7 +409,8 @@ def test_the_clock_ends_the_game_without_any_action() -> None:
             world = greet(ws)
             if not world["game"]["ended"]:
                 world = ws.receive_json()["world"]
-    assert world["game"] == {"ended": True, "remainingSeconds": 0}
+    assert world["game"]["ended"] is True
+    assert world["game"]["remainingSeconds"] == 0
 
 
 def resident_view(world: dict[str, Any], resident_id: str) -> dict[str, Any]:

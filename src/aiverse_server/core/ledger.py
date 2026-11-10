@@ -41,13 +41,17 @@ Channel = Literal[
     "shares",
     "toll",
     "commission",
+    "garden_reward",
+    "garden_bonus",
 ]
 """What the coins paid for: compute bought from the system, an accepted trade offer, a
 delivery under a contract, a supplier's deposit forfeited to the buyer, information sold, a
 fill on the exchange, a parcel of land bought from the town, sponsors paying an ad slot's
 holders for the views it got, visitors paying at the door of a workspace or game hall, shares
 of a parcel sold, a trip along a portal link paid to the holders of both ends, or a fee an owner
-paid the resident who built a facility on their parcel."""
+paid the resident who built a facility on their parcel, the one-time reward the town pays
+the owner of a parcel for a finished garden, or the tenth the town adds to a parcel's income
+when its block has a garden, see `economy/gardens.py`."""
 
 
 @dataclass(frozen=True)

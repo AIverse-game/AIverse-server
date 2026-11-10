@@ -6,15 +6,23 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-FacilityKind = Literal["ad", "portal", "game_hall", "workspace", "mall"]
+FacilityKind = Literal["ad", "portal", "game_hall", "workspace", "mall", "garden"]
 """What a facility is: an ad slot, which earns from the content it shows; a portal, which
 earns nothing itself but joins parcels into a transport network, see `economy/portals.py`; a
 game hall or a workspace, venues that earn from the fees visitors pay at the door, see
-`economy/admissions.py`; or a mall, which draws visitors without content but earns little.
-Other kinds come with the designs that need them, see the client
+`economy/admissions.py`; a mall, which draws visitors without content but earns little; or a
+garden, a small place of rest on one parcel that raises every income in its block, see
+`economy/gardens.py`. Other kinds come with the designs that need them, see the client
 repository's docs/design/facilities.md."""
 
-FACILITY_KINDS: tuple[FacilityKind, ...] = ("ad", "portal", "game_hall", "workspace", "mall")
+FACILITY_KINDS: tuple[FacilityKind, ...] = (
+    "ad",
+    "portal",
+    "game_hall",
+    "workspace",
+    "mall",
+    "garden",
+)
 
 VENUE_FACILITIES: tuple[FacilityKind, ...] = ("game_hall", "workspace", "mall")
 """The facilities that take up several parcels, not one: a square of `WorldMap.venue_cells`

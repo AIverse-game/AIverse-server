@@ -16,11 +16,12 @@ as long as they are still in the game. There are three sources:
   the speed of one's own compute, without using up the resident's own one-job-at-a-time slot.
 
 Nodes have a kind, and a job needs a node of its kind: generative nodes build facilities,
-render nodes make content. There are seven jobs. `build_ad` builds an ad slot, `build_portal`
-a portal, see `portals.py`, and `build_game_hall`, `build_workspace` and `build_mall` the
-venues, on a parcel the resident owns, wherever the resident is. `make_content` renders one piece of
-content for an ad slot and `make_game` one for a game hall, each an item the resident then
-carries, see `ads.py`. Several content jobs may run at once, each on a source of its own.
+render nodes make content. There are eight jobs. `build_ad` builds an ad slot, `build_portal`
+a portal, see `portals.py`, `build_garden` a garden, see `gardens.py`, and `build_game_hall`,
+`build_workspace` and `build_mall` the venues, on a parcel the resident owns, wherever the
+resident is. `make_content` renders one piece of content for an ad slot and `make_game` one for a
+game hall, each an item the resident then carries, see `ads.py`. Several content jobs may run at
+once, each on a source of its own.
 
 Compute is bought from the system, so its price leaves the game, and nothing is paid back for
 unused subscriptions, running jobs or facilities when a resident leaves or the game ends.
@@ -58,6 +59,7 @@ from ..core.land import (
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
 from .ads import CONTENT_ITEM, GAME_ITEM
+from .gardens import garden_planned, pay_reward
 from .land import claimed, footprint_size, venue_fits, venue_footprint
 from .portals import MAX_PORTALS, portal_count
 
@@ -90,6 +92,10 @@ MALL_WORKLOAD = 200.0
 """Workload of building a mall: some seven minutes of one's own compute, 20 seconds of a node.
 A little cheaper than a game hall or a workspace, since it earns far less."""
 
+GARDEN_WORKLOAD = 100.0
+"""Workload of building a garden: some three minutes of one's own compute, 10 seconds of a node.
+The cheapest facility to build, and half what a game hall costs."""
+
 GAME_WORKLOAD = 90.0
 """Workload of rendering a game for a game hall: three minutes of one's own compute, 9 seconds of
 a node. Dearer than an ad."""
@@ -106,6 +112,7 @@ NODE_FOR_JOB: dict[JobKind, NodeKind] = {
     "build_game_hall": "generative",
     "build_workspace": "generative",
     "build_mall": "generative",
+    "build_garden": "generative",
     "make_content": "render",
     "make_game": "render",
 }
@@ -117,6 +124,7 @@ WORKLOADS: dict[JobKind, float] = {
     "build_game_hall": VENUE_WORKLOAD,
     "build_workspace": VENUE_WORKLOAD,
     "build_mall": MALL_WORKLOAD,
+    "build_garden": GARDEN_WORKLOAD,
     "make_content": CONTENT_WORKLOAD,
     "make_game": GAME_WORKLOAD,
 }
@@ -133,6 +141,7 @@ BUILT_BY: dict[JobKind, FacilityKind] = {
     "build_game_hall": "game_hall",
     "build_workspace": "workspace",
     "build_mall": "mall",
+    "build_garden": "garden",
 }
 """The facility each building job leaves."""
 
@@ -183,6 +192,7 @@ ComputeErrorCode = Literal[
     "too_many_commissions",
     "invalid_orientation",
     "wrong_orientation",
+    "garden_exists",
 ]
 
 
@@ -274,6 +284,41 @@ def start_build_portal(
     if portal_count(world, resident_id) >= MAX_PORTALS:
         raise ComputeError("too_many_portals", f"at most {MAX_PORTALS} portals may be held")
     return _start_job(world, resident_id, "build_portal", parcel.id, source, node_id)
+
+
+def start_build_garden(
+    world: World,
+    resident_id: str,
+    parcel_id: str,
+    source: JobSource,
+    node_id: int | None = None,
+) -> World:
+    """Start building a garden on the bare parcel `parcel_id` of the resident, as
+    `start_build_ad` does for an ad slot. Only the parcel's owner builds one, and a block has at
+    most one, built or being built, see `gardens.py`. When it is finished the town pays the owner
+    `GARDEN_REWARD` coins."""
+    _find(world, resident_id)
+    parcel = _bare_parcel(world, resident_id, parcel_id)
+    if parcel.owner_id != resident_id:
+        # The reward and the upkeep of the bonus are the owner's, so only they build one.
+        raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
+    if garden_planned(world, parcel.id):
+        raise ComputeError(
+            "garden_exists", f"the block of {parcel_id} already has a garden, or one being built"
+        )
+    return _start_job(world, resident_id, "build_garden", parcel.id, source, node_id)
+
+
+def garden_room(world: World, parcel: Parcel, taken: dict[tuple[int, int], str]) -> bool:
+    """Whether the owner of `parcel` could start a garden on it now: it is bare and untaken, no
+    one holds a permit for it, and its block has no garden, built or being built. `taken` is
+    `land.claimed(world)`."""
+    return (
+        parcel.facility is None
+        and (parcel.col, parcel.row) not in taken
+        and promised_builder(world, parcel.id, None) is None
+        and not garden_planned(world, parcel.id)
+    )
 
 
 def start_build_venue(
@@ -428,6 +473,8 @@ def finish_jobs(world: World) -> World:
         if job.fee and job.fee_from is not None:
             world = add_coins(world, job.owner_id, job.fee)
             world = record_transfer(world, job.fee_from, job.owner_id, job.fee, "commission")
+        if built.kind == "garden":
+            world = pay_reward(world, site.owner_id)
     return world
 
 

@@ -13,7 +13,7 @@ the sponsors who pay most buy them first, as many as their budgets allow. When t
 fall short, every slot is paid for the same share of its views, at the average price paid, and
 the views left over are not paid for at all and are not carried over. The coins come from
 outside the town and go to the holders of the parcel's shares in proportion, see `shares.py`,
-ledger channel `sponsors`.
+ledger channel `sponsors`; a parcel whose block has a garden gets a tenth more, `gardens.py`.
 
 Slots are paid by views alone, so more content helps a slot only by drawing more visitors. A
 slot showing nothing gets no visitors and so no pay; views it had before its content went
@@ -30,6 +30,7 @@ from ..core.inventory import add_coins
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.sponsors import Sponsor, SponsorBook
 from ..core.world import World
+from .gardens import bonus_on, pay_bonus
 from .shares import split_income
 
 PAY_PERIOD = 30.0
@@ -97,12 +98,15 @@ def pay_sponsors(world: World) -> World:
     for parcel in world.parcels:
         if parcel.id not in waiting:
             continue
-        income = round(waiting[parcel.id] * average)
-        if income:
-            paid[parcel.id] = income
+        owed = waiting[parcel.id] * average
+        income = round(owed)
+        bonus = bonus_on(world, parcel.id, owed)
+        if income or bonus:
+            paid[parcel.id] = income + bonus
             for holder, part in split_income(parcel, income):
                 world = add_coins(world, holder, part)
                 world = record_transfer(world, SYSTEM, holder, part, "sponsors")
+            world = pay_bonus(world, parcel.id, bonus)
     views = dict(world.crowd.views)
     settled = {**dict(book.settled), **{p: views[p] for p in waiting}}
     sponsors = tuple(replace(s, funds=funds[s.id]) for s in book.sponsors)

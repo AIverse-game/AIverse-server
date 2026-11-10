@@ -12,6 +12,7 @@ from ..economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
     GAME_WORKLOAD,
+    GARDEN_WORKLOAD,
     MALL_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
@@ -27,10 +28,12 @@ from ..economy.compute import (
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
+from ..economy.gardens import GARDEN_BONUS, GARDEN_REWARD
 from ..economy.joint_purchase import JOINT_PURCHASE_SECONDS
 from ..economy.land import PARCEL_SIZE, plots
 from ..economy.sponsors import PAY_PERIOD, default_sponsors
 from ..economy.visitors import (
+    GARDEN_PIECES,
     MALL_PIECES,
     MIN_VIEW_SECONDS,
     ROUTE_SHARE,
@@ -67,6 +70,8 @@ def system_prompt(
     venue_hired_coins = on_demand_cost(VENUE_WORKLOAD)
     mall_own_s = job_seconds(MALL_WORKLOAD, "self")
     mall_hired_coins = on_demand_cost(MALL_WORKLOAD)
+    garden_own_s = job_seconds(GARDEN_WORKLOAD, "self")
+    garden_hired_coins = on_demand_cost(GARDEN_WORKLOAD)
     grid = BLOCKS * BLOCK_CELLS
     cells = BLOCK_CELLS * BLOCK_CELLS
     for_sale = [square.price for square in plots(create_default_world()) if not square.lobby]
@@ -190,6 +195,13 @@ your own compute, {mall_hired_coins} coins on a hired node). It needs no content
 visitors as soon as it is built, but they come to it less than to other venues, and the fee is
 only {FEES["mall"]} coins a person, so it earns far less than a game hall; it is a modest,
 steady use for a parcel pair that would otherwise stand empty.
+- A garden (build_garden) takes one parcel and is the cheapest facility: {GARDEN_WORKLOAD:g}
+workload, {garden_own_s:g}s on your own compute, {garden_hired_coins} coins on a hired node. A
+block has one. When it is finished the town pays you {GARDEN_REWARD} coins once, and for as long
+as it stands the sponsor pay and door fees of the block's facilities are
+{GARDEN_BONUS:.0%} higher, so it pays most in a block with a busy venue. It draws visitors too,
+as {GARDEN_PIECES} pieces would, for a fee of {FEES["garden"]} coins a person. Build it in a
+block you hold, next to what earns.
 
 Deals and information
 - Working together pays. Nobody has to do everything: a resident with a busy render node can

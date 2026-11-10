@@ -301,6 +301,7 @@ def test_discovering_the_compute_group_reveals_its_tools() -> None:
         == {
             "buy_node",
             "build_ad",
+            "build_garden",
             "build_venue",
             "commission_build",
         }

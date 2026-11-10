@@ -6,7 +6,8 @@ them: the fee times that. The money comes from outside the town, and is bounded 
 visitors there are and how often they go in. A facility is not paid at the door but, like the
 ad slots, at the paydays of `sponsors.py`: the fees taken since the last payday are paid out to
 the holders of the parcel's shares, see `shares.py`, in whole coins, the part of a coin left
-carried to the next payday. Ledger channel `visitors`.
+carried to the next payday. Ledger channel `visitors`. A garden in the block adds a tenth,
+`gardens.py`.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched.
@@ -18,23 +19,24 @@ from ..core.admissions import AdmissionBook
 from ..core.inventory import add_coins
 from ..core.ledger import SYSTEM, record_transfer
 from ..core.world import World
+from .gardens import income_multiplier, pay_bonus
 from .shares import split_income
 from .sponsors import latest_payday, next_payday_after
 
-FEES: dict[str, int] = {"workspace": 8, "game_hall": 12, "mall": 2}
+FEES: dict[str, int] = {"workspace": 8, "game_hall": 12, "mall": 2, "garden": 4}
 """Coins one person pays to get into a facility of each kind."""
 
 _SLACK = 1e-9
 
 
 def due_fees(world: World) -> dict[str, int]:
-    """Whole coins of fees waiting to be paid out, by parcel; parcels owed less than a coin are
-    left out."""
-    return {
-        parcel_id: int(amount + _SLACK)
+    """Whole coins of fees waiting to be paid out, by parcel, the tenth a garden in the block adds
+    included; parcels owed less than a coin are left out."""
+    due = {
+        parcel_id: int(amount * income_multiplier(world, parcel_id) + _SLACK)
         for parcel_id, amount in world.admissions.unpaid
-        if int(amount + _SLACK) >= 1
     }
+    return {parcel_id: coins for parcel_id, coins in due.items() if coins >= 1}
 
 
 def pay_admissions(world: World) -> World:
@@ -53,14 +55,20 @@ def pay_admissions(world: World) -> World:
         coins = owed.get(parcel.id, 0)
         if not coins:
             continue
-        left = unpaid[parcel.id] - coins
+        # What is paid is the fees taken times the multiplier; the fees it settles are the
+        # coins divided by it, and what is left carries over. The fees' own share is what they
+        # come to in whole coins, the garden's tenth the rest.
+        taken = unpaid[parcel.id]
+        left = taken - coins / income_multiplier(world, parcel.id)
+        fees = min(int(taken + _SLACK), coins)
         if left > _SLACK:
             unpaid[parcel.id] = left
         else:
             del unpaid[parcel.id]
-        for holder, part in split_income(parcel, coins):
+        for holder, part in split_income(parcel, fees):
             world = add_coins(world, holder, part)
             world = record_transfer(world, SYSTEM, holder, part, "visitors")
+        world = pay_bonus(world, parcel.id, coins - fees)
     return replace(
         world,
         admissions=AdmissionBook(
