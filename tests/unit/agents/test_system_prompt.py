@@ -76,7 +76,7 @@ def test_the_prompt_explains_venues_with_the_game_constants() -> None:
     assert f"{ROUTE_SHARE:.0%} of the trips are a working route" in prompt
     assert f"make_content content=game, {GAME_WORKLOAD:g} workload" in prompt
     assert "A game hall draws nobody until it shows games" in prompt
-    assert f"games go stale after {CONTENT_LIFETIME:g}s like ads" in prompt
+    assert "a game stays in the hall and never goes stale" in prompt
 
 
 def test_the_prompt_says_how_close_and_how_long_a_passer_by_must_be_to_count() -> None:

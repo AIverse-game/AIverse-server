@@ -11,7 +11,7 @@ from aiverse_server.agents.tool_selection import (
 from aiverse_server.agents.tools import TOOLS, ResidentTools
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.world import Inventory, Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
+from aiverse_server.economy.ads import CONTENT_ITEM, GAME_ITEM, GAME_LIFETIME
 from aiverse_server.economy.compute import (
     GAME_WORKLOAD,
     SELF_RATE,
@@ -145,7 +145,7 @@ def test_the_observation_shows_the_hall_its_games_and_what_venues_and_games_cost
     hall = next(parcel for parcel in seen.land.mine if parcel.id == "L7-7")
     assert (hall.facility, hall.content_goes_stale_in, hall.income_last_payday) == (
         "game_hall",
-        (CONTENT_LIFETIME - 100.0,),
+        (GAME_LIFETIME - 100.0,),
         0,
     )
     assert [(o.source, o.seconds) for o in seen.compute.venue] == [

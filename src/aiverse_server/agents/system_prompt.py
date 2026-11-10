@@ -176,7 +176,8 @@ and {FEES["game_hall"]} for a game hall, per person; the fees are paid to the ho
 with the sponsors' pay. {ROUTE_SHARE:.0%} of the trips are a working route, a workspace and then a
 game hall showing games, and the others pick any venue. A workspace needs no content. A game hall
 draws nobody until it shows games (make_content content=game, {GAME_WORKLOAD:g} workload, then
-place_content); games go stale after {CONTENT_LIFETIME:g}s like ads, so keep supplying them. A game
+place_content); a game stays in the hall and never goes stale, but the hall holds only
+{AD_SLOT_CAPACITY} games at once, so once it is full no more can go in. A game
 is its own item, {GAME_ITEM!r}; an ad slot cannot show it.
 - A mall is a venue too (build_venue kind=mall): 1 x 2 parcels, one in the north-west corner and
 the one south of it, in one block, and cheaper at {MALL_WORKLOAD:g} workload ({mall_own_s:g}s on

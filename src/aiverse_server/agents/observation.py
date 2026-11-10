@@ -438,8 +438,9 @@ class LandView:
     """Parcels along each side; ids are `L<col>-<row>` from the north-west corner."""
     slot_capacity: int
     """Pieces of content an ad slot shows at once."""
-    content_lasts: float
-    """Seconds a piece of content is shown for once put in a slot."""
+    ad_content_lasts: float
+    """Seconds a piece of ad content is shown for once put in an ad slot. Games in a game hall
+    never go stale, so this does not apply to them."""
     pay_period: float
     """Seconds between paydays, which fall at multiples of it."""
     sponsors: tuple[SponsorView, ...]
@@ -875,7 +876,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         parcel_size=PARCEL_SIZE,
         grid=grid_size(world),
         slot_capacity=AD_SLOT_CAPACITY,
-        content_lasts=CONTENT_LIFETIME,
+        ad_content_lasts=CONTENT_LIFETIME,
         pay_period=PAY_PERIOD,
         sponsors=_sponsor_views(world),
         here=view(square_here) if standing and square_here is not None else None,

@@ -169,7 +169,7 @@ def test_the_observation_shows_each_slots_content_and_income() -> None:
     assert (slot.income_last_payday, slot.my_cut_last_payday, slot.people_seen) == (20, 20, 10.0)
     bare = next(parcel for parcel in seen.land.mine if parcel.id == "L1-1")
     assert (bare.content_goes_stale_in, bare.income_last_payday) == ((), 0)
-    assert (seen.land.slot_capacity, seen.land.content_lasts, seen.land.pay_period) == (
+    assert (seen.land.slot_capacity, seen.land.ad_content_lasts, seen.land.pay_period) == (
         AD_SLOT_CAPACITY,
         CONTENT_LIFETIME,
         PAY_PERIOD,

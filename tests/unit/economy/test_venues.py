@@ -8,7 +8,15 @@ import pytest
 from aiverse_server.core.inventory import coin_balance, store_item
 from aiverse_server.core.land import AD_SLOT_CAPACITY, Facility, Parcel
 from aiverse_server.core.world import Position, Resident, World, WorldMap
-from aiverse_server.economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_ITEM
+from aiverse_server.economy.ads import (
+    CONTENT_ITEM,
+    CONTENT_LIFETIME,
+    GAME_ITEM,
+    GAME_LIFETIME,
+)
+from aiverse_server.economy.ads import (
+    shown as shown_pieces,
+)
 from aiverse_server.economy.compute import (
     GAME_WORKLOAD,
     NODE_RATE,
@@ -131,18 +139,20 @@ def stocked(game: int = 0, ad: int = 0) -> World:
     return world
 
 
-def test_a_game_hall_shows_games_for_the_content_lifetime_and_then_they_go_stale() -> None:
+def test_a_game_placed_in_a_game_hall_never_goes_stale() -> None:
     world = at(stocked(game=2), 10.0)
 
     placed = perform(world, PlaceContent("a", "L2-2"))
-    later = at(placed, 10.0 + CONTENT_LIFETIME)
+    much_later = at(placed, 10.0 + 100 * CONTENT_LIFETIME)
 
     hall = facility(placed, "L2-2")
-    assert hall is not None and hall.contents == (10.0 + CONTENT_LIFETIME,)
+    assert hall is not None and hall.contents == (10.0 + GAME_LIFETIME,)
     assert carried(placed, "a", GAME_ITEM) == 1
-    again = perform(later, PlaceContent("a", "L2-2"))
-    shown = facility(again, "L2-2")
-    assert shown is not None and shown.contents == (10.0 + 2 * CONTENT_LIFETIME,)
+    assert shown_pieces(hall, much_later.time) == 1
+    again = perform(much_later, PlaceContent("a", "L2-2"))
+    kept = facility(again, "L2-2")
+    assert kept is not None and len(kept.contents) == 2
+    assert shown_pieces(kept, again.time) == 2
 
 
 def test_each_facility_takes_only_its_own_kind_of_content() -> None:
