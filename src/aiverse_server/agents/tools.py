@@ -2,7 +2,8 @@
 
 None of the tools names who acts: `ResidentTools` holds the resident, so an agent can only
 ever move its own, as change 0015 in the client repository asks. Each tool is a primitive
-from `actions.py` performed and kept through `Game.commit`, as `Game.act` does, or a note
+from `actions.py` performed, logged (`world_log.perform_logged`) and kept through `Game.commit`,
+as `Game.act` does, or a note
 through `Game.remember` and `Game.forget`, so agents and pages go through the same rules and
 broadcasts.
 
@@ -79,10 +80,10 @@ from ..game.actions import (
     Say,
     Teleport,
     WithdrawEvent,
-    perform,
 )
 from ..game.layout import VENUE_CELLS
 from ..game.lifecycle import GameError, total_coins
+from ..game.world_log import perform_logged
 from ..residents.information_offer import SUMMARY_LIMIT
 from ..residents.memory import NoteError
 from ..residents.walking import WALK_SPEED
@@ -998,7 +999,7 @@ class ResidentTools:
         """Carry out a primitive as `Game.act` does. Raises `ActionRejected`, leaving the world
         as it was."""
         self.game.tick()
-        self.game.commit(perform(self.game.world, action))
+        self.game.commit(perform_logged(self.game.world, action))
 
     def status(self) -> dict[str, Any]:
         """A short summary of the resident right now, handed back after every call."""

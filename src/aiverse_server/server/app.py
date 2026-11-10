@@ -31,7 +31,7 @@ from ..agents.llm_brain import (
 )
 from ..agents.runner import DEFAULT_PACE, AgentRunner, Brain, Pace, TurnRecord
 from ..core.world import Note, NoteTerm, World
-from ..game.actions import Action, ActionRejected, perform
+from ..game.actions import Action, ActionRejected
 from ..game.clock import next_due, settle_due
 from ..game.cues import CueKind, cues, new_facility_owners
 from ..game.layout import create_default_world
@@ -44,6 +44,7 @@ from ..game.lifecycle import (
     check_can_act,
     end_game,
 )
+from ..game.world_log import perform_logged
 from ..residents.memory import forget, remember
 from ..residents.perception import Perception, begin_turn
 from .protocol import (
@@ -139,7 +140,7 @@ def handle_text(
     if isinstance(message, StartAgentMessage | StopAgentMessage):
         return Outcome([], world, greeted, viewer, message)
     try:
-        after = perform(world, to_action(message))
+        after = perform_logged(world, to_action(message))
     except ActionRejected as rejection:
         return Outcome([action_rejected(rejection)], world, greeted, viewer)
     return Outcome([ActionResultMessage(ok=True)], after, greeted, viewer)
@@ -340,7 +341,7 @@ class Game:
         result and tell everyone. Raises `ActionRejected`, leaving the world as it was."""
         self.tick()
         before = self.world
-        after = perform(before, action)
+        after = perform_logged(before, action)
         for resident_id, kind in cues(before, action):
             self._cue(resident_id, kind)
         self.commit(after)

@@ -111,6 +111,7 @@ def test_hello_returns_welcome_then_the_map(client: TestClient) -> None:
                 "offers": [],
                 "contractProposals": [],
                 "contracts": [],
+                "worldLog": [],
             },
         }
 
@@ -530,6 +531,28 @@ def test_whispers_reach_only_pages_viewing_as_a_party(clock: FakeClock) -> None:
     assert to_c == []
     # Viewing as nobody, even the page that sent it does not see the whisper.
     assert to_sender == []
+
+
+def test_every_page_sees_a_whisper_in_the_world_log(clock: FakeClock) -> None:
+    client = TestClient(create_app(SPEECH_WORLD, clock=clock))
+    with client.websocket_connect("/ws") as ws, client.websocket_connect("/ws") as watcher:
+        for connection in (ws, watcher):
+            greet(connection)
+
+        ws.send_text(say("a", "卖你算力", to="b"))
+        assert ws.receive_json()["ok"] is True
+        world_log = watcher.receive_json()["world"]["worldLog"]
+
+    assert world_log == [
+        {
+            "seq": 1,
+            "time": 0,
+            "kind": "said",
+            "actorId": "a",
+            "otherId": "b",
+            "text": "卖你算力",
+        }
+    ]
 
 
 def test_changing_whom_a_page_views_as_resends_the_speech_it_may_see(clock: FakeClock) -> None:

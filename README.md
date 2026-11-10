@@ -109,7 +109,7 @@ key 只放在服务端内存里，用来调用接口，不写进状态、控制�
 
 ## 协议
 
-WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 28。
+WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当前协议版本为 31。
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
@@ -146,7 +146,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 
 居民的 `agent` 在不升协议版本的前提下多了两个可选字段（旧页面忽略）：`thinking: true` 表示 Agent 正在等大脑回答（`runner.py` 在大脑一轮的前后设置），`cue: {kind, seq}` 是它最近一次演出（`talk` 或 `happy`，`seq` 在整局内递增，页面见到新的 `seq` 才播放）；只有经 `Game.act` 做的原语和到点建成的设施产生提示，页面手动操作不产生。
 
-`world` 在协议 30 还包括 `map.parcelSize`、`map.blockCells`、`map.venueCells`（游戏厅和工作空间占的方块边长，单位是地块，默认世界为 2，即 20 × 20） 与按行排列的 `map.parcelPrices`、公开的 `parcels`（产权人、份额、设施种类、有效内容数、每份内容的 `expiresIn` 剩余秒数，以及上一个付给它钱的付款日里它收到的 `income`：`at` 是那个付款日的游戏时间，`coins` 是赞助商和入场费合计的整数金币，没有付过时省略；页面靠 `at` 变大判断是新的一笔）、`jobs`（进行中的工作及剩余秒数）；只有 `view_as` 选择居民后才有 `content`（`viewerId`、该居民携带的广告与游戏数量）。设施可为 `ad`、`portal`、`game_hall`、`workspace`、`mall`；游戏厅和工作空间占一个 `venueCells` × `venueCells` 的方块，商场占两块（西北角在设施所在的地块，`orientation` 为 `north_south` 时向南一块、`east_west` 时向东一块，设施和进行中的工作的视图都带这个字段），设施记在方块西北角的那块地上，方块里其余的地块没有设施，别的设施也不能建在上面（页面按 `venueCells` 自己推算）；建设来源为 `self` 或 `on_demand`，订阅节点尚未进入页面操作。
+`world` 在协议 31 还包括 `map.parcelSize`、`map.blockCells`、`map.venueCells`（游戏厅和工作空间占的方块边长，单位是地块，默认世界为 2，即 20 × 20） 与按行排列的 `map.parcelPrices`、公开的 `parcels`（产权人、份额、设施种类、有效内容数、每份内容的 `expiresIn` 剩余秒数，以及上一个付给它钱的付款日里它收到的 `income`：`at` 是那个付款日的游戏时间，`coins` 是赞助商和入场费合计的整数金币，没有付过时省略；页面靠 `at` 变大判断是新的一笔）、`jobs`（进行中的工作及剩余秒数）；只有 `view_as` 选择居民后才有 `content`（`viewerId`、该居民携带的广告与游戏数量）。设施可为 `ad`、`portal`、`game_hall`、`workspace`、`mall`；游戏厅和工作空间占一个 `venueCells` × `venueCells` 的方块，商场占两块（西北角在设施所在的地块，`orientation` 为 `north_south` 时向南一块、`east_west` 时向东一块，设施和进行中的工作的视图都带这个字段），设施记在方块西北角的那块地上，方块里其余的地块没有设施，别的设施也不能建在上面（页面按 `venueCells` 自己推算）；建设来源为 `self` 或 `on_demand`，订阅节点尚未进入页面操作。
 
 `world` 的部分结构示意（省略 `parcelPrices`、`parcels`、`jobs` 等必填字段，不能直接作为完整协议消息复制使用）：
 
@@ -189,6 +189,7 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 - `exchange` 是匿名交易所。`books` 每种有挂单簿的商品一本（目前游戏里没有任何商品，所以为空），`bids` 是最高的 5 个买价、`asks` 是最低的 5 个卖价，每个价位给出单价和总数量，不显示是谁挂的。`fills` 是所有商品最近 100 笔成交，从旧到新，只有时间（取到 0.1 秒）、商品、数量和单价；`view_as` 所选居民参与的那笔带 `own`（`bought` 或 `sold`）。`viewerId` 是生成这份状态时所选的居民，没选时省略，页面换选居民后可以据此认出还没换过来的旧状态。`orders` 是所选居民的挂单，没选居民时为空，`remainingSeconds` 是发送时距到期的秒数。`maxOrders` 是每人最多的挂单数。
 - `speech` 是这个连接可见的最近 50 句，按先后排列：所有当众说的话，加上 `view_as` 所选居民发出或收到的私聊；没选居民时没有私聊。`time` 是开局以来的游戏秒数，`to` 只在私聊时出现，`listeners` 是听到的居民（不含说话人）。居民本人只从感知中拿到自己听到的。
 - `offers`、`contractProposals`、`contracts` 是 `view_as` 所选居民参与的待答复报价、待答复合约提议和生效的合约，按先后排列；和私聊一样，没选居民时为空，别人的交易不发给这个连接。报价的 `side` 为 `sell` 时发件人卖、为 `buy` 时发件人买，`price` 是整批总价；合约的 `price` 是每次交付的价款，`deposit` 是供货方每次的押金（0 为不押），`escrow` 是托管的余款（`price × deliveriesLeft`），`depositHeld` 是托管的押金（`deposit × deliveriesLeft`），`remainingSeconds` 是发送时距到期的秒数。页面还不能发起或答复它们。
+- `worldLog` 是世界日志：全镇最近 200 件事，从旧到新，每个连接都一样，不看 `view_as`，所以别人的私聊和报价也在里面（页面的“世界日志”窗口，见客户端仓库的 `docs/design/game-screen.md`）。每条有 `seq`、`time`（游戏秒数）、`kind`、`actorId`，其余字段按种类出现：`otherId`（对方居民）、`text`（说的话、信息报价的摘要）、`parcelId`、`otherParcelId`、`facility`、`item`、`quantity`（物品、份额、地块、节点秒数或听到的人数）、`coins`、`deliveries`、`position`、`deal`（请求种类：`purchase`、`sale`、`information`、`shares`、`contract`、`joint_purchase`、`commission`、`link`）与 `side`。`kind` 有 `said`、`walked`、`teleported`、`left_game`、`bought_parcel`、`bought_node`、`started_building`、`started_making`、`built`、`made`、`placed_content`、`offered`、`accepted`、`declined`、`withdrew`、`delivered`、`cancelled_contract`、`placed_order`、`cancelled_order`、`linked_portals`。被拒绝的原语不记；交易所成交、付款日收入和各种到期不记。
 - `remainingSeconds` 是发送时的剩余秒数，结束后为 0。状态只在变化时推送，客户端应以收到时刻为起点本地倒计时，到点后以服务端的 `ended` 为准。
 
 协议在客户端 `packages/protocol` 中还有一份 TypeScript 定义。改动时两边同时修改并更新测试；不兼容的改动同时提升两边的 `PROTOCOL_VERSION`。
@@ -241,12 +242,13 @@ WebSocket 地址为 `/ws`，消息是 JSON 文本帧，键名用 camelCase。当
 | `src/aiverse_server/residents/information_offer.py` | 信息报价：事件 `InformationOffer`（摘要、内容、价格），条款校验；成交时买方付金币、内容作为长期笔记写入买方记忆，卖方保留原信息 |
 | `src/aiverse_server/residents/speech.py` | 对话：听力半径、当众说或私聊 `say`（不花东西），听到的人在说话时定下 |
 | `src/aiverse_server/game/actions.py` | 操作原语：玩家与 AI 改变世界的唯一入口，校验并执行；含走路、答复事件、发起购买与出售、提议合约、交付与取消合约、退出游戏、买地、买节点、建广告位、做内容、把内容放进广告位、下单与撤单、说话 |
+| `src/aiverse_server/game/world_log.py` | 世界日志：`perform_logged` 执行原语并把做了什么写进 `World.world_log`（网页、`Game.act` 与 Agent 工具都经它执行原语），`record_finished_jobs` 记下设施建成和内容做好；只保留最近 200 条 |
 | `src/aiverse_server/game/cues.py` | 页面演出用的提示：说话、报价算 `talk`，报价被同意、设施建成算 `happy`；不属于世界，由 `Game` 记在 Agent 居民名下 |
 | `src/aiverse_server/game/lifecycle.py` | 对局生命周期：能否行动与忙碌的检查、出局（停下行走，撤掉挂单）、结束、按金币总额排名、公告、默认时长 |
 | `src/aiverse_server/game/settings.py` | 读取并校验独立的游戏时间 YAML 配置 |
 | `src/aiverse_server/game/economy_report.py` | 由流水账与世界算出经济指标（居民间流量占比、各渠道、价格、合约、基尼系数、收入集中度），写成 JSON 与控制台摘要 |
 | `src/aiverse_server/game/config/` | 游戏时间配置：示例 `game.example.yml`；本地的 `game.yml` 被 Git 忽略 |
-| `src/aiverse_server/game/clock.py` | 游戏时间到点的事：行走到达并记录活动，工作与节点到期，访客走完一段或待完一段，赞助商付款日，合约与挂单到期，下一个到点时刻 |
+| `src/aiverse_server/game/clock.py` | 游戏时间到点的事：行走到达并记录活动，工作完成（记入世界日志）与节点到期，访客走完一段或待完一段，赞助商付款日，合约与挂单到期，下一个到点时刻 |
 | `src/aiverse_server/game/layout.py` | 固定的初始地图、8 名居民（含初始金币，全部出生在地图中央）与还没进城的 200 个访客 |
 | `src/aiverse_server/server/protocol.py` | 消息模型、客户端消息解析（错误信息不回显输入）、消息到原语与世界到视图（含谁由 Agent 驱动）的转换，`start_agent` 的设置，访客的 `visitors` 消息 `visitors_message` |
 | `src/aiverse_server/server/config.py` | 读取大模型的 YAML 配置文件：`override` 覆盖模型的地址、key、模型及回复 token 上限，拒绝未知的键，错误信息不含设置的值 |

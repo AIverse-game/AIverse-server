@@ -25,7 +25,7 @@ from ..agents.llm_brain import LLMSetting, LLMSettings
 from ..agents.runner import TurnRecord
 from ..core.events import Event
 from ..core.orders import Fill
-from ..core.world import COLOR_PATTERN, Position, World
+from ..core.world import COLOR_PATTERN, DealKind, Position, World, WorldLogEntry, WorldLogKind
 from ..economy.ads import shown
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
@@ -51,7 +51,7 @@ from ..game.cues import CueKind
 from ..game.lifecycle import GameErrorCode, ranks, total_coins
 from ..residents.walking import position_at
 
-PROTOCOL_VERSION = 30
+PROTOCOL_VERSION = 31
 
 ERROR_MAX_LENGTH = 200
 
@@ -482,6 +482,29 @@ class AgentTurnView(_Message):
     calls: list[AgentCallView]
 
 
+class WorldLogEntryView(_Message):
+    """One thing a resident did, or that finished for them, see `game/world_log.py`. Only the
+    fields its kind needs are sent; pages put it into words."""
+
+    seq: int
+    time: float
+    """Game seconds since the start when it happened."""
+    kind: WorldLogKind
+    actor_id: str
+    other_id: str | None = None
+    text: str | None = None
+    parcel_id: str | None = None
+    other_parcel_id: str | None = None
+    facility: str | None = None
+    item: str | None = None
+    quantity: int | None = None
+    coins: int | None = None
+    deliveries: int | None = None
+    position: PositionView | None = None
+    deal: DealKind | None = None
+    side: Literal["buy", "sell"] | None = None
+
+
 class AgentTimelineView(_Message):
     resident_id: str
     turns: list[AgentTurnView]
@@ -552,6 +575,9 @@ class WorldView(_Message):
     contracts: list[ContractView]
     """Contracts in force the viewed resident is a party to, oldest first."""
     agent_timeline: AgentTimelineView | None = None
+    world_log: list[WorldLogEntryView]
+    """Everything residents did lately, oldest first, the same for every connection: whispers
+    and offers between anyone included, see `game/world_log.py`."""
 
 
 LLMSettingName = Literal["baseUrl", "apiKey", "model"]
@@ -813,6 +839,28 @@ def world_view(
             )
             for contract in (contracts_of(world, viewer) if viewer is not None else ())
         ],
+        world_log=[_world_log_entry_view(entry) for entry in world.world_log.entries],
+    )
+
+
+def _world_log_entry_view(entry: WorldLogEntry) -> WorldLogEntryView:
+    return WorldLogEntryView(
+        seq=entry.seq,
+        time=entry.time,
+        kind=entry.kind,
+        actor_id=entry.actor_id,
+        other_id=entry.other_id,
+        text=entry.text,
+        parcel_id=entry.parcel_id,
+        other_parcel_id=entry.other_parcel_id,
+        facility=entry.facility,
+        item=entry.item,
+        quantity=entry.quantity,
+        coins=entry.coins,
+        deliveries=entry.deliveries,
+        position=None if entry.position is None else _position_view(entry.position),
+        deal=entry.deal,
+        side=entry.side,
     )
 
 

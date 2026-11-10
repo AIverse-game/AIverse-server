@@ -287,6 +287,99 @@ class NoticeLog:
                 raise ValueError(f"notice {notice.seq} is empty")
 
 
+WorldLogKind = Literal[
+    "said",
+    "walked",
+    "teleported",
+    "left_game",
+    "bought_parcel",
+    "bought_node",
+    "started_building",
+    "started_making",
+    "built",
+    "made",
+    "placed_content",
+    "offered",
+    "accepted",
+    "declined",
+    "withdrew",
+    "delivered",
+    "cancelled_contract",
+    "placed_order",
+    "cancelled_order",
+    "linked_portals",
+]
+"""What a world log entry records, see `game/world_log.py`."""
+
+DealKind = Literal[
+    "purchase",
+    "sale",
+    "information",
+    "shares",
+    "contract",
+    "joint_purchase",
+    "commission",
+    "link",
+]
+"""Which kind of request an offer or its answer was about, one per kind of event payload."""
+
+
+@dataclass(frozen=True)
+class WorldLogEntry:
+    """One thing a resident did, or that finished for them, as pages show it in the world log,
+    see `game/world_log.py`. Only the fields its kind needs are set; the rest stay None."""
+
+    seq: int
+    """Unique within a world, counting up from 1 in the order things happened."""
+    time: float
+    kind: WorldLogKind
+    actor_id: str
+    """Who did it, or whose job finished."""
+    other_id: str | None = None
+    """The other resident involved: who was spoken to, offered or answered, or whose parcel."""
+    text: str | None = None
+    """What was said, or an information offer's summary."""
+    parcel_id: str | None = None
+    other_parcel_id: str | None = None
+    facility: str | None = None
+    """A facility or permit kind, such as `game_hall`."""
+    item: str | None = None
+    """An item, content (`ad` or `game`) or node kind."""
+    quantity: int | None = None
+    """Items, shares, parcels, node seconds or listeners, as the kind says."""
+    coins: int | None = None
+    deliveries: int | None = None
+    position: Position | None = None
+    deal: DealKind | None = None
+    side: Literal["buy", "sell"] | None = None
+
+
+WORLD_LOG_LIMIT = 200
+"""Entries the world log keeps; older ones are dropped, so every state stays small."""
+
+
+@dataclass(frozen=True)
+class WorldLog:
+    """Recent world log entries, oldest first, and the sequence number the next will get."""
+
+    entries: tuple[WorldLogEntry, ...] = ()
+    next_seq: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.next_seq) is not int or self.next_seq < 1:
+            raise ValueError(f"next world log seq must be an integer >= 1, got {self.next_seq!r}")
+        if len(self.entries) > WORLD_LOG_LIMIT:
+            raise ValueError(f"world log holds {len(self.entries)} entries, over the limit")
+        previous = 0
+        for entry in self.entries:
+            if type(entry.seq) is not int or not previous < entry.seq < self.next_seq:
+                raise ValueError(
+                    f"world log seq {entry.seq!r} must be an integer above {previous} "
+                    f"and below {self.next_seq}"
+                )
+            previous = entry.seq
+
+
 @dataclass(frozen=True)
 class Contract:
     """A standing deal between two residents, see `contracts.py`: the supplier is to deliver
@@ -521,6 +614,8 @@ class World:
     """Who pays for those views and what they were paid, see `sponsors.py`."""
     admissions: AdmissionBook = AdmissionBook()
     """Fees visitors paid at the doors of workspaces and game halls, see `admissions.py`."""
+    world_log: WorldLog = WorldLog()
+    """Everything residents did, for the pages' world log, see `game/world_log.py`."""
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.time) and self.time >= 0):
@@ -548,6 +643,9 @@ class World:
         for line in self.speech.entries:
             if {line.speaker_id, *line.listeners} - set(ids):
                 raise ValueError(f"speech {line.seq} involves unknown resident")
+        for logged in self.world_log.entries:
+            if logged.actor_id not in ids or logged.other_id not in (*ids, None):
+                raise ValueError(f"world log entry {logged.seq} involves unknown resident")
         for event in self.events.pending:
             for party in (event.sender_id, event.recipient_id):
                 if party not in ids:

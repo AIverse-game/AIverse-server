@@ -19,20 +19,22 @@ from ..economy.sponsors import next_payday, pay_sponsors
 from ..economy.visitors import advance_crowd, next_visit
 from ..residents.perception import record_activity
 from ..residents.walking import finish_walks, next_arrival
+from .world_log import record_finished_jobs
 
 
 def settle_due(world: World) -> World:
     """Bring in the walkers who have arrived by `world.time`, logged for others nearby to
-    notice, finish the compute jobs that are done, drop the nodes that ran out and the permits
-    that lapsed, move the visitors on, pay the ad slots their views, end the contracts that have
-    lapsed and withdraw the orders that have expired. Returns `world` itself when nothing is
-    due."""
+    notice, finish the compute jobs that are done, logged in the world log, drop the nodes that
+    ran out and the permits that lapsed, move the visitors on, pay the ad slots their views, end
+    the contracts that have lapsed and withdraw the orders that have expired. Returns `world`
+    itself when nothing is due."""
     target = world.time
     after = world
     while (due := next_due(after)) is not None and due <= target:
         timed = replace(after, time=due)
         arrived = record_activity(timed, finish_walks(timed))
-        built = expire_permits(expire_nodes(finish_jobs(arrived)))
+        finished = record_finished_jobs(arrived, finish_jobs(arrived))
+        built = expire_permits(expire_nodes(finished))
         after = expire_orders(expire_contracts(pay_admissions(pay_sponsors(advance_crowd(built)))))
     return world if after is world else replace(after, time=target)
 
