@@ -242,12 +242,11 @@ def test_the_ranking_does_not_drop_while_a_joint_purchase_waits() -> None:
     assert total_coins(world, "a") == 5_000
 
 
-def test_the_buyer_alone_runs_the_parcel_whatever_the_shares() -> None:
+def test_both_holders_of_a_jointly_bought_parcel_may_build_on_it() -> None:
     bought = perform(propose(pays=PRICE, shares=99), RespondToEvent("b", 1, True))
 
-    with pytest.raises(ActionRejected) as partner:
-        perform(bought, BuildAd("b", "L5-3", "self"))
-    started = perform(bought, BuildAd("a", "L5-3", "self"))
+    by_partner = perform(bought, BuildAd("b", "L5-3", "self"))
+    by_buyer = perform(bought, BuildAd("a", "L5-3", "self"))
 
-    assert partner.value.code == "not_your_parcel"
-    assert len(started.compute.jobs) == 1
+    assert [job.owner_id for job in by_partner.compute.jobs] == ["b"]
+    assert [job.owner_id for job in by_buyer.compute.jobs] == ["a"]

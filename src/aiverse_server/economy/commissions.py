@@ -132,7 +132,7 @@ class BuildCommission(EventPayload):
         parcel = next((p for p in world.parcels if p.id == self.parcel_id), None)
         if parcel is None:
             raise ComputeError("unknown_parcel", f"no one owns a parcel {self.parcel_id!r}")
-        if parcel.owner_id != self.owner_id:
+        if parcel.owner_id != self.owner_id and parcel.held_by(self.owner_id) == 0:
             raise ComputeError(
                 "not_your_parcel", f"parcel {self.parcel_id!r} is not {self.owner_id}'s"
             )

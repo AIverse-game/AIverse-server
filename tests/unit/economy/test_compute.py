@@ -266,22 +266,23 @@ def test_the_own_compute_queues_jobs_and_refuses_past_its_limit() -> None:
     assert full.value.code == "self_queue_full"
 
 
-def test_one_job_per_parcel_even_on_the_own_compute() -> None:
-    world = perform(WORLD, BuildAd("a", "L5-3", "self"))
+def test_the_first_of_two_jobs_on_one_parcel_builds_it_and_the_other_is_dropped() -> None:
+    started = run(WORLD, BuildAd("a", "L5-3", "self"))
+    started = perform(started, BuildAd("a", "L5-3", "on_demand"))
 
-    with pytest.raises(ActionRejected) as parcel:
-        perform(world, BuildAd("a", "L5-3", "on_demand"))
+    done = settle_due(replace(started, time=SELF_SECONDS))
 
-    assert parcel.value.code == "parcel_busy"
+    assert facility(done, "L5-3") == new_ad(NODE_JOB_SECONDS)
+    assert done.compute.jobs == ()
 
 
-def test_a_bad_source_is_reported_before_a_busy_parcel() -> None:
-    world = perform(WORLD, BuildAd("a", "L5-3", "self"))
+def test_a_holder_of_shares_builds_on_the_parcel_without_a_permit() -> None:
+    shared = Parcel(5, 3, "a", shares=(("a", 60), ("b", 40)))
+    world = replace(WORLD, parcels=(shared,))
 
-    with pytest.raises(ActionRejected) as rejected:
-        perform(world, BuildAd("a", "L5-3", "subscription", node_id=9))
+    started = perform(world, BuildAd("b", "L5-3", "self"))
 
-    assert rejected.value.code == "unknown_node"
+    assert [job.owner_id for job in started.compute.jobs] == ["b"]
 
 
 def test_a_parcel_with_an_ad_slot_is_refused() -> None:
@@ -473,12 +474,12 @@ def test_impossible_compute_state_is_rejected(build: object, message: str) -> No
 
 
 def test_a_world_rejects_jobs_and_facilities_it_cannot_account_for() -> None:
-    stray = Job(1, "a", "build_ad", "L1-1", "self", None, 0.0, 12.0)
+    stray = Job(1, "a", "build_ad", "L9-9", "self", None, 0.0, 12.0)
     own = replace(stray, parcel_id="L5-3")
     gone = replace(WORLD, residents=(replace(WORLD.residents[0], left=True), WORLD.residents[1]))
     built = (Parcel(5, 3, "a", Facility("ad", 0.0)), *WORLD.parcels[1:])
 
-    with pytest.raises(ValueError, match="not its owner's"):
+    with pytest.raises(ValueError, match="parcel nobody owns"):
         replace(WORLD, compute=ComputeBook((), (stray,), 1, 2))
     with pytest.raises(ValueError, match="outlives its game or resident"):
         replace(gone, compute=ComputeBook((NODE,), (), 2, 1))
@@ -492,12 +493,13 @@ def test_a_world_rejects_jobs_and_facilities_it_cannot_account_for() -> None:
         replace(WORLD, parcels=built, compute=ComputeBook((), (own,), 1, 2))
 
 
-def test_two_jobs_on_one_parcel_are_rejected() -> None:
+def test_two_jobs_on_one_parcel_are_allowed() -> None:
     first = Job(1, "a", "build_ad", "L5-3", "self", None, 0.0, 12.0)
     second = replace(first, id=2, source="on_demand")
 
-    with pytest.raises(ValueError, match="more than one job"):
-        ComputeBook((), (first, second), 1, 3)
+    book = ComputeBook((), (first, second), 1, 3)
+
+    assert book.jobs == (first, second)
 
 
 def test_a_subscription_job_must_name_its_node_by_a_whole_number() -> None:

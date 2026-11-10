@@ -159,7 +159,9 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     book = world.compute
     taken = claimed(world)
     names.add("make_content")
-    my_parcels = [parcel for parcel in world.parcels if parcel.owner_id == me.id]
+    my_parcels = [
+        parcel for parcel in world.parcels if parcel.owner_id == me.id or parcel.held_by(me.id)
+    ]
     permits = [permit for permit in book.permits if permit.builder_id == me.id]
     promised = {permit.parcel_id for permit in book.permits}
     if any(
@@ -168,11 +170,11 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         names.add("build_ad")
     if any(
         (
-            venue_room(world, parcel, taken)
+            venue_room(world, parcel, taken, resident_id=me.id)
             and promised_builder(world, parcel.id, "game_hall") is None
         )
         or any(
-            venue_room(world, parcel, taken, "mall", runs)
+            venue_room(world, parcel, taken, "mall", runs, me.id)
             and promised_builder(world, parcel.id, "mall", runs) is None
             for runs in ORIENTATIONS
         )
@@ -184,7 +186,7 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     ):
         names.add("buy_node")
     if any(
-        parcel.owner_id == me.id
+        (parcel.owner_id == me.id or parcel.held_by(me.id) > 0)
         and parcel.facility is not None
         and parcel.facility.kind in ITEM_FOR
         and me.inventory.count(ITEM_FOR[parcel.facility.kind])

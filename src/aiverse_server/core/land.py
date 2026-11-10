@@ -87,8 +87,9 @@ class Parcel:
     col: int
     row: int
     owner_id: str
-    """Who bought it and runs it: only they build on it. Selling shares does not change that;
-    any holder of shares may put content in its facility, see `ads.place_content`."""
+    """Who bought it: the buyer of a joint purchase is the proposer. Any holder of shares may
+    build on it and put content in its facility, see `economy/compute.py` and
+    `ads.place_content`, the buyer keeps that right even after selling every share."""
     facility: Facility | None = None
     shares: tuple[tuple[str, int], ...] = ()
     """(holder id, shares) pairs: who the facility's income goes to, `PARCEL_SHARES` in all.

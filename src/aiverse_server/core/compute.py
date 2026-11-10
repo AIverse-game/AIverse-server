@@ -193,12 +193,7 @@ class ComputeBook:
         nodes = {node.id: node for node in self.nodes}
         busy_nodes: set[int] = set()
         self_jobs: dict[str, int] = {}
-        parcels: set[str] = set()
         for job in self.jobs:
-            if job.parcel_id is not None:
-                if job.parcel_id in parcels:
-                    raise ValueError(f"parcel {job.parcel_id} has more than one job")
-                parcels.add(job.parcel_id)
             if job.node_id is not None:
                 node = nodes.get(job.node_id)
                 if node is None or node.owner_id != job.owner_id:

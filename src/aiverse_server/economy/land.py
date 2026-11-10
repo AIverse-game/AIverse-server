@@ -213,13 +213,15 @@ def venue_room(
     taken: dict[tuple[int, int], str],
     kind: str = "game_hall",
     orientation: Orientation = "north_south",
+    resident_id: str | None = None,
 ) -> bool:
-    """Whether the owner of `parcel` could start a venue of `kind`, a mall running as
-    `orientation`, on it: it fits in the block and every parcel it would take up is theirs and
-    untaken."""
+    """Whether `resident_id`, the owner of `parcel` when not said, could start a venue of `kind`,
+    a mall running as `orientation`, on it: it fits in the block and every parcel it would take
+    up is theirs, bought or held in shares, and untaken."""
     if not venue_fits(world.map, parcel.col, parcel.row, kind, orientation):
         return False
-    mine = {(p.col, p.row) for p in world.parcels if p.owner_id == parcel.owner_id}
+    who = resident_id or parcel.owner_id
+    mine = {(p.col, p.row) for p in world.parcels if p.owner_id == who or p.held_by(who) > 0}
     return all(
         cell in mine and cell not in taken
         for cell in venue_footprint(world.map, parcel.col, parcel.row, kind, orientation)

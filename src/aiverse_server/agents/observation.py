@@ -814,12 +814,9 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         if standing_on.owner_id is not None or for_sale_at(world, here) is not None
         else None
     )
-    # Shares in a facility let a resident put content in it, so those parcels are listed too.
-    shared = {
-        parcel.id
-        for parcel in world.parcels
-        if parcel.facility is not None and parcel.held_by(resident_id) > 0
-    }
+    # Shares in a parcel let a resident build on it and put content in its facility, so those
+    # parcels are listed too.
+    shared = {parcel.id for parcel in world.parcels if parcel.held_by(resident_id) > 0}
     mine = [square for square in squares if square.owner_id == resident_id or square.id in shared]
     cells = world.map.block_cells
     best = sorted(
@@ -861,13 +858,13 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             round(world.crowd.viewed(square.id), 1),
             round(world.admissions.admitted_to(square.id), 1),
             holder if holder != square.id else None,
-            venue_room(world, parcel, taken)
+            venue_room(world, parcel, taken, resident_id=resident_id)
             and promised_builder(world, square.id, "game_hall") is None,
             promised_builder(world, square.id, None),
             tuple(
                 runs
                 for runs in ORIENTATIONS
-                if venue_room(world, parcel, taken, "mall", runs)
+                if venue_room(world, parcel, taken, "mall", runs, resident_id)
                 and promised_builder(world, square.id, "mall", runs) is None
             ),
         )

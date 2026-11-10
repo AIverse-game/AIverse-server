@@ -150,6 +150,19 @@ def test_starting_and_finishing_a_build_are_both_logged() -> None:
     assert finish.time == AD_WORKLOAD / SELF_RATE
 
 
+def test_a_job_dropped_because_another_built_the_parcel_first_is_not_logged_as_built() -> None:
+    shared = Parcel(5, 3, "a", shares=(("a", 50), ("b", 50)))
+    world = replace(WORLD, parcels=(shared, *WORLD.parcels[1:]))
+    started = perform_logged(
+        perform_logged(world, BuildAd("a", "L5-3", "self")), BuildAd("b", "L5-3", "self")
+    )
+
+    done = settle_due(replace(started, time=AD_WORKLOAD / SELF_RATE))
+
+    built = [entry for entry in done.world_log.entries if entry.verb == "built"]
+    assert [(entry.actor_id, entry.parcel_id) for entry in built] == [("a", "L5-3")]
+
+
 def test_finished_content_is_logged_as_made() -> None:
     started = perform_logged(WORLD, MakeContent("b", "self", content="game"))
     (job,) = started.compute.jobs

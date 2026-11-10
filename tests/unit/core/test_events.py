@@ -96,6 +96,18 @@ def test_ids_are_not_reused_after_an_event_is_answered() -> None:
     assert raised.value.code == "unknown_event"
 
 
+def test_a_missing_event_is_reported_with_the_events_still_pending_for_that_resident() -> None:
+    world, first = send_event(WORLD, "a", "b", Note())
+    world = reject_event(world, "b", first.id)
+    world, second = send_event(world, "a", "b", Note())
+
+    with pytest.raises(EventError) as raised:
+        accept_event(world, "b", first.id)
+
+    assert f"{second.id} (Note, a -> b)" in str(raised.value)
+    assert "do not try it again" in str(raised.value)
+
+
 def test_on_send_reserves_what_the_event_offers() -> None:
     world, _ = send_event(WORLD, "a", "b", Gift("bread", 2))
 

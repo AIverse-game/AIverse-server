@@ -116,17 +116,14 @@ def test_a_finished_job_leaves_an_ad_slot_on_the_parcel() -> None:
 def test_refusals_come_back_as_failed_results_and_change_nothing() -> None:
     game, _ = make_game()
     tools = ResidentTools(game, "a")
-    tools.build_ad("L5-5", "self")
     before = game.world
 
-    same_parcel = tools.build_ad("L5-5", "on_demand")
     foreign = tools.build_ad("L2-2", "on_demand")
     no_node = tools.build_ad("L1-1", "subscription", node_id=9)
     short = tools.buy_node(NODE_SECONDS[0] - 1)
 
-    results = [same_parcel, foreign, no_node, short]
+    results = [foreign, no_node, short]
     assert [r.code for r in results] == [
-        "parcel_busy",
         "not_your_parcel",
         "unknown_node",
         "invalid_seconds",

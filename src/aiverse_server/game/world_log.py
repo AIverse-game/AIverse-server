@@ -85,7 +85,22 @@ def record_finished_jobs(before: World, after: World) -> World:
     """Log, at `after.time`, every job running in `before` that is gone from `after`: a facility
     built or a piece of content made. Only `finish_jobs` may lie between the two worlds."""
     running = {job.id for job in after.compute.jobs}
-    entries = [_finished(job) for job in before.compute.jobs if job.id not in running]
+    bare = {parcel.id for parcel in before.parcels if parcel.facility is None}
+    fresh = {
+        parcel.id: parcel.facility.kind
+        for parcel in after.parcels
+        if parcel.facility is not None and parcel.id in bare
+    }
+    entries: list[WorldLogEntry] = []
+    for job in sorted(before.compute.jobs, key=lambda job: (job.ends_at, job.id)):
+        if job.id in running:
+            continue
+        if job.parcel_id is not None:
+            # A job dropped because another on its parcel finished first built nothing.
+            if fresh.get(job.parcel_id) != BUILT_BY[job.kind]:
+                continue
+            del fresh[job.parcel_id]
+        entries.append(_finished(job))
     return _append(after, entries) if entries else after
 
 

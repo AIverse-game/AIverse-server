@@ -75,7 +75,7 @@ class WalkJob:
 NoteTerm = Literal["long_term", "short_term"]
 """How long a note lasts: the whole game, or `memory.SHORT_TERM_SECONDS`."""
 
-NOTE_LENGTH_LIMIT = 300
+NOTE_LENGTH_LIMIT = 600
 """Characters a note may hold, so a resident's notes stay small enough to read every round."""
 
 NOTE_LIMITS: dict[NoteTerm, int] = {"long_term": 30, "short_term": 20}
@@ -694,10 +694,8 @@ class World:
         for job in self.compute.jobs:
             if job.owner_id not in ids or job.owner_id in left or self.ended:
                 raise ValueError(f"job {job.id} outlives its game or resident")
-            if job.parcel_id is not None and owners.get(job.parcel_id) != (
-                job.fee_from or job.owner_id
-            ):
-                raise ValueError(f"job {job.id} works on a parcel that is not its owner's")
+            if job.parcel_id is not None and job.parcel_id not in owners:
+                raise ValueError(f"job {job.id} works on a parcel nobody owns")
             if job.fee_from is not None and (job.fee_from not in ids or self.ended):
                 raise ValueError(f"job {job.id} outlives its game or the owner paying for it")
             if job.started_at > self.time:
@@ -709,8 +707,8 @@ class World:
                 raise ValueError(f"permit for {permit.parcel_id} outlives its game or resident")
             if left & {permit.owner_id, permit.builder_id}:
                 raise ValueError(f"permit for {permit.parcel_id} outlives its resident")
-            if owners.get(permit.parcel_id) != permit.owner_id:
-                raise ValueError(f"permit for {permit.parcel_id} is not from the parcel's owner")
+            if permit.parcel_id not in owners:
+                raise ValueError(f"permit for {permit.parcel_id}, which nobody owns")
         for order in self.orders.orders:
             if order.resident_id not in ids or order.resident_id in left or self.ended:
                 raise ValueError(f"order {order.id} outlives its game or resident")

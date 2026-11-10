@@ -83,15 +83,23 @@ def test_a_portal_is_built_by_a_generative_job_and_appears_when_it_ends() -> Non
     assert done.compute.jobs == ()
 
 
-def test_a_portal_is_built_while_walking_and_takes_the_parcel_like_an_ad_slot() -> None:
-    world = replace(WORLD, parcels=(Parcel(2, 2, "a"),))
-    walking = perform(world, MoveTo("a", Position(60, 60)))
-
-    started = perform(walking, BuildPortal("a", "L2-2", "self"))
+def test_only_the_owner_builds_a_portal_not_a_holder_of_shares() -> None:
+    world = replace(WORLD, parcels=(Parcel(2, 2, "a", shares=(("a", 50), ("b", 50))),))
 
     with pytest.raises(ActionRejected) as raised:
-        perform(started, BuildAd("a", "L2-2", "on_demand"))
-    assert raised.value.code == "parcel_busy"
+        perform(world, BuildPortal("b", "L2-2", "self"))
+
+    assert raised.value.code == "not_your_parcel"
+
+
+def test_a_portal_is_built_while_walking_and_may_share_its_parcel_with_another_job() -> None:
+    world = replace(WORLD, parcels=(Parcel(2, 2, "a"),))
+    walking = perform(world, MoveTo("a", Position(60, 60)))
+    started = perform(walking, BuildPortal("a", "L2-2", "self"))
+
+    both = perform(started, BuildAd("a", "L2-2", "on_demand"))
+
+    assert [job.kind for job in both.compute.jobs] == ["build_portal", "build_ad"]
 
 
 def test_a_resident_may_hold_only_so_many_portals_built_or_building() -> None:

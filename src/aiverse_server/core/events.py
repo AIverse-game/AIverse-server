@@ -156,7 +156,20 @@ def _find(world: World, event_id: int, resident_id: str, party: Callable[[Event]
         # Someone else's event is reported as missing, so its existence does not leak.
         if event.id == event_id and party(event) == resident_id:
             return event
-    raise EventError("unknown_event", f"resident {resident_id!r} has no pending event {event_id!r}")
+    others = [event for event in world.events.pending if party(event) == resident_id]
+    now = (
+        ", ".join(
+            f"{event.id} ({type(event.payload).__name__}, "
+            f"{event.sender_id} -> {event.recipient_id})"
+            for event in others
+        )
+        or "none"
+    )
+    raise EventError(
+        "unknown_event",
+        f"resident {resident_id!r} has no pending event {event_id!r}: it was already answered, "
+        f"withdrawn or has lapsed, so do not try it again. Pending now: {now}",
+    )
 
 
 def _close(world: World, event: Event, hook: Callable[[World, Event], World]) -> World:

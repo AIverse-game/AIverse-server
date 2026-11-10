@@ -381,7 +381,7 @@ class CancelContractArgs(DeliverArgs):
 
 
 class RememberArgs(_Args):
-    text: str = Field(description="The note, at most 300 characters.")
+    text: str = Field(description=f"The note, at most {NOTE_LENGTH_LIMIT} characters.")
     term: Literal["long_term", "short_term"] = Field(
         default="short_term",
         description="long_term lasts the whole game; short_term, the default, is cleared after "

@@ -126,8 +126,9 @@ has {permit_s:g}s to start the job (build_ad or build_venue on that parcel) with
 compute or nodes; the fee is paid when the facility is finished, and goes back to the owner if
 the builder does not start in time. The facility belongs to the parcel: its income goes to the
 holders of the parcel's shares, so a builder who wants a part of it asks for shares as well
-(offer_shares), and any holder of its shares may put content in it. So an owner with land and
-little compute, and a builder with a busy node and no land, each do better together than alone.
+(offer_shares), and any holder of its shares may build on it and put content in it. So an owner
+with land and little compute, and a builder with a busy node and no land, each do better
+together than alone.
 - build_ad starts an ad slot on a parcel of yours from anywhere. It is {AD_WORKLOAD:g} workload:
 {own_s:g}s on your own compute, {hired_s:g}s and {hired_coins} coins on a hired node. You need not
 stay: walk, talk and trade meanwhile, and it appears when the job ends.
@@ -153,10 +154,10 @@ because they are cheap.
 - The payment goes to the holders of the parcel's {PARCEL_SHARES} shares, in proportion; buying
 a parcel gives you all of them. offer_shares hands some to another resident for coins, or for
 nothing, say to pay for work or to take a partner in; they take effect when it is accepted.
-Only the buyer of a parcel builds on it; whoever holds its shares may put content in it.
+Whoever holds any shares of a parcel may build on it and put content in it.
 - To buy a block together, stand in it and joint_buy_parcel to a partner: they pay part of the
-price for a number of shares, you pay the rest at once and keep the other shares and the
-running of it. It is bought when they accept; if someone buys it first, withdraw.
+price for a number of shares, you pay the rest at once and keep the other shares. Both of
+you may build on it. It is bought when they accept; if someone buys it first, withdraw.
 - {VISITOR_COUNT} scripted visitors come in at the middle of the map and go to workspaces and game
 halls showing games, more to ones with more pieces (a workspace counts as {WORKSPACE_PIECES},
 a mall as {MALL_PIECES}) and nearer to them, fewer to crowded ones, paying the fee at each door;

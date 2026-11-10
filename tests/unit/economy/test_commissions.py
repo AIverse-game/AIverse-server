@@ -350,3 +350,43 @@ def test_a_job_under_way_is_paid_to_its_builder_even_if_the_owner_has_left_meanw
     assert facility_on(done, "L5-3") == "ad"
     assert coin_balance(done, "b") == 5_000 + FEE
     assert coin_balance(done, "o") == 5_000 - FEE
+
+
+SHARED = replace(
+    WORLD, parcels=(Parcel(5, 3, "o", shares=(("c", 50), ("o", 50))), *WORLD.parcels[1:])
+)
+
+
+def test_a_holder_of_shares_may_commission_a_builder_on_the_parcel() -> None:
+    asked = perform(SHARED, OfferBuildCommission("c", "b", "L5-3", "ad", FEE, True))
+
+    agreed_to = perform(asked, RespondToEvent("b", 1, True))
+
+    assert [(p.builder_id, p.owner_id) for p in agreed_to.compute.permits] == [("b", "c")]
+    assert total_coins(agreed_to, "c") == 5_000
+
+
+def test_a_builder_who_also_holds_shares_builds_on_the_permit_and_is_paid() -> None:
+    world = replace(
+        WORLD, parcels=(Parcel(5, 3, "o", shares=(("b", 50), ("o", 50))), *WORLD.parcels[1:])
+    )
+    started = perform(agreed(world), BuildAd("b", "L5-3", "self"))
+
+    done = settle_due(replace(started, time=SELF_SECONDS_FOR_AD))
+
+    assert started.compute.permits == ()
+    assert coin_balance(done, "b") == 5_000 + FEE
+    assert facility_on(done, "L5-3") == "ad"
+
+
+def test_two_jobs_on_one_parcel_ending_together_build_once_and_refund_the_fee_once() -> None:
+    plain = perform(WORLD, BuildAd("o", "L5-3", "self"))
+    both = perform(agreed(plain), BuildAd("b", "L5-3", "self"))
+
+    done = settle_due(replace(both, time=SELF_SECONDS_FOR_AD))
+
+    assert facility_on(done, "L5-3") == "ad"
+    assert done.compute.jobs == ()
+    assert coin_balance(done, "o") == 5_000
+    assert coin_balance(done, "b") == 5_000
+    assert sum(total_coins(done, r.id) for r in done.residents) == 15_000

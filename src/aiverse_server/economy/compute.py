@@ -167,7 +167,6 @@ ComputeErrorCode = Literal[
     "unknown_content_kind",
     "not_your_parcel",
     "parcel_built",
-    "parcel_busy",
     "parcel_covered",
     "no_room_for_venue",
     "invalid_source",
@@ -269,6 +268,9 @@ def start_build_portal(
     or being built."""
     _find(world, resident_id)
     parcel = _bare_parcel(world, resident_id, parcel_id)
+    if parcel.owner_id != resident_id:
+        # A portal is linked and tolled by the parcel's owner, so only they build one.
+        raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     if portal_count(world, resident_id) >= MAX_PORTALS:
         raise ComputeError("too_many_portals", f"at most {MAX_PORTALS} portals may be held")
     return _start_job(world, resident_id, "build_portal", parcel.id, source, node_id)
@@ -363,8 +365,6 @@ def _start_job(
             cost = on_demand_cost(workload)
         else:
             raise ComputeError("invalid_source", f"no compute source {source!r}")
-    if parcel_id is not None and any(job.parcel_id == parcel_id for job in book.jobs):
-        raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
     if parcel_id is not None and permit is None:
         promised = promised_builder(world, parcel_id, VENUE_JOB_FACILITY.get(kind), orientation)
         if promised is not None:
@@ -401,12 +401,24 @@ def finish_jobs(world: World) -> World:
         key=lambda job: (job.ends_at, job.id),
     )
     for job in due:
+        if all(other.id != job.id for other in world.compute.jobs):
+            continue  # dropped when a rival on its parcel finished first
         book = replace(world.compute, jobs=tuple(j for j in world.compute.jobs if j.id != job.id))
         world = replace(world, compute=book)
         if job.kind in MAKING_JOBS:
             item = CONTENT_ITEM if job.kind == "make_content" else GAME_ITEM
             world = store_item(world, job.owner_id, item)
             continue
+        site = next((parcel for parcel in world.parcels if parcel.id == job.parcel_id), None)
+        if site is None or site.facility is not None:
+            # Another job on the same parcel finished first; the compute spent is lost, the
+            # owner's fee goes back.
+            if job.fee and job.fee_from is not None:
+                world = add_coins(world, job.fee_from, job.fee)
+            continue
+        for rival in world.compute.jobs:
+            if rival.parcel_id == job.parcel_id:
+                world = _drop_rival(world, rival)
         built = Facility(BUILT_BY[job.kind], world.time, orientation=job.orientation)
         parcels = tuple(
             replace(parcel, facility=built) if parcel.id == job.parcel_id else parcel
@@ -417,6 +429,14 @@ def finish_jobs(world: World) -> World:
             world = add_coins(world, job.owner_id, job.fee)
             world = record_transfer(world, job.fee_from, job.owner_id, job.fee, "commission")
     return world
+
+
+def _drop_rival(world: World, job: Job) -> World:
+    """Drop a job on a parcel that another job has just built on; its fee goes back."""
+    if job.fee and job.fee_from is not None:
+        world = add_coins(world, job.fee_from, job.fee)
+    book = world.compute
+    return replace(world, compute=replace(book, jobs=tuple(j for j in book.jobs if j.id != job.id)))
 
 
 def expire_nodes(world: World) -> World:
@@ -524,13 +544,11 @@ def check_buildable(
     orientation: Orientation = "north_south",
 ) -> None:
     """Refuse unless `owner_id` could build a facility of `kind` on `parcel_id` now, a mall
-    running as `orientation`: it is theirs, bare, not taken up by a venue, with no job, and for a
-    venue all of its land fits. Raises `ComputeError`."""
+    running as `orientation`: it is theirs, bare, not taken up by a venue, and for a venue all of
+    its land fits. Raises `ComputeError`."""
     _bare_parcel(
         world, owner_id, parcel_id, venue=None if kind == "ad" else kind, orientation=orientation
     )
-    if any(job.parcel_id == parcel_id for job in world.compute.jobs):
-        raise ComputeError("parcel_busy", f"parcel {parcel_id} already has a job running")
     if promised_builder(world, parcel_id, None if kind == "ad" else kind, orientation) is not None:
         raise ComputeError(
             "parcel_permitted", f"parcel {parcel_id} is already promised to a builder"
@@ -541,12 +559,11 @@ def _owner_or_permit(
     world: World, resident_id: str, parcel_id: str, kind: PermitKind
 ) -> tuple[str, Permit | None]:
     """Whose parcel `parcel_id` is, and the permit that lets `resident_id` build `kind` on it
-    when it is not theirs."""
+    when it is not theirs. A permit is used first; else a holder of shares in the parcel builds as
+    the owner does, with no permit."""
     parcel = next((p for p in world.parcels if p.id == parcel_id), None)
     if parcel is None:
         raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
-    if parcel.owner_id == resident_id:
-        return resident_id, None
     permit = next(
         (
             p
@@ -555,13 +572,15 @@ def _owner_or_permit(
         ),
         None,
     )
-    if permit is None:
-        raise ComputeError(
-            "not_your_parcel",
-            f"parcel {parcel_id!r} is not {resident_id}'s, and its owner has not permitted "
-            f"{resident_id} to build a {kind.replace('_', ' ')} there",
-        )
-    return parcel.owner_id, permit
+    if permit is not None:
+        return permit.owner_id, permit
+    if _is_theirs(parcel, resident_id):
+        return resident_id, None
+    raise ComputeError(
+        "not_your_parcel",
+        f"parcel {parcel_id!r} is not {resident_id}'s, and its owner has not permitted "
+        f"{resident_id} to build a {kind.replace('_', ' ')} there",
+    )
 
 
 def _orientation(kind: str, asked: Orientation | None, permit: Permit | None) -> Orientation:
@@ -592,10 +611,11 @@ def _bare_parcel(
     orientation: Orientation = "north_south",
 ) -> Parcel:
     """The resident's parcel `parcel_id`, bare, and for a venue, `venue` its kind, every parcel it
-    would take up theirs and untaken too."""
+    would take up theirs and untaken too. A parcel is theirs when they bought it or hold shares
+    in it."""
     by_cell = {(p.col, p.row): p for p in world.parcels}
     parcel = next((p for p in world.parcels if p.id == parcel_id), None)
-    if parcel is None or parcel.owner_id != resident_id:
+    if parcel is None or not _is_theirs(parcel, resident_id):
         raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
     if parcel.facility is not None:
         raise ComputeError("parcel_built", f"parcel {parcel_id} already has a facility")
@@ -614,7 +634,7 @@ def _bare_parcel(
     )
     for cell in cells:
         holder = by_cell.get(cell)
-        if holder is None or holder.owner_id != resident_id:
+        if holder is None or not _is_theirs(holder, resident_id):
             raise ComputeError(
                 "not_your_parcel",
                 f"parcel {parcel_id!r} needs parcels that are not all {resident_id}'s",
@@ -624,6 +644,10 @@ def _bare_parcel(
                 "parcel_covered", f"parcel {holder.id} is taken up by what is on {taken[cell]}"
             )
     return parcel
+
+
+def _is_theirs(parcel: Parcel, resident_id: str) -> bool:
+    return parcel.owner_id == resident_id or parcel.held_by(resident_id) > 0
 
 
 def _find(world: World, resident_id: str) -> None:
