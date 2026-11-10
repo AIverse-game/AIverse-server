@@ -27,7 +27,7 @@ from ..core.world import (
     World,
     WorldLog,
     WorldLogEntry,
-    WorldLogKind,
+    WorldLogVerb,
 )
 from ..economy.commissions import BuildCommission
 from ..economy.compute import BUILT_BY
@@ -199,7 +199,7 @@ def _action_entry(before: World, action: Action, after: World) -> WorldLogEntry 
             event = next(e for e in before.events.pending if e.id == action.event_id)
             if isinstance(action, WithdrawEvent):
                 return _deal_entry("withdrew", me, event.recipient_id, event)
-            answer: WorldLogKind = "accepted" if action.accept else "declined"
+            answer: WorldLogVerb = "accepted" if action.accept else "declined"
             return _deal_entry(answer, me, event.sender_id, event)
         case Deliver() | CancelContract():
             contract = next(c for c in before.contracts.active if c.id == action.contract_id)
@@ -229,7 +229,7 @@ def _action_entry(before: World, action: Action, after: World) -> WorldLogEntry 
 
 
 def _deal_entry(
-    kind: WorldLogKind, actor_id: str, other_id: str, event: Event
+    verb: WorldLogVerb, actor_id: str, other_id: str, event: Event
 ) -> WorldLogEntry | None:
     """An entry about the request `event`, with what it asked for; None for a kind of request
     the log does not know."""
@@ -238,7 +238,7 @@ def _deal_entry(
         case PurchaseOffer() | SaleOffer():
             name: DealKind = "purchase" if isinstance(payload, PurchaseOffer) else "sale"
             return _entry(
-                kind,
+                verb,
                 actor_id,
                 other_id=other_id,
                 deal=name,
@@ -248,7 +248,7 @@ def _deal_entry(
             )
         case InformationOffer():
             return _entry(
-                kind,
+                verb,
                 actor_id,
                 other_id=other_id,
                 deal="information",
@@ -257,7 +257,7 @@ def _deal_entry(
             )
         case ShareOffer():
             return _entry(
-                kind,
+                verb,
                 actor_id,
                 other_id=other_id,
                 deal="shares",
@@ -267,7 +267,7 @@ def _deal_entry(
             )
         case ContractProposal():
             return _entry(
-                kind,
+                verb,
                 actor_id,
                 other_id=other_id,
                 deal="contract",
@@ -279,7 +279,7 @@ def _deal_entry(
             )
         case JointPurchase():
             return _entry(
-                kind,
+                verb,
                 actor_id,
                 other_id=other_id,
                 deal="joint_purchase",
@@ -289,7 +289,7 @@ def _deal_entry(
             )
         case BuildCommission():
             return _entry(
-                kind,
+                verb,
                 actor_id,
                 other_id=other_id,
                 deal="commission",
@@ -300,7 +300,7 @@ def _deal_entry(
             )
         case LinkProposal():
             return _entry(
-                kind,
+                verb,
                 actor_id,
                 other_id=other_id,
                 deal="link",
@@ -312,7 +312,7 @@ def _deal_entry(
 
 
 def _entry(
-    kind: WorldLogKind,
+    verb: WorldLogVerb,
     actor_id: str,
     *,
     other_id: str | None = None,
@@ -332,7 +332,7 @@ def _entry(
     return WorldLogEntry(
         seq=0,
         time=0.0,
-        kind=kind,
+        verb=verb,
         actor_id=actor_id,
         other_id=other_id,
         text=text,

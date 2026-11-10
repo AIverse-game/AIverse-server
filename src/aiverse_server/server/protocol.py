@@ -25,7 +25,7 @@ from ..agents.llm_brain import LLMSetting, LLMSettings
 from ..agents.runner import TurnRecord
 from ..core.events import Event
 from ..core.orders import Fill
-from ..core.world import COLOR_PATTERN, DealKind, Position, World, WorldLogEntry, WorldLogKind
+from ..core.world import COLOR_PATTERN, DealKind, Position, World, WorldLogEntry, WorldLogVerb
 from ..economy.ads import shown
 from ..economy.contracts import ContractProposal, contracts_of
 from ..economy.exchange import EXCHANGE_ITEMS, MAX_ORDERS, depth
@@ -489,7 +489,7 @@ class WorldLogEntryView(_Message):
     seq: int
     time: float
     """Game seconds since the start when it happened."""
-    kind: WorldLogKind
+    verb: WorldLogVerb
     actor_id: str
     other_id: str | None = None
     text: str | None = None
@@ -847,7 +847,7 @@ def _world_log_entry_view(entry: WorldLogEntry) -> WorldLogEntryView:
     return WorldLogEntryView(
         seq=entry.seq,
         time=entry.time,
-        kind=entry.kind,
+        verb=entry.verb,
         actor_id=entry.actor_id,
         other_id=entry.other_id,
         text=entry.text,

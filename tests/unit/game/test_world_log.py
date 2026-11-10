@@ -51,7 +51,7 @@ def test_a_whisper_is_logged_with_who_said_it_to_whom() -> None:
     after = perform_logged(WORLD, Say("a", "  meet me at noon ", to="c"))
 
     (entry,) = after.world_log.entries
-    assert (entry.kind, entry.actor_id, entry.other_id) == ("said", "a", "c")
+    assert (entry.verb, entry.actor_id, entry.other_id) == ("said", "a", "c")
     assert entry.text == "meet me at noon"
     assert entry.quantity is None
 
@@ -59,20 +59,20 @@ def test_a_whisper_is_logged_with_who_said_it_to_whom() -> None:
 def test_speaking_aloud_logs_how_many_heard_it() -> None:
     entry = perform_logged(WORLD, Say("a", "hello")).world_log.entries[0]
 
-    assert (entry.kind, entry.other_id, entry.quantity) == ("said", None, 1)
+    assert (entry.verb, entry.other_id, entry.quantity) == ("said", None, 1)
 
 
 def test_setting_off_logs_where_the_resident_heads() -> None:
     entry = perform_logged(WORLD, MoveTo("c", Position(10, 20))).world_log.entries[0]
 
-    assert (entry.kind, entry.actor_id, entry.position) == ("walked", "c", Position(10, 20))
+    assert (entry.verb, entry.actor_id, entry.position) == ("walked", "c", Position(10, 20))
 
 
 def test_buying_land_logs_the_parcel_and_what_it_cost() -> None:
     after = perform_logged(WORLD, BuyParcel("c"))
 
     entry = after.world_log.entries[0]
-    assert (entry.kind, entry.parcel_id, entry.quantity) == ("bought_parcel", "L9-9", 1)
+    assert (entry.verb, entry.parcel_id, entry.quantity) == ("bought_parcel", "L9-9", 1)
     assert entry.coins == coin_balance(WORLD, "c") - coin_balance(after, "c")
     assert entry.coins is not None and entry.coins > 0
 
@@ -84,8 +84,8 @@ def test_an_offer_and_its_acceptance_are_logged_with_the_deal() -> None:
     accepted = perform_logged(offered, RespondToEvent("b", event_id, accept=True))
 
     offer, answer = accepted.world_log.entries
-    assert (offer.kind, offer.actor_id, offer.other_id) == ("offered", "a", "b")
-    assert (answer.kind, answer.actor_id, answer.other_id) == ("accepted", "b", "a")
+    assert (offer.verb, offer.actor_id, offer.other_id) == ("offered", "a", "b")
+    assert (answer.verb, answer.actor_id, answer.other_id) == ("accepted", "b", "a")
     for entry in (offer, answer):
         assert (entry.deal, entry.item, entry.quantity, entry.coins) == ("purchase", "bread", 2, 30)
 
@@ -104,7 +104,7 @@ def test_withdrawing_an_offer_logs_who_it_was_for() -> None:
 
     entry = perform_logged(offered, WithdrawEvent("a", event_id)).world_log.entries[-1]
 
-    assert (entry.kind, entry.actor_id, entry.other_id, entry.deal) == (
+    assert (entry.verb, entry.actor_id, entry.other_id, entry.deal) == (
         "withdrew",
         "a",
         "b",
@@ -123,7 +123,7 @@ def test_teleporting_logs_the_line_s_toll_even_when_the_traveller_gets_it_back()
 
     entry = perform_logged(linked, Teleport("a", "L9-9")).world_log.entries[-1]
 
-    assert (entry.kind, entry.parcel_id, entry.other_parcel_id) == ("teleported", "L0-0", "L9-9")
+    assert (entry.verb, entry.parcel_id, entry.other_parcel_id) == ("teleported", "L0-0", "L9-9")
     assert entry.coins == 25
 
 
@@ -140,8 +140,8 @@ def test_starting_and_finishing_a_build_are_both_logged() -> None:
     done = settle_due(replace(started, time=AD_WORKLOAD / SELF_RATE))
 
     start, finish = done.world_log.entries
-    assert (start.kind, start.parcel_id, start.facility) == ("started_building", "L5-3", "ad")
-    assert (finish.kind, finish.actor_id, finish.parcel_id, finish.facility) == (
+    assert (start.verb, start.parcel_id, start.facility) == ("started_building", "L5-3", "ad")
+    assert (finish.verb, finish.actor_id, finish.parcel_id, finish.facility) == (
         "built",
         "a",
         "L5-3",
@@ -157,7 +157,7 @@ def test_finished_content_is_logged_as_made() -> None:
     done = settle_due(replace(started, time=job.ends_at))
 
     entry = done.world_log.entries[-1]
-    assert (entry.kind, entry.actor_id, entry.item) == ("made", "b", "game")
+    assert (entry.verb, entry.actor_id, entry.item) == ("made", "b", "game")
 
 
 def test_the_log_keeps_only_the_latest_entries_numbered_in_order() -> None:

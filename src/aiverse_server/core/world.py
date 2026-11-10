@@ -287,7 +287,7 @@ class NoticeLog:
                 raise ValueError(f"notice {notice.seq} is empty")
 
 
-WorldLogKind = Literal[
+WorldLogVerb = Literal[
     "said",
     "walked",
     "teleported",
@@ -332,7 +332,7 @@ class WorldLogEntry:
     seq: int
     """Unique within a world, counting up from 1 in the order things happened."""
     time: float
-    kind: WorldLogKind
+    verb: WorldLogVerb
     actor_id: str
     """Who did it, or whose job finished."""
     other_id: str | None = None

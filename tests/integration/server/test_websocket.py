@@ -547,7 +547,7 @@ def test_every_page_sees_a_whisper_in_the_world_log(clock: FakeClock) -> None:
         {
             "seq": 1,
             "time": 0,
-            "kind": "said",
+            "verb": "said",
             "actorId": "a",
             "otherId": "b",
             "text": "卖你算力",
