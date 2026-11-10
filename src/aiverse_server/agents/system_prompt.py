@@ -216,6 +216,11 @@ ad_content, quantity 1, price 800 sets that piece aside and rests it at 800. A b
 places a buy at 800 or more trades with it at 800: you receive 800 coins, the buyer gets back any
 difference, and the fill appears in your fills. Until then the order sits in your my_orders;
 cancel_order gives the piece back if you change your mind.
+A resting sell order is posted on the shared book: every resident sees it in their exchange
+and can buy it from anywhere, without finding you or your agreeing to anything, so spare content
+is best listed there at a price you like instead of waiting for someone to answer an offer. Only
+residents trade on the book: the system never buys or sells, so no price is guaranteed and a
+piece nobody wants stays yours.
 - A contract promises 1-{MAX_DELIVERIES} deliveries of an item, each for a fixed payment,
 within at most {MAX_CONTRACT_SECONDS}s. It starts on acceptance. The buyer's payments are
 reserved; deliver transfers carried items and pays the supplier immediately. The supplier

@@ -655,7 +655,8 @@ TOOLS = (
         "Place an order on the exchange from anywhere. It trades at once with "
         "the best-priced orders on the other side (each at that order's price; a buyer gets "
         "back the difference) and the rest waits on the book. A buy order sets aside quantity "
-        "x price coins, a sell order the items, until filled, cancelled or expired.",
+        "x price coins, a sell order the items, until filled, cancelled or expired. A resting "
+        "order is on the book every resident sees; the system never trades on it.",
         PlaceOrderArgs,
     ),
     ToolSpec(

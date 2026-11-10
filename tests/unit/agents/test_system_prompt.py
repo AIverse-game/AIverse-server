@@ -142,3 +142,10 @@ def test_the_move_tool_quotes_the_same_walking_speed_as_the_prompt() -> None:
 
     assert "costs time only" in move.description
     assert "2.5 map units per second" in move.description
+
+
+def test_the_prompt_says_a_sell_order_is_listed_for_everyone_and_the_system_never_buys() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert "A resting sell order is posted on the shared book: every resident sees it" in prompt
+    assert "the system never buys or sells" in prompt
