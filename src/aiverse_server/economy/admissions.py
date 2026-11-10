@@ -23,7 +23,7 @@ from .gardens import income_multiplier, pay_bonus
 from .shares import split_income
 from .sponsors import latest_payday, next_payday_after
 
-FEES: dict[str, int] = {"workspace": 8, "game_hall": 12, "mall": 2, "garden": 4}
+FEES: dict[str, int] = {"workspace": 8, "game_hall": 12, "mall": 2, "garden": 1}
 """Coins one person pays to get into a facility of each kind."""
 
 _SLACK = 1e-9

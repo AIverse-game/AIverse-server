@@ -393,7 +393,7 @@ def no_working_route(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_a_garden_draws_fewer_visitors_than_a_workspace_and_more_than_a_mall() -> None:
     assert MALL_PIECES < GARDEN_PIECES < WORKSPACE_PIECES
-    assert FEES["mall"] < FEES["garden"] < FEES["workspace"] < FEES["game_hall"]
+    assert FEES["garden"] < FEES["mall"] < FEES["workspace"] < FEES["game_hall"]
 
 
 @pytest.mark.usefixtures("no_working_route")

@@ -271,6 +271,59 @@ def test_nearer_venues_draw_more_visitors_all_else_equal() -> None:
     assert picks.count("L5-5") > picks.count("L0-0") > 0
 
 
+def test_a_venue_nearly_twice_as_far_draws_far_fewer_visitors_all_else_equal() -> None:
+    # Two workspaces of the same kind, 25.5 and 45.3 units from the entrance: the walk costs the
+    # farther one 1.2 more utility (20 units, 8 seconds, at 0.15 a second).
+    picks = first_picks(workspace(5, 7), workspace(5, 9))
+
+    assert picks.count("L5-7") > 2 * picks.count("L5-9") > 0
+
+
+def test_a_visitor_leaving_a_venue_goes_on_to_the_one_next_door_far_more_than_to_the_far_one() -> (
+    None
+):
+    # Standing at the garden on L5-5 with a stop left, between two workspaces as good as each
+    # other: one on the next parcel, one at the far side of the map.
+    garden = Parcel(5, 5, "a", Facility("garden", 0.0))
+    picks = []
+    for seed in range(100):
+        leaving = visitor(
+            phase="staying",
+            until=5.0,
+            at=Position(55, 55),
+            target=Position(55, 55),
+            goal="place",
+            stop="L5-5",
+            stops_left=2,
+        )
+        world = world_of(
+            garden, workspace(6, 5), workspace(0, 0), crowd=crowd_of(leaving, seed=seed)
+        )
+        picks.append(the_visitor(at(world, 5.0)).stop)
+
+    # Hardly anyone walks across the map; at a third of the walking cost a fifth of them did.
+    assert picks.count("L0-0") < 5 < picks.count("L6-5")
+
+
+def test_a_portal_line_to_a_far_venue_makes_visitors_choose_it_over_an_equally_far_one() -> None:
+    # Workspaces on L0-0 and L9-9, as far from the entrance as each other. Portals on L5-4, next
+    # to the entrance, and on L0-1 beside the first, joined by a line, cut the walk to L0-0.
+    portals = (Parcel(5, 4, "a", PORTAL), Parcel(0, 1, "a", PORTAL))
+    venues = (workspace(0, 0), workspace(9, 9))
+    without = first_picks(*venues)
+    with_line = []
+    for seed in range(100):
+        world = replace(
+            world_of(*venues, *portals, crowd=crowd_of(visitor(), seed=seed)),
+            links=(Link("L0-1", "L5-4", 0),),
+        )
+        with_line.append(the_visitor(at(world, 5.0)).stop)
+
+    # Without the line the two are about even; with it hardly anyone makes the longer walk.
+    assert 40 < without.count("L0-0") < 60
+    assert with_line.count("L9-9") < 15
+
+
 def test_a_workspace_is_a_venue_visitors_go_to_too() -> None:
     picks = first_picks(workspace(5, 5))
 

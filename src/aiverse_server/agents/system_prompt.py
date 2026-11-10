@@ -175,6 +175,8 @@ The observation's recent_payments counts the coins residents paid each other in 
 {TREND_SECONDS / 60:g} minutes, so you can see whether anyone is actually buying from another
 resident.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
+Visitors weigh the walk heavily and cross lines for nothing, so a line that puts a far venue
+within a short walk of where visitors are brings it more of them.
 - build_venue builds a game hall or a workspace on a square of {VENUE_CELLS} x {VENUE_CELLS}
 parcels with the parcel you name at its north-west corner; all of them must be yours, bare and in
 one block. It is like an ad slot but dearer: {VENUE_WORKLOAD:g} workload, {venue_own_s:g}s on

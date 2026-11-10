@@ -101,9 +101,10 @@ GARDEN_PIECES = 0.6
 """A garden shows no content either, and draws visitors as an ad slot showing this many pieces
 would: more than a mall, less than a workspace and far less than a game hall with games. It is a
 place to rest in for a while, so visitors stay longer than at a mall, and it is not on the working
-route. Its fee is 4 coins, half a workspace's: a garden that drew visitors from the other venues
-of its block for one coin each would cost its owner more than the tenth it adds, see
-`gardens.py`."""
+route. Its fee is a single coin: it earns by being something to stop at, and its block gains the
+tenth of `gardens.py` besides. A visitor leaving it goes on to the venues next to it more often,
+because of `WALK_COST`, but the garden uses up a stop too, so it takes some visits from its
+neighbours rather than adding to them."""
 
 MIN_AWAY = 20.0
 MAX_AWAY = 60.0
@@ -126,8 +127,14 @@ SEEN_FOR = 120.0
 APPEAL = 2.0
 """Utility for each unit of the log of one plus the pieces of content a slot shows."""
 
-WALK_COST = 0.05
-"""Utility lost per game second of walking to a slot."""
+WALK_COST = 0.15
+"""Utility lost per game second of walking to a venue: three times what it first was, so that of
+two venues alike in everything else the nearer one is clearly the likelier. 30 units, 12 seconds,
+cost 1.8, more than a workspace's appeal, 1.39. Visitors choose the next stop from where they
+stand, so a visitor who has just left a venue goes on to what lies near it far more often, and a
+line of portals that shortens the walk to a far venue counts for more, see `portals.Router`. A
+stop at one venue still uses up one of the visitor's few stops, so this moves visits around
+more than it adds them."""
 
 CROWD_COST = 2.0
 """Utility lost when as many visitors as `CROWD_CAPACITY` are already going to or standing at a
