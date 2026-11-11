@@ -65,6 +65,11 @@ WORLD = World(
 )
 
 
+# Seven more residents who do nothing, so that the town has a node of each kind for every
+# portal one resident may have hired at once, see `compute.node_supply`.
+BYSTANDERS = tuple(resident(f"x{n}", 50, 50) for n in range(7))
+
+
 def link(world: World, parcel_id: str, other: str, toll: int = 10, who: str = "a") -> World:
     return perform(world, LinkPortals(who, parcel_id, other, toll))
 
@@ -112,7 +117,7 @@ def test_holders_cannot_build_portals_past_the_owners_limit() -> None:
         Parcel(col, 3, "a", shares=(("a", 50), ("b", 50))) for col in range(MAX_PORTALS + 1)
     )
     rich = tuple(replace(resident, coins=100_000) for resident in WORLD.residents)
-    world = replace(WORLD, residents=rich, parcels=shared)
+    world = replace(WORLD, residents=(*rich, *BYSTANDERS), parcels=shared)
     for index in range(MAX_PORTALS):
         world = perform(world, BuildPortal("b", f"L{index}-3", "on_demand"))
 
@@ -128,7 +133,7 @@ def test_portals_a_holder_has_building_count_for_the_owner_s_own_limit() -> None
         Parcel(col, 3, "a", shares=(("a", 50), ("b", 50))) for col in range(MAX_PORTALS + 1)
     )
     rich = tuple(replace(resident, coins=100_000) for resident in WORLD.residents)
-    world = replace(WORLD, residents=rich, parcels=shared)
+    world = replace(WORLD, residents=(*rich, *BYSTANDERS), parcels=shared)
     for index in range(MAX_PORTALS):
         world = perform(world, BuildPortal("b", f"L{index}-3", "on_demand"))
 

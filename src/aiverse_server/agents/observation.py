@@ -18,7 +18,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 
-from ..core.compute import Job, PermitKind
+from ..core.compute import NODE_KINDS, Job, NodeKind, PermitKind
 from ..core.events import Event, pending_for, pending_from
 from ..core.land import (
     AD_SLOT_CAPACITY,
@@ -40,12 +40,16 @@ from ..economy.compute import (
     GARDEN_WORKLOAD,
     MALL_WORKLOAD,
     MAX_NODES,
+    NODE_FOR_JOB,
     NODE_SECONDS,
     PORTAL_WORKLOAD,
     SUBSCRIPTION_PRICE,
     VENUE_WORKLOAD,
     garden_room,
     job_seconds,
+    node_supply,
+    nodes_free,
+    nodes_in_use,
     on_demand_cost,
     portal_room,
     promised_builder,
@@ -310,6 +314,23 @@ class NodeView:
 
 
 @dataclass(frozen=True)
+class TownNodesView:
+    """The town's nodes of one kind. There are only `total` of them for everyone; a subscribed
+    node is taken until it runs out, a hired one until its job ends."""
+
+    kind: str
+    total: int
+    free: int
+    """Nodes of this kind nobody has taken now: to subscribe to or hire one, one must be free."""
+    held_by: dict[str, int]
+    """Residents holding subscribed nodes of this kind, and how many each."""
+    hired: int
+    """Nodes of this kind taken by hired jobs."""
+    next_free_in: float | None
+    """Seconds until the soonest taken node of this kind comes back; None when none is taken."""
+
+
+@dataclass(frozen=True)
 class AdOption:
     """What a job takes on one source of compute."""
 
@@ -346,6 +367,8 @@ class ComputeView:
     node_seconds: tuple[int, int]
     """Least and most seconds one subscription lasts."""
     max_nodes: int
+    town_nodes: tuple[TownNodesView, ...]
+    """The town's nodes of each kind: how many there are, how many are free and who holds them."""
 
 
 @dataclass(frozen=True)
@@ -1034,6 +1057,29 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
         node_coins_per_second=SUBSCRIPTION_PRICE,
         node_seconds=NODE_SECONDS,
         max_nodes=MAX_NODES,
+        town_nodes=tuple(_town_nodes(world, kind) for kind in NODE_KINDS),
+    )
+
+
+def _town_nodes(world: World, kind: NodeKind) -> TownNodesView:
+    now = world.time
+    book = world.compute
+    held: dict[str, int] = {}
+    for node in book.nodes:
+        if node.kind == kind and node.expires_at > now:
+            held[node.owner_id] = held.get(node.owner_id, 0) + 1
+    hired = sum(
+        job.source == "on_demand" and NODE_FOR_JOB[job.kind] == kind and job.ends_at > now
+        for job in book.jobs
+    )
+    taken = nodes_in_use(world, kind)
+    return TownNodesView(
+        kind=kind,
+        total=node_supply(world),
+        free=nodes_free(world, kind),
+        held_by=held,
+        hired=hired,
+        next_free_in=taken[0] - now if taken else None,
     )
 
 

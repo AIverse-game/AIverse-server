@@ -26,6 +26,11 @@ once, each on a source of its own.
 Compute is bought from the system, so its price leaves the game, and nothing is paid back for
 unused subscriptions, running jobs or facilities when a resident leaves or the game ends.
 
+The town has only so many nodes of each kind, `node_supply`, the same for both kinds. A
+subscribed node takes one until it runs out, and a hired one until its job ends; with none free
+of a kind, nobody can subscribe to or hire one of that kind until one comes back. A job carrying
+on at the resident's own speed after its node ran out takes none.
+
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
 """
@@ -167,6 +172,10 @@ job before it lapses and the owner's fee goes back."""
 MAX_NODES = 4
 """Subscribed nodes one resident may hold at a time."""
 
+NODE_SUPPLY_SHARE = (2, 5)
+"""Nodes of each kind in the town for every resident, as a fraction: two for every five
+residents, rounded down, so eight residents share three generative and three render nodes."""
+
 ComputeErrorCode = Literal[
     "unknown_resident",
     "invalid_seconds",
@@ -193,6 +202,7 @@ ComputeErrorCode = Literal[
     "invalid_orientation",
     "wrong_orientation",
     "garden_exists",
+    "no_node_free",
 ]
 
 
@@ -227,8 +237,44 @@ def subscription_cost(seconds: int) -> int:
     return seconds * SUBSCRIPTION_PRICE
 
 
+def node_supply(world: World) -> int:
+    """Nodes of each kind in the town: `NODE_SUPPLY_SHARE` of the residents who began the game,
+    those who have left included, rounded down, and at least one."""
+    per, residents = NODE_SUPPLY_SHARE
+    return max(1, len(world.residents) * per // residents)
+
+
+def nodes_in_use(world: World, kind: NodeKind) -> tuple[float, ...]:
+    """When each node of `kind` taken now comes back, soonest first: a subscribed node when it
+    runs out, a hired one when its job ends."""
+    now = world.time
+    book = world.compute
+    subscribed = [node.expires_at for node in book.nodes if node.kind == kind]
+    hired = [
+        job.ends_at
+        for job in book.jobs
+        if job.source == "on_demand" and NODE_FOR_JOB[job.kind] == kind
+    ]
+    return tuple(sorted(until for until in subscribed + hired if until > now))
+
+
+def nodes_free(world: World, kind: NodeKind) -> int:
+    """Nodes of `kind` nobody has taken now."""
+    return max(node_supply(world) - len(nodes_in_use(world, kind)), 0)
+
+
+def _check_node_free(world: World, kind: NodeKind) -> None:
+    if nodes_free(world, kind) <= 0:
+        raise ComputeError(
+            "no_node_free",
+            f"all {node_supply(world)} {kind} nodes of the town are taken; one comes back in "
+            f"{nodes_in_use(world, kind)[0] - world.time:.0f}s",
+        )
+
+
 def buy_node(world: World, resident_id: str, kind: NodeKind, seconds: int) -> World:
-    """Subscribe to a node of `kind` for `seconds` from now; the coins go to the system."""
+    """Subscribe to a node of `kind` for `seconds` from now; the coins go to the system. One of
+    the town's nodes of that kind must be free."""
     _find(world, resident_id)
     if kind not in NODE_KINDS:
         raise ComputeError("unknown_node_kind", f"no nodes of kind {kind!r}")
@@ -241,6 +287,7 @@ def buy_node(world: World, resident_id: str, kind: NodeKind, seconds: int) -> Wo
     book = world.compute
     if sum(node.owner_id == resident_id for node in book.nodes) >= MAX_NODES:
         raise ComputeError("too_many_nodes", f"at most {MAX_NODES} nodes may be held at once")
+    _check_node_free(world, kind)
     cost = subscription_cost(seconds)
     world = take_coins(world, resident_id, cost)
     world = record_transfer(world, resident_id, SYSTEM, cost, "compute")
@@ -420,6 +467,7 @@ def _start_job(
             if own:
                 ends_at = max(job.ends_at for job in own) + job_seconds(workload, "self")
         elif source == "on_demand":
+            _check_node_free(world, NODE_FOR_JOB[kind])
             cost = on_demand_cost(workload)
         else:
             raise ComputeError("invalid_source", f"no compute source {source!r}")

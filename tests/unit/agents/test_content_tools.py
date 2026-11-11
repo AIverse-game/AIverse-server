@@ -36,6 +36,8 @@ WORLD = World(
             "a", "甲", "#112233", Position(75, 75), Inventory(((CONTENT_ITEM, 2),)), coins=5_000
         ),
         Resident("b", "乙", "#445566", Position(20, 80), coins=5_000),
+        # Three who do nothing, so that the town has two nodes of each kind, see `node_supply`.
+        *(Resident(f"x{n}", f"x{n}", "#000000", Position(75, 75)) for n in range(3)),
     ),
     parcels=(Parcel(7, 7, "a", SLOT), Parcel(1, 1, "a")),
 )

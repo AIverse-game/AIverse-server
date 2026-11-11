@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..core.compute import NODE_KINDS
 from ..core.land import ORIENTATIONS
 from ..economy.ads import ITEM_FOR
 from ..economy.compute import (
     MAX_NODES,
     NODE_SECONDS,
     garden_room,
+    nodes_free,
     portal_room,
     promised_builder,
     subscription_cost,
@@ -104,6 +106,7 @@ def selected_tool_names(observation: Observation) -> set[str]:
     if (
         len(compute.my_nodes) < compute.max_nodes
         and me.coins >= compute.node_seconds[0] * compute.node_coins_per_second
+        and any(town.free > 0 for town in compute.town_nodes)
     ):
         names.add("buy_node")
     transport = observation.transport
@@ -207,8 +210,10 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         for parcel in my_parcels
     ) or any(permit.kind != "ad" for permit in permits):
         names.add("build_venue")
-    if sum(node.owner_id == me.id for node in book.nodes) < MAX_NODES and me.coins >= (
-        subscription_cost(NODE_SECONDS[0])
+    if (
+        sum(node.owner_id == me.id for node in book.nodes) < MAX_NODES
+        and me.coins >= subscription_cost(NODE_SECONDS[0])
+        and any(nodes_free(world, kind) > 0 for kind in NODE_KINDS)
     ):
         names.add("buy_node")
     if any(

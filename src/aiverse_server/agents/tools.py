@@ -534,7 +534,8 @@ TOOLS = (
         "a time at "
         f"{NODE_RATE:g} workload per second, {NODE_RATE / SELF_RATE:g} times your own compute; "
         f"you pay {SUBSCRIPTION_PRICE} coins per second whether it works or not, and nothing is "
-        f"paid back. You may hold {MAX_NODES} nodes at once, and each works on its own job.",
+        f"paid back. You may hold {MAX_NODES} nodes at once, and each works on its own job. "
+        "Only free ones can be had: see compute.town_nodes.",
         BuyNodeArgs,
     ),
     ToolSpec(

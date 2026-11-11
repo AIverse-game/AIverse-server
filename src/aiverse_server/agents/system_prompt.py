@@ -24,6 +24,7 @@ from ..economy.compute import (
     SUBSCRIPTION_PRICE,
     VENUE_WORKLOAD,
     job_seconds,
+    node_supply,
     on_demand_cost,
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
@@ -74,12 +75,14 @@ def system_prompt(
     garden_hired_coins = on_demand_cost(GARDEN_WORKLOAD)
     grid = BLOCKS * BLOCK_CELLS
     cells = BLOCK_CELLS * BLOCK_CELLS
-    for_sale = [square.price for square in plots(create_default_world()) if not square.lobby]
+    town = create_default_world()
+    for_sale = [square.price for square in plots(town) if not square.lobby]
     block_low, block_high = min(for_sale), max(for_sale)
     sub_per_workload = SUBSCRIPTION_PRICE / NODE_RATE
     permit_s = PERMIT_SECONDS
     on_demand_cost_ratio = ON_DEMAND_PRICE / sub_per_workload
     sponsor_coins = sum(sponsor.rate for sponsor in default_sponsors().sponsors)
+    supply = node_supply(town)
     prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
 at game end. Only coins count; land and items are worth nothing at the end.
 
@@ -119,7 +122,12 @@ any one hired job, but only {sub_per_workload:g} coins per workload, about
 busy node turns out dozens of ad slots, games or venues. The profit is in keeping subscribed
 nodes busy all the time, never in hiring; a node left idle is money burnt, so before you buy one
 line up enough work for it, your own and other residents'. A generative node builds ad slots,
-venues and portals, a render node makes content. You may hold {MAX_NODES} nodes. A job still
+venues and portals, a render node makes content. You may hold {MAX_NODES} nodes. Nodes are
+scarce: the town has only {supply} generative and {supply} render nodes for all residents
+together. A subscribed node is taken until it runs out and a hired one until its job ends, and
+with none of a kind free nobody can subscribe to or hire one of that kind until one comes back.
+compute.town_nodes shows, for each kind, how many there are, how many are free, who holds them
+and when the next one comes back. A job still
 running when its node runs out carries on at your own speed. A node works only for its owner,
 but its work can be sold: what a render node makes can be sold as content, and a generative node
 can build on other residents' parcels, see commission_build below.

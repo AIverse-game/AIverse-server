@@ -10,7 +10,7 @@ from aiverse_server.agents.tool_selection import (
     selected_tool_names,
 )
 from aiverse_server.agents.tools import TOOLS, ResidentTools
-from aiverse_server.core.compute import ComputeBook, Job, Node
+from aiverse_server.core.compute import NODE_KINDS, ComputeBook, Job, Node
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy.compute import (
@@ -23,6 +23,10 @@ from aiverse_server.economy.compute import (
 )
 from aiverse_server.server.app import Game
 
+# Eight residents who do nothing, so that with a and b the town has MAX_NODES nodes of each kind,
+# see `node_supply`.
+BYSTANDERS = tuple(Resident(f"x{n}", f"x{n}", "#000000", Position(50, 50)) for n in range(8))
+
 # a stands in the middle of the map and owns L5-5 (bare) and L1-1 (bare); b owns L2-2 and has
 # too few coins for any subscription.
 WORLD = World(
@@ -30,6 +34,7 @@ WORLD = World(
     residents=(
         Resident("a", "甲", "#112233", Position(55, 55), coins=5_000),
         Resident("b", "乙", "#445566", Position(20, 80), coins=10),
+        *BYSTANDERS,
     ),
     parcels=(Parcel(5, 5, "a"), Parcel(1, 1, "a"), Parcel(2, 2, "b")),
 )
@@ -163,7 +168,9 @@ def test_tool_descriptions_quote_the_game_constants() -> None:
 
 
 def test_the_observation_lists_nodes_jobs_and_what_an_ad_slot_takes() -> None:
-    rich = replace(WORLD, residents=(replace(WORLD.residents[0], coins=10_000), WORLD.residents[1]))
+    rich = replace(
+        WORLD, residents=(replace(WORLD.residents[0], coins=10_000), *WORLD.residents[1:])
+    )
     game, clock = make_game(rich)
     tools = ResidentTools(game, "a")
     tools.buy_node(NODE_SECONDS[0])
@@ -190,6 +197,12 @@ def test_the_observation_lists_nodes_jobs_and_what_an_ad_slot_takes() -> None:
         ("subscription", 18.0, 0),
     ]
     assert (compute.node_coins_per_second, compute.max_nodes) == (SUBSCRIPTION_PRICE, MAX_NODES)
+    assert [
+        (t.kind, t.total, t.free, t.held_by, t.hired, t.next_free_in) for t in compute.town_nodes
+    ] == [
+        ("generative", 4, 2, {"a": 2}, 0, NODE_SECONDS[0] - 2.0),
+        ("render", 4, 4, {}, 0, None),
+    ]
     mine = {parcel.id: parcel.building_ends_in for parcel in seen.land.mine}
     assert mine == {"L5-5": 16.0, "L1-1": 358.0}
     assert '"compute":{"own_job"' in to_json(seen)
@@ -254,6 +267,49 @@ def test_buy_node_is_not_offered_to_a_resident_who_cannot_pay_or_holds_the_most(
 
     assert "buy_node" not in poor
     assert "build_ad" in holding and "buy_node" not in holding
+
+
+def test_buy_node_is_not_offered_while_every_node_of_the_town_is_taken() -> None:
+    taken = World(
+        WORLD.map,
+        WORLD.residents,
+        parcels=WORLD.parcels,
+        compute=ComputeBook(
+            tuple(
+                Node(n, f"x{n % 8}", kind, 0.0, 500.0)
+                for n, kind in enumerate(4 * NODE_KINDS, start=1)
+            ),
+            next_node_id=9,
+        ),
+    )
+    game, _ = make_game(taken)
+
+    offered = selected_tool_names(look(game, "a"))
+    last = last_request_tool_names(ResidentTools(game, "a"))
+    hired = ResidentTools(game, "a").build_ad("L5-5", "on_demand")
+
+    assert "buy_node" not in offered and "buy_node" not in last
+    assert (hired.ok, hired.code) == (False, "no_node_free")
+
+
+def test_buy_node_is_offered_while_nodes_of_one_kind_are_still_free() -> None:
+    generative_taken = World(
+        WORLD.map,
+        WORLD.residents,
+        parcels=WORLD.parcels,
+        compute=ComputeBook(
+            tuple(Node(n, f"x{n}", "generative", 0.0, 500.0) for n in range(1, 5)),
+            next_node_id=5,
+        ),
+    )
+    game, _ = make_game(generative_taken)
+
+    offered = selected_tool_names(look(game, "a"))
+    last = last_request_tool_names(ResidentTools(game, "a"))
+    render = ResidentTools(game, "a").buy_node(NODE_SECONDS[0], "render")
+
+    assert "buy_node" in offered and "buy_node" in last
+    assert render.ok
 
 
 def test_compute_tools_are_offered_while_walking() -> None:

@@ -18,6 +18,9 @@ from aiverse_server.economy.compute import (
     SELF_RATE,
     SUBSCRIPTION_PRICE,
     next_compute_due,
+    node_supply,
+    nodes_free,
+    nodes_in_use,
 )
 from aiverse_server.game.actions import (
     ActionRejected,
@@ -39,10 +42,14 @@ def resident(resident_id: str, coins: int = 10_000) -> Resident:
     return Resident(resident_id, resident_id, "#123456", Position(5, 5), coins=coins)
 
 
+# Eight more residents who do nothing, so that the town has nodes enough of each kind for one
+# resident to hold the most, see `node_supply`.
+BYSTANDERS = tuple(resident(f"x{n}") for n in range(8))
+
 # a owns two bare parcels, b one; a is far from all of them, which makes no difference.
 WORLD = World(
     map=WorldMap(size=100),
-    residents=(resident("a"), resident("b")),
+    residents=(resident("a"), resident("b"), *BYSTANDERS),
     parcels=(Parcel(5, 3, "a"), Parcel(6, 3, "a"), Parcel(1, 1, "b")),
 )
 
@@ -306,13 +313,85 @@ def test_paid_work_needs_the_coins_and_a_refusal_keeps_them() -> None:
 
 
 def test_a_resident_holds_only_so_many_nodes() -> None:
-    rich = replace(WORLD, residents=(resident("a", coins=100_000), resident("b")))
+    rich = replace(WORLD, residents=(resident("a", coins=100_000), resident("b"), *BYSTANDERS))
     world = run(rich, *(BuyNode("a", "generative", NODE_SECONDS[0]) for _ in range(MAX_NODES)))
 
     with pytest.raises(ActionRejected) as rejected:
         perform(world, BuyNode("a", "generative", NODE_SECONDS[0]))
 
     assert rejected.value.code == "too_many_nodes"
+
+
+@pytest.mark.parametrize(("residents", "nodes"), [(1, 1), (2, 1), (5, 2), (7, 2), (8, 3), (10, 4)])
+def test_the_town_has_two_nodes_of_each_kind_for_every_five_residents_and_at_least_one(
+    residents: int, nodes: int
+) -> None:
+    town = replace(WORLD, residents=tuple(resident(f"r{n}") for n in range(residents)), parcels=())
+
+    assert node_supply(town) == nodes
+
+
+# Eight residents, so three nodes of each kind.
+EIGHT = replace(WORLD, residents=(resident("a"), resident("b"), *BYSTANDERS[:6]))
+
+
+def test_with_every_node_of_a_kind_taken_none_of_it_can_be_subscribed_to_or_hired() -> None:
+    taken = run(EIGHT, *(BuyNode(who, "generative", NODE_SECONDS[0]) for who in ("b", "x0", "x1")))
+
+    with pytest.raises(ActionRejected) as subscribe:
+        perform(taken, BuyNode("a", "generative", NODE_SECONDS[0]))
+    with pytest.raises(ActionRejected) as hire:
+        perform(taken, BuildAd("a", "L5-3", "on_demand"))
+    render = perform(taken, BuyNode("a", "render", NODE_SECONDS[0]))
+
+    assert (subscribe.value.code, hire.value.code) == ("no_node_free",) * 2
+    assert nodes_free(taken, "generative") == 0
+    assert nodes_free(render, "render") == 2
+
+
+def test_a_node_comes_back_when_its_hired_job_ends_or_its_subscription_runs_out() -> None:
+    world = run(
+        EIGHT,
+        BuyNode("b", "generative", NODE_SECONDS[0]),
+        BuyNode("b", "generative", NODE_SECONDS[0]),
+        BuildAd("a", "L5-3", "on_demand"),
+    )
+
+    hired_done = settle_due(replace(world, time=NODE_JOB_SECONDS))
+    subscriptions_over = settle_due(replace(world, time=NODE_SECONDS[0]))
+
+    assert nodes_in_use(world, "generative") == (NODE_JOB_SECONDS, *(2 * (NODE_SECONDS[0],)))
+    assert nodes_free(world, "generative") == 0
+    assert nodes_free(hired_done, "generative") == 1
+    assert nodes_free(subscriptions_over, "generative") == 3
+
+
+def test_leaving_or_the_end_of_the_game_hands_the_nodes_back_and_keeps_the_town_s_count() -> None:
+    world = run(
+        EIGHT,
+        BuyNode("a", "generative", NODE_SECONDS[0]),
+        BuyNode("b", "generative", NODE_SECONDS[0]),
+        BuildAd("a", "L5-3", "on_demand"),
+    )
+
+    left = perform(world, LeaveGame("a"))
+    ended = end_game(world)
+
+    assert nodes_free(world, "generative") == 0
+    assert (node_supply(left), nodes_free(left, "generative")) == (3, 2)
+    assert nodes_free(ended, "generative") == 3
+
+
+def test_a_job_carrying_on_after_its_node_ran_out_takes_no_node() -> None:
+    world = perform(EIGHT, BuyNode("a", "generative", NODE_SECONDS[0]))
+    started = perform(
+        replace(world, time=NODE_SECONDS[0] - 1.0), BuildAd("a", "L5-3", "subscription", node_id=1)
+    )
+
+    tail = settle_due(replace(started, time=NODE_SECONDS[0]))
+
+    assert len(tail.compute.jobs) == 1
+    assert nodes_free(tail, "generative") == 3
 
 
 def test_leaving_drops_the_residents_jobs_and_nodes_without_a_refund_or_a_build() -> None:

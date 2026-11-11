@@ -11,6 +11,7 @@ from aiverse_server.economy.compute import (
     ON_DEMAND_PRICE,
     SUBSCRIPTION_PRICE,
     VENUE_WORKLOAD,
+    node_supply,
 )
 from aiverse_server.economy.sponsors import PAY_PERIOD
 from aiverse_server.economy.visitors import (
@@ -19,6 +20,7 @@ from aiverse_server.economy.visitors import (
     SEEN_FOR,
     VIEW_RADIUS,
 )
+from aiverse_server.game.layout import create_default_world
 
 
 def test_the_prompt_tells_a_model_that_thinking_time_is_game_time() -> None:
@@ -149,3 +151,13 @@ def test_the_prompt_says_a_sell_order_is_listed_for_everyone_and_the_system_neve
 
     assert "A resting sell order is posted on the shared book: every resident sees it" in prompt
     assert "the system never buys or sells" in prompt
+
+
+def test_the_prompt_says_how_many_nodes_of_each_kind_the_town_has() -> None:
+    supply = node_supply(create_default_world())
+
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert supply == 3
+    assert f"the town has only {supply} generative and {supply} render nodes" in prompt
+    assert "compute.town_nodes" in prompt
