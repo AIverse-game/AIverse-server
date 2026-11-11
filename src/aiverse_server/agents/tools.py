@@ -44,6 +44,7 @@ from ..economy.compute import (
     ON_DEMAND_PRICE,
     PERMIT_SECONDS,
     PORTAL_WORKLOAD,
+    PRACTICE_SPEEDUP,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
     VENUE_WORKLOAD,
@@ -608,14 +609,14 @@ TOOLS = (
     ),
     ToolSpec(
         "make_content",
-        "Render one piece of content, from anywhere, even while walking; it joins the items "
-        "you carry when the job ends, and you may sell it or put it in a matching facility of "
-        f"yours. An ad ({CONTENT_ITEM!r}, for an ad slot) takes {CONTENT_WORKLOAD:g} workload: "
-        f"{job_seconds(CONTENT_WORKLOAD, 'self'):g} s on your own compute (free, one at a time, "
-        f"later jobs queue), "
-        f"{job_seconds(CONTENT_WORKLOAD, 'on_demand'):g} s on a node hired for it "
-        f"({on_demand_cost(CONTENT_WORKLOAD)} coins), or on one of your subscribed render nodes. "
-        f"A game ({GAME_ITEM!r}, for a game hall) takes {GAME_WORKLOAD:g}: "
+        "Render one piece of content, from anywhere; it joins your items when the job ends, to "
+        "sell or put in a matching facility of yours. Each piece makes your next of its kind "
+        f"{1 - PRACTICE_SPEEDUP:.0%} quicker (compute.practice). "
+        f"A first ad ({CONTENT_ITEM!r}, for an ad slot) takes {CONTENT_WORKLOAD:g} workload: "
+        f"{job_seconds(CONTENT_WORKLOAD, 'self'):g} s on your own compute (free, queued), "
+        f"{job_seconds(CONTENT_WORKLOAD, 'on_demand'):g} s hired "
+        f"({on_demand_cost(CONTENT_WORKLOAD)} coins), or on a subscribed render node of yours. "
+        f"A first game ({GAME_ITEM!r}, for a game hall) takes {GAME_WORKLOAD:g}: "
         f"{job_seconds(GAME_WORKLOAD, 'self'):g} s, {on_demand_cost(GAME_WORKLOAD)} coins hired.",
         MakeContentArgs,
     ),

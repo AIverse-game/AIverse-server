@@ -702,6 +702,9 @@ class World:
                 raise ValueError(f"job {job.id} started after the current time")
             if any(p.id == job.parcel_id and p.facility is not None for p in self.parcels):
                 raise ValueError(f"job {job.id} builds on a parcel that already has a facility")
+        for resident_id, kind, _ in self.compute.practice:
+            if resident_id not in ids:
+                raise ValueError(f"unknown resident {resident_id!r} has practised {kind}")
         for permit in self.compute.permits:
             if {permit.owner_id, permit.builder_id} - set(ids) or self.ended:
                 raise ValueError(f"permit for {permit.parcel_id} outlives its game or resident")

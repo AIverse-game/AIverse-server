@@ -163,16 +163,31 @@ class Job:
 
 @dataclass(frozen=True)
 class ComputeBook:
-    """Subscribed nodes, running jobs and permits to build on others' parcels, oldest first, and
-    the ids the next nodes and jobs will get."""
+    """Subscribed nodes, running jobs and permits to build on others' parcels, oldest first, the
+    ids the next nodes and jobs will get, and how practised each resident is at making content."""
 
     nodes: tuple[Node, ...] = ()
     jobs: tuple[Job, ...] = ()
     next_node_id: int = 1
     next_job_id: int = 1
     permits: tuple[Permit, ...] = ()
+    practice: tuple[tuple[str, JobKind, int], ...] = ()
+    """Pieces each resident has made of each kind of content, by resident and making job, see
+    `MAKING_JOBS`; only the kinds a resident has made at least once are listed. Making one more
+    makes the next of that kind quicker, see `economy/compute.py`."""
 
     def __post_init__(self) -> None:
+        practised: set[tuple[str, JobKind]] = set()
+        for resident_id, kind, made in self.practice:
+            if kind not in MAKING_JOBS:
+                raise ValueError(f"{kind!r} makes no content, so nobody practises it")
+            if type(made) is not int or made < 1:
+                raise ValueError(
+                    f"{resident_id} has made {made!r} of {kind}, not a whole number >= 1"
+                )
+            if (resident_id, kind) in practised:
+                raise ValueError(f"{resident_id}'s practice at {kind} is listed twice")
+            practised.add((resident_id, kind))
         for what, entries, next_id in (
             ("node", self.nodes, self.next_node_id),
             ("job", self.jobs, self.next_job_id),

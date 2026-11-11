@@ -35,9 +35,8 @@ from ..economy.ads import CONTENT_LIFETIME, ITEM_FOR, appeal
 from ..economy.commissions import BuildCommission, commission_coins
 from ..economy.compute import (
     AD_WORKLOAD,
-    CONTENT_WORKLOAD,
-    GAME_WORKLOAD,
     GARDEN_WORKLOAD,
+    MAKE_JOB,
     MALL_WORKLOAD,
     MAX_NODES,
     NODE_FOR_JOB,
@@ -47,11 +46,14 @@ from ..economy.compute import (
     VENUE_WORKLOAD,
     garden_room,
     job_seconds,
+    making_workload,
     node_supply,
     nodes_free,
     nodes_in_use,
     on_demand_cost,
+    pieces_made,
     portal_room,
+    practice_factor,
     promised_builder,
 )
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
@@ -331,6 +333,20 @@ class TownNodesView:
 
 
 @dataclass(frozen=True)
+class PracticeView:
+    """The resident's practice at one kind of content: each piece made makes the next quicker."""
+
+    content: str
+    """`ad` or `game`."""
+    made: int
+    """Pieces of it the resident has made."""
+    next_workload_percent: int
+    """Percent of the base workload the resident's next piece takes, rounded: 100 for the first,
+    less for each piece made, never less than the floor. A whole number, since the observation
+    rounds fractions to one place."""
+
+
+@dataclass(frozen=True)
 class AdOption:
     """What a job takes on one source of compute."""
 
@@ -369,6 +385,9 @@ class ComputeView:
     max_nodes: int
     town_nodes: tuple[TownNodesView, ...]
     """The town's nodes of each kind: how many there are, how many are free and who holds them."""
+    practice: tuple[PracticeView, ...]
+    """How practised the resident is at each kind of content; `content` and `game` already take
+    it into account."""
 
 
 @dataclass(frozen=True)
@@ -1044,20 +1063,20 @@ def _compute_view(world: World, resident_id: str) -> ComputeView:
         venue=_options(VENUE_WORKLOAD),
         mall=_options(MALL_WORKLOAD),
         garden=_options(GARDEN_WORKLOAD),
-        content=(
-            AdOption("self", job_seconds(CONTENT_WORKLOAD, "self"), 0),
-            AdOption(
-                "on_demand",
-                job_seconds(CONTENT_WORKLOAD, "on_demand"),
-                on_demand_cost(CONTENT_WORKLOAD),
-            ),
-            AdOption("subscription", job_seconds(CONTENT_WORKLOAD, "subscription"), 0),
-        ),
-        game=_options(GAME_WORKLOAD),
+        content=_options(making_workload(world, resident_id, "make_content")),
+        game=_options(making_workload(world, resident_id, "make_game")),
         node_coins_per_second=SUBSCRIPTION_PRICE,
         node_seconds=NODE_SECONDS,
         max_nodes=MAX_NODES,
         town_nodes=tuple(_town_nodes(world, kind) for kind in NODE_KINDS),
+        practice=tuple(
+            PracticeView(
+                content,
+                pieces_made(world, resident_id, job),
+                round(100 * practice_factor(pieces_made(world, resident_id, job))),
+            )
+            for content, job in MAKE_JOB.items()
+        ),
     )
 
 

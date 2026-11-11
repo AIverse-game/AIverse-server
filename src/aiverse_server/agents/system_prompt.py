@@ -19,6 +19,8 @@ from ..economy.compute import (
     NODE_SECONDS,
     ON_DEMAND_PRICE,
     PERMIT_SECONDS,
+    PRACTICE_FLOOR,
+    PRACTICE_SPEEDUP,
     SELF_QUEUE_LIMIT,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
@@ -26,6 +28,7 @@ from ..economy.compute import (
     job_seconds,
     node_supply,
     on_demand_cost,
+    practice_factor,
 )
 from ..economy.contracts import MAX_CONTRACT_SECONDS, MAX_DELIVERIES
 from ..economy.exchange import LIFETIME_RANGE, MAX_ORDERS
@@ -83,6 +86,7 @@ def system_prompt(
     on_demand_cost_ratio = ON_DEMAND_PRICE / sub_per_workload
     sponsor_coins = sum(sponsor.rate for sponsor in default_sponsors().sponsors)
     supply = node_supply(town)
+    floor_at = next(made for made in range(100) if practice_factor(made) <= PRACTICE_FLOOR)
     prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
 at game end. Only coins count; land and items are worth nothing at the end.
 
@@ -150,6 +154,12 @@ stay: walk, talk and trade meanwhile, and it appears when the job ends.
 workload: {content_own_s:g}s on your own compute, {content_hired_s:g}s and {content_hired_coins}
 coins on a hired node. It joins your items, and you may sell it on the exchange or by offer
 and contract, or put it in an ad slot of your own with place_content.
+- Practice. Every piece of content you make makes your next piece of the same kind, ad or game,
+{1 - PRACTICE_SPEEDUP:.0%} less workload, so quicker and cheaper to hire for, down to
+{PRACTICE_FLOOR:.0%} of the first piece's after {floor_at} pieces. Ads and games are counted
+apart. compute.practice shows how many you have made, and compute.content and compute.game what
+your next one takes. Residents who make a lot of one kind make it far faster than anyone
+starting out.
 - An ad slot shows up to {AD_SLOT_CAPACITY} pieces of content, each for {CONTENT_LIFETIME:g}s
 from when you put it in, then it goes stale and is gone; keep supplying it. Every
 {PAY_PERIOD:g}s the sponsors pay for the people who passed ad slots since the last payday: the

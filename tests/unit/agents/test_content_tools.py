@@ -1,7 +1,10 @@
 """Making content, putting it in ad slots and trading it through the agent tools, and what a
 model is told about it."""
 
+import json
 from dataclasses import replace
+
+import pytest
 
 from aiverse_server.agents.observation import Observation, observe, to_json
 from aiverse_server.agents.tool_selection import (
@@ -11,6 +14,7 @@ from aiverse_server.agents.tool_selection import (
     selected_tool_names,
 )
 from aiverse_server.agents.tools import TOOLS, ResidentTools
+from aiverse_server.core.compute import ComputeBook
 from aiverse_server.core.land import AD_SLOT_CAPACITY, Facility, Parcel
 from aiverse_server.core.sponsors import Sponsor, SponsorBook
 from aiverse_server.core.visitors import Crowd
@@ -192,6 +196,39 @@ def test_the_observation_lists_content_jobs_without_a_parcel() -> None:
         ("on_demand", 6.0),
         ("subscription", 6.0),
     ]
+
+
+def test_the_observation_shows_practice_and_prices_the_next_piece_by_it() -> None:
+    game, clock = make_game()
+    ResidentTools(game, "a").make_content("on_demand")
+    clock.now = 6.0
+
+    seen = look(game, "a")
+    other = look(game, "b")
+
+    assert [(p.content, p.made, p.next_workload_percent) for p in seen.compute.practice] == [
+        ("ad", 1, 90),
+        ("game", 0, 100),
+    ]
+    assert [(o.source, o.seconds, o.coins) for o in seen.compute.content] == [
+        ("self", 108.0, 0),
+        ("on_demand", 5.4, 810),
+        ("subscription", 5.4, 0),
+    ]
+    assert seen.compute.game[0].seconds == 180.0
+    assert [p.made for p in other.compute.practice] == [0, 0]
+
+
+@pytest.mark.parametrize(("made", "percent"), [(3, 73), (4, 66), (13, 25), (14, 25), (30, 25)])
+def test_the_observation_shows_the_next_piece_s_workload_as_a_whole_percent(
+    made: int, percent: int
+) -> None:
+    world = replace(WORLD, compute=ComputeBook(practice=(("a", "make_game", made),)))
+    game, _ = make_game(world)
+
+    shown = json.loads(to_json(look(game, "a")))["compute"]["practice"]
+
+    assert shown[1] == {"content": "game", "made": made, "next_workload_percent": percent}
 
 
 def test_content_is_offered_to_anyone_and_placing_to_those_with_content_and_room() -> None:

@@ -26,6 +26,11 @@ once, each on a source of its own.
 Compute is bought from the system, so its price leaves the game, and nothing is paid back for
 unused subscriptions, running jobs or facilities when a resident leaves or the game ends.
 
+Practice: every piece of content a resident makes makes their next piece of the same kind, an ad
+or a game, `PRACTICE_SPEEDUP` the workload, down to `PRACTICE_FLOOR` of it, `making_workload`, so
+it takes less time on any source and costs less to hire a node for. A piece counts when its job
+ends and the piece is made.
+
 The town has only so many nodes of each kind, `node_supply`, the same for both kinds. A
 subscribed node takes one until it runs out, and a hired one until its job ends; with none free
 of a kind, nobody can subscribe to or hire one of that kind until one comes back. A job carrying
@@ -43,7 +48,6 @@ from ..core.compute import (
     NODE_KINDS,
     SELF_JOBS,
     VENUE_JOB_FACILITY,
-    ComputeBook,
     Job,
     JobKind,
     JobSource,
@@ -104,6 +108,14 @@ The cheapest facility to build, and half what a game hall costs."""
 GAME_WORKLOAD = 90.0
 """Workload of rendering a game for a game hall: three minutes of one's own compute, 9 seconds of
 a node. Dearer than an ad."""
+
+PRACTICE_SPEEDUP = 0.9
+"""Each piece of a kind of content a resident has made multiplies the workload of their next piece
+of that kind by this: the next one is a tenth quicker, and a tenth cheaper to hire a node for."""
+
+PRACTICE_FLOOR = 0.25
+"""Least share of the workload practice leaves: a quarter, from the fifteenth piece on, once
+14 have been made."""
 
 ContentKind = Literal["ad", "game"]
 """What a content job renders: an ad for an ad slot or a game for a game hall."""
@@ -235,6 +247,27 @@ def on_demand_cost(workload: float) -> int:
 def subscription_cost(seconds: int) -> int:
     """Coins a subscription of `seconds` costs."""
     return seconds * SUBSCRIPTION_PRICE
+
+
+def pieces_made(world: World, resident_id: str, kind: JobKind) -> int:
+    """Pieces the resident has made of the content job `kind` makes, see `MAKING_JOBS`."""
+    return next(
+        (made for who, what, made in world.compute.practice if (who, what) == (resident_id, kind)),
+        0,
+    )
+
+
+def practice_factor(made: int) -> float:
+    """Share of a content job's workload left to someone who has made `made` pieces of it."""
+    return max(PRACTICE_SPEEDUP**made, PRACTICE_FLOOR)
+
+
+def making_workload(world: World, resident_id: str, kind: JobKind) -> float:
+    """Workload of the resident's next job of `kind`: for content, the base workload less what
+    the pieces of it they have made taught them; for building, the base workload."""
+    if kind not in MAKING_JOBS:
+        return WORKLOADS[kind]
+    return WORKLOADS[kind] * practice_factor(pieces_made(world, resident_id, kind))
 
 
 def node_supply(world: World) -> int:
@@ -435,7 +468,7 @@ def _start_job(
     orientation: Orientation = "north_south",
 ) -> World:
     book = world.compute
-    workload = WORKLOADS[kind]
+    workload = making_workload(world, resident_id, kind)
     ends_at = world.time + job_seconds(workload, source)
     cost = 0
     if source == "subscription":
@@ -514,6 +547,7 @@ def finish_jobs(world: World) -> World:
         if job.kind in MAKING_JOBS:
             item = CONTENT_ITEM if job.kind == "make_content" else GAME_ITEM
             world = store_item(world, job.owner_id, item)
+            world = _practised(world, job.owner_id, job.kind)
             continue
         site = next((parcel for parcel in world.parcels if parcel.id == job.parcel_id), None)
         if site is None or site.facility is not None:
@@ -537,6 +571,17 @@ def finish_jobs(world: World) -> World:
         if built.kind == "garden":
             world = pay_reward(world, site.owner_id)
     return world
+
+
+def _practised(world: World, resident_id: str, kind: JobKind) -> World:
+    """The world with one more piece of `kind` counted to the resident's practice."""
+    book = world.compute
+    made = pieces_made(world, resident_id, kind) + 1
+    practice = tuple(
+        entry for entry in book.practice if (entry[0], entry[1]) != (resident_id, kind)
+    )
+    practice = (*practice, (resident_id, kind, made))
+    return replace(world, compute=replace(book, practice=practice))
 
 
 def _drop_rival(world: World, job: Job) -> World:
@@ -613,12 +658,11 @@ def cancel_compute(world: World, resident_id: str | None = None) -> World:
     for permit in book.permits:
         if theirs(permit.owner_id, permit.builder_id):
             world = add_coins(world, permit.owner_id, permit.fee)
-    keep = ComputeBook(
-        tuple(n for n in book.nodes if not theirs(n.owner_id)),
-        tuple(j for j in book.jobs if not theirs(j.owner_id)),
-        book.next_node_id,
-        book.next_job_id,
-        tuple(p for p in book.permits if not theirs(p.owner_id, p.builder_id)),
+    keep = replace(
+        book,
+        nodes=tuple(n for n in book.nodes if not theirs(n.owner_id)),
+        jobs=tuple(j for j in book.jobs if not theirs(j.owner_id)),
+        permits=tuple(p for p in book.permits if not theirs(p.owner_id, p.builder_id)),
     )
     return replace(world, compute=keep)
 

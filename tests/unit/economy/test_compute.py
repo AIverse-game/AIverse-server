@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from aiverse_server.core.compute import SELF_JOBS, ComputeBook, Job, Node
+from aiverse_server.core.compute import SELF_JOBS, ComputeBook, Job, JobKind, Node
 from aiverse_server.core.inventory import coin_balance
 from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.ledger import SYSTEM
@@ -11,16 +11,19 @@ from aiverse_server.economy.ads import CONTENT_ITEM
 from aiverse_server.economy.compute import (
     AD_WORKLOAD,
     CONTENT_WORKLOAD,
+    GAME_WORKLOAD,
     MAX_NODES,
     NODE_RATE,
     NODE_SECONDS,
     ON_DEMAND_PRICE,
+    PRACTICE_SPEEDUP,
     SELF_RATE,
     SUBSCRIPTION_PRICE,
     next_compute_due,
     node_supply,
     nodes_free,
     nodes_in_use,
+    practice_factor,
 )
 from aiverse_server.game.actions import (
     ActionRejected,
@@ -588,3 +591,122 @@ def test_a_subscription_job_must_name_its_node_by_a_whole_number() -> None:
         perform(world, BuildAd("a", "L5-3", "subscription", node_id=True))
 
     assert rejected.value.code == "invalid_source"
+
+
+def practised(world: World, *entries: tuple[str, JobKind, int]) -> World:
+    return replace(world, compute=replace(world.compute, practice=entries))
+
+
+def job_length(world: World) -> float:
+    job = world.compute.jobs[-1]
+    return job.ends_at - job.started_at
+
+
+@pytest.mark.parametrize(
+    ("made", "share"),
+    [(0, 1.0), (1, 0.9), (2, 0.81), (13, 0.9**13), (14, 0.25), (40, 0.25)],
+)
+def test_each_piece_made_takes_a_tenth_off_the_next_down_to_a_quarter(
+    made: int, share: float
+) -> None:
+    world = practised(WORLD, ("a", "make_content", made)) if made else WORLD
+
+    started = perform(world, MakeContent("a", "self"))
+
+    assert practice_factor(made) == pytest.approx(share)
+    assert job_length(started) == pytest.approx(CONTENT_SELF_SECONDS * share)
+
+
+def test_a_made_piece_speeds_up_only_its_maker_s_next_of_the_same_kind() -> None:
+    first = perform(WORLD, MakeContent("a", "self"))
+    made = settle_due(replace(first, time=CONTENT_SELF_SECONDS))
+
+    ad = perform(made, MakeContent("a", "self"))
+    game = perform(made, MakeContent("a", "self", content="game"))
+    other = perform(made, MakeContent("b", "self"))
+
+    assert made.compute.practice == (("a", "make_content", 1),)
+    assert job_length(ad) == pytest.approx(CONTENT_SELF_SECONDS * PRACTICE_SPEEDUP)
+    assert job_length(game) == GAME_WORKLOAD / SELF_RATE
+    assert job_length(other) == CONTENT_SELF_SECONDS
+
+
+def test_hiring_a_node_for_a_practised_piece_costs_its_lighter_workload() -> None:
+    world = practised(WORLD, ("a", "make_game", 2))
+
+    hired = perform(world, MakeContent("a", "on_demand", content="game"))
+
+    assert coin_balance(hired, "a") == 10_000 - round(GAME_WORKLOAD * 0.81 * ON_DEMAND_PRICE)
+    assert coin_balance(hired, "a") == 10_000 - 1094
+    assert job_length(hired) == pytest.approx(GAME_WORKLOAD * 0.81 / NODE_RATE)
+
+
+def test_a_piece_counts_only_once_it_is_made() -> None:
+    started = run(practised(WORLD, ("a", "make_content", 3)), MakeContent("a", "self"))
+
+    running = settle_due(replace(started, time=CONTENT_SELF_SECONDS * 0.5))
+    made = settle_due(replace(started, time=CONTENT_SELF_SECONDS))
+
+    assert running.compute.practice == (("a", "make_content", 3),)
+    assert made.compute.practice == (("a", "make_content", 4),)
+
+
+def test_leaving_or_the_end_of_the_game_drops_unfinished_pieces_and_keeps_the_practice() -> None:
+    world = run(practised(WORLD, ("a", "make_content", 3)), MakeContent("a", "self"))
+
+    left = perform(world, LeaveGame("a"))
+    ended = end_game(world)
+
+    assert left.compute.jobs == ended.compute.jobs == ()
+    assert carried(settle_due(replace(left, time=CONTENT_SELF_SECONDS)), "a") == 0
+    assert left.compute.practice == ended.compute.practice == (("a", "make_content", 3),)
+
+
+@pytest.mark.parametrize(
+    ("node_left", "ends_in"),
+    [
+        # The node outlasts the job: 90 x 0.81 workload at the node's speed.
+        (NODE_SECONDS[0], GAME_WORKLOAD * 0.81 / NODE_RATE),
+        # The node runs out after 2 s, 20 workload; the rest goes at the resident's own speed.
+        (2.0, 2.0 + (GAME_WORKLOAD * 0.81 - 2.0 * NODE_RATE) / SELF_RATE),
+    ],
+)
+def test_a_subscribed_node_and_its_tail_work_through_the_practised_workload(
+    node_left: float, ends_in: float
+) -> None:
+    world = practised(
+        perform(WORLD, BuyNode("a", "render", NODE_SECONDS[0])), ("a", "make_game", 2)
+    )
+    now = NODE_SECONDS[0] - node_left
+
+    started = perform(replace(world, time=now), MakeContent("a", "subscription", 1, "game"))
+
+    assert job_length(started) == pytest.approx(ends_in)
+
+
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    [
+        ((("a", "build_ad", 1),), "makes no content"),
+        ((("a", "make_content", 0),), "not a whole number >= 1"),
+        ((("a", "make_game", 1), ("a", "make_game", 2)), "listed twice"),
+    ],
+)
+def test_the_record_of_practice_is_checked(
+    entries: tuple[tuple[str, JobKind, int], ...], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ComputeBook(practice=entries)
+
+
+def test_a_resident_who_has_left_keeps_their_practice() -> None:
+    gone = replace(WORLD, residents=(replace(WORLD.residents[0], left=True), *WORLD.residents[1:]))
+
+    kept = practised(gone, ("a", "make_game", 2))
+
+    assert kept.compute.practice == (("a", "make_game", 2),)
+
+
+def test_practice_must_belong_to_a_resident_of_the_world() -> None:
+    with pytest.raises(ValueError, match="unknown resident 'nobody'"):
+        practised(WORLD, ("nobody", "make_game", 1))
