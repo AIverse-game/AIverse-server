@@ -2,8 +2,8 @@
 
 A portal is built on a parcel like an ad slot, by a generative job, see `compute.py`. It
 earns only tolls: those of residents who teleport and a small fixed one from each visitor who
-goes through its network. Two portals are joined by a line, a `Link`, with a toll. The owners of
-both parcels must agree: `link_portals` joins two portals of one resident at once, while a
+crosses a line that ends there. Two portals are joined by a line, a `Link`, with a toll. The
+owners of both parcels must agree: `link_portals` joins two portals of one resident at once, while a
 resident whose portal is to be joined to someone else's sends them a `LinkProposal`, an event,
 see `events.py`, which they accept or reject. A portal may have at most `MAX_LINKS_PER_PORTAL`
 lines, a resident may have at most `MAX_PORTALS` portals built or being built, and the two
@@ -24,8 +24,11 @@ Lines do two things.
   and walking to the nearest portal of a network, coming out at once at the portal of it
   nearest the goal. The scripted visitors, see `visitors.py`, walk by it, so which lines
   carry traffic is up to their choices. A trip through a network says which two portals it
-  went in and out at, `Route.portals`, and the visitor pays the system's small toll for it,
-  see `admissions.VISITOR_TOLL`, not the owners' tolls, which are for residents.
+  went in and out at, `Route.portals`, and `Router.path` the portals between them, by the
+  lines with the fewest crossings; the visitor pays the system's small toll for each line,
+  see `admissions.VISITOR_TOLL`, not the owners' tolls, which are for residents. The walk
+  takes no account of the crossings, so the shape of a network changes what visitors pay and
+  to whom, not which way they go.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -35,6 +38,7 @@ from __future__ import annotations
 
 import functools
 import math
+from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
@@ -288,6 +292,7 @@ class Router:
 
     def __init__(self, world: World, start: Position) -> None:
         self._map = world.map
+        self._links = world.links
         self._start = walk_from(world.map, start)
         self._portals = _layout(world)
         self._entry: dict[str, tuple[float, Position, str]] = {}
@@ -295,6 +300,15 @@ class Router:
             gap = self._start.distance(there)
             if name not in self._entry or gap < self._entry[name][0]:
                 self._entry[name] = (gap, there, parcel_id)
+
+    def path(self, route: Route) -> tuple[str, ...]:
+        """The parcels of the portals `route` goes through, in order, from the one it goes in at
+        to the one it comes out of, by the lines with the fewest crossings, the lower parcel id
+        first among equals; empty when it only walks. The visitor crosses each line between two
+        of them, taking no time."""
+        if route.portals is None:
+            return ()
+        return _line_path(self._links, *route.portals)
 
     def to(self, end: Position) -> Route:
         """The shortest way to `end`. The tolls are not counted in the distance: a visitor does
@@ -311,6 +325,25 @@ class Router:
         entry, entry_id, there, exit_id = via
         legs = (*self._start.legs(entry), *walk_from(self._map, there).legs(end))
         return Route(best, legs, (entry_id, exit_id) if entry_id != exit_id else None)
+
+
+def _line_path(links: tuple[Link, ...], start: str, end: str) -> tuple[str, ...]:
+    """The parcels from `start` to `end` along lines, with as few lines as possible."""
+    came_from: dict[str, str | None] = {start: None}
+    queue = deque([start])
+    while queue:
+        here = queue.popleft()
+        for there in sorted(link.other(here) for link in links if link.joins(here)):
+            if there in came_from:
+                continue
+            came_from[there] = here
+            queue.append(there)
+    if end not in came_from:
+        raise AssertionError(f"{start} and {end} are in one network, joined by lines")
+    path = [end]
+    while (before := came_from[path[-1]]) is not None:
+        path.append(before)
+    return tuple(reversed(path))
 
 
 def _check_link(

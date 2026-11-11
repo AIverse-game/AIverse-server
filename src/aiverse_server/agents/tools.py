@@ -564,8 +564,8 @@ TOOLS = (
         f"{job_seconds(PORTAL_WORKLOAD, 'on_demand'):g} s on a node hired for it "
         f"({on_demand_cost(PORTAL_WORKLOAD)} coins), or on one of your subscribed generative "
         "nodes. A portal earns only tolls: it matters through its lines (link_portals) "
-        "and trips (teleport), and visitors going through its network pay a small toll that "
-        "is shared by the holders of the portals they go in and out at.",
+        "and trips (teleport), and visitors crossing a line that ends at it pay a small toll "
+        "shared by the holders of the portals at the two ends of the line.",
         BuildPortalArgs,
     ),
     ToolSpec(
@@ -604,7 +604,7 @@ TOOLS = (
         f"{MIN_LINK_DISTANCE:g} units apart and a portal ends at most {MAX_LINKS_PER_PORTAL} "
         "lines. A line lets residents teleport between the two portals for the toll. Visitors "
         "may also go through the network it makes when that shortens their walk to a venue; "
-        "they pay the system's small fixed toll, not yours.",
+        "they pay the system's small fixed toll for each line they cross, not yours.",
         LinkPortalsArgs,
     ),
     ToolSpec(

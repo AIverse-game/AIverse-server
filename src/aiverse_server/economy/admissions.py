@@ -9,10 +9,11 @@ the holders of the parcel's shares, see `shares.py`, in whole coins, the part of
 carried to the next payday. Ledger channel `visitors`. A garden in the block adds a tenth,
 `gardens.py`.
 
-Visitors also pay a small toll, `VISITOR_TOLL`, for each trip through a network of portals, see
-`portals.Router`. It is set by the system, not by the owners of the line, and comes from outside
-the town like a fee; `charge` puts it on the books of the two portals' parcels, half each, and it
-is paid out at the paydays with the fees. Visitors do not weigh it when they choose where to go.
+Visitors also pay a small toll, `VISITOR_TOLL`, for each line they cross on a trip through a
+network of portals, see `portals.Router`. It is set by the system, not by the owners of the
+line, and comes from outside the town like a fee; `charge` puts it on the books of the two
+parcels the line joins, half each, and it is paid out at the paydays with the fees. Visitors do
+not weigh it when they choose where to go.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched.
@@ -32,9 +33,9 @@ FEES: dict[str, int] = {"workspace": 8, "game_hall": 12, "mall": 2, "garden": 1}
 """Coins one person pays to get into a facility of each kind."""
 
 VISITOR_TOLL = 1
-"""Coins one person pays for one trip through a network of portals: the price of the cheapest
-door, a garden's. Half goes to the holders of the portal they went in at, half to those of the
-portal they came out of. The owners' tolls, `Link.toll`, are for residents only."""
+"""Coins one person pays for each line crossed on a trip through a network of portals: the price
+of the cheapest door, a garden's. Half goes to the holders of the portal at each end of the line.
+The owners' tolls, `Link.toll`, are for residents only."""
 
 _SLACK = 1e-9
 

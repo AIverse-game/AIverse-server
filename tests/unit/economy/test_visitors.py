@@ -537,7 +537,7 @@ def joined_portals_world(toll: int = 0, walker: Visitor | None = None) -> World:
     return replace(base, crowd=crowd_of(walk))
 
 
-def test_a_visitor_going_through_portals_pays_the_visitor_toll_half_to_each_end() -> None:
+def test_a_visitor_going_through_one_line_pays_the_visitor_toll_half_to_each_end() -> None:
     world = joined_portals_world()
 
     after = at(world, 1.0)
@@ -548,6 +548,76 @@ def test_a_visitor_going_through_portals_pays_the_visitor_toll_half_to_each_end(
         "L9-5": pytest.approx(half),
     }
     assert after.admissions.admitted == ()
+
+
+def chain_world(*links: Link) -> World:
+    """Portals on L0-5 (5, 55), L9-5 (95, 55) and L9-9 (95, 95) joined by `links`, a hall on
+    L9-8 (95, 85) and a visitor at (10, 55) about to pick its venue: it goes in at the first
+    portal and out at the third, 10 from the hall, whatever lines join them."""
+    portals = (
+        Parcel(0, 5, "a", PORTAL),
+        Parcel(9, 5, "a", PORTAL),
+        Parcel(9, 9, "a", PORTAL),
+    )
+    walk = visitor(
+        phase="staying", until=1.0, at=Position(10, 55), target=Position(10, 55), stops_left=2
+    )
+    base = replace(world_of(*portals, hall(9, 8)), links=links)
+    return replace(base, crowd=crowd_of(walk))
+
+
+def test_a_visitor_pays_the_toll_for_every_line_it_crosses_half_to_each_end() -> None:
+    world = chain_world(Link("L0-5", "L9-5", 0), Link("L9-5", "L9-9", 0))
+
+    after = at(world, 1.0)
+
+    # Two lines, so the portal in the middle is paid twice a half.
+    half = visitor_weight(1.0) * VISITOR_TOLL / 2
+    assert dict(after.admissions.unpaid) == {
+        "L0-5": pytest.approx(half),
+        "L9-5": pytest.approx(2 * half),
+        "L9-9": pytest.approx(half),
+    }
+
+
+def test_a_visitor_crosses_the_fewest_lines_it_can() -> None:
+    long_way = chain_world(Link("L0-5", "L9-5", 0), Link("L9-5", "L9-9", 0))
+    with_shortcut = replace(long_way, links=(*long_way.links, Link("L0-5", "L9-9", 0)))
+
+    after = at(with_shortcut, 1.0)
+
+    half = visitor_weight(1.0) * VISITOR_TOLL / 2
+    assert the_visitor(after).legs == the_visitor(at(long_way, 1.0)).legs
+    assert dict(after.admissions.unpaid) == {
+        "L0-5": pytest.approx(half),
+        "L9-9": pytest.approx(half),
+    }
+
+
+def test_between_equally_short_ways_through_a_network_the_lower_parcel_id_is_paid() -> None:
+    # Two ways of two lines from L0-5 to L9-9, by L9-5 or by L5-9 (55, 95); the lines through
+    # the higher id, L9-5, are listed first, so the order of the lines does not decide it.
+    chain = chain_world()
+    portals = (*chain.parcels, Parcel(5, 9, "a", PORTAL))
+    diamond = replace(
+        chain,
+        parcels=portals,
+        links=(
+            Link("L0-5", "L9-5", 0),
+            Link("L9-5", "L9-9", 0),
+            Link("L0-5", "L5-9", 0),
+            Link("L5-9", "L9-9", 0),
+        ),
+    )
+
+    after = at(diamond, 1.0)
+
+    half = visitor_weight(1.0) * VISITOR_TOLL / 2
+    assert dict(after.admissions.unpaid) == {
+        "L0-5": pytest.approx(half),
+        "L5-9": pytest.approx(2 * half),
+        "L9-9": pytest.approx(half),
+    }
 
 
 def test_the_owners_toll_does_not_change_what_a_visitor_pays() -> None:
