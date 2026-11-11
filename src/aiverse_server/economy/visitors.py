@@ -1,8 +1,11 @@
 """Visitors: scripted tourists who walk the map, so that where the traffic goes is up to the
 layout of the town and not fixed beforehand.
 
-There are `VISITOR_COUNT` of them, each standing for more and more people as the game goes on,
-`visitor_weight`. A visitor comes in through the entrance, the middle of the map, and makes a few
+There are `VISITOR_COUNT` of them in town while it has nothing built, and more as the town
+builds, `visitors_drawn`, each standing for more and more people as the game goes on,
+`visitor_weight`. The crowd holds `MAX_VISITORS`; those the town cannot draw yet stay away and
+look again every so often, `WAIT_FOR_TOWN`, so a new facility brings more of them in over the
+next minute or two. A visitor comes in through the entrance, the middle of the map, and makes a few
 stops at venues, a workspace, a mall, a garden or a game hall showing games, paying the
 system-set fee at each door, see `admissions.py`. On `ROUTE_SHARE` of the trips the visitor is
 a working tourist: it differs from the others in nothing but its route, a workspace and then a
@@ -62,7 +65,20 @@ from .land import facility_centre, town_centre
 from .portals import Router
 
 VISITOR_COUNT = 200
-"""Visitors in the crowd."""
+"""Visitors the town draws while it has no facility built."""
+
+MAX_VISITORS = 600
+"""Visitors in the crowd, and the most the town ever draws."""
+
+GROWTH_FACILITIES = 8.0
+"""Facilities built in the town over which the visitors it draws grow as the square root of one
+plus their number over this: 200 with none, 282 with 8, 400 with 24, 600 with 64. More
+facilities bring more visitors, if fewer for each facility than the one before, so building is
+worth more than sharing out the same crowd."""
+
+WAIT_FOR_TOWN = (60.0, 120.0)
+"""Game seconds, least and most, a visitor the town cannot draw yet stays away before it looks
+again."""
 
 VISITOR_SPEED = 2.5
 """Map units a visitor walks per game second: the same as a resident, see
@@ -203,6 +219,25 @@ def people_near(world: World, centre: Position) -> float:
     return Traffic(world).near(centre)
 
 
+def visitors_for(built: int) -> int:
+    """Visitors a town with `built` facilities draws: `VISITOR_COUNT` times the square root of
+    one plus `built` over `GROWTH_FACILITIES`, rounded down, at most `MAX_VISITORS`."""
+    return min(MAX_VISITORS, int(VISITOR_COUNT * math.sqrt(1 + built / GROWTH_FACILITIES)))
+
+
+def facilities_built(world: World) -> int:
+    """Facilities of any kind finished in the town; a venue counts once, however many parcels it
+    takes up, since only the parcel it was built on holds it, and work still going on counts
+    for nothing."""
+    return sum(parcel.facility is not None for parcel in world.parcels)
+
+
+def visitors_drawn(world: World) -> int:
+    """Visitors the town draws now, `visitors_for` its `facilities_built`. Visitors are drawn by
+    id, the lowest first, so those with an id at or above this stay away."""
+    return visitors_for(facilities_built(world))
+
+
 def visitor_weight(time: float) -> float:
     """People each visitor stands for at game time `time`; they grow in a straight line."""
     return 1 + time / VISITOR_GROWTH_SECONDS
@@ -268,6 +303,7 @@ def advance_crowd(world: World) -> World:
     if not due:
         return world
     town = _town(world)
+    drawn = visitors_drawn(world)
     heading: Counter[str] = Counter(
         visitor.stop
         for visitor in world.crowd.visitors
@@ -278,7 +314,7 @@ def advance_crowd(world: World) -> World:
     admissions = world.admissions
     moved: dict[int, Visitor] = {}
     for visitor in due:
-        stepped, seen, entered, crossed = _step(world, visitor, entrance, town, heading)
+        stepped, seen, entered, crossed = _step(world, visitor, entrance, town, heading, drawn)
         moved[visitor.id] = stepped
         for parcel_id, people in seen.items():
             views[parcel_id] = views.get(parcel_id, 0.0) + people
@@ -302,13 +338,21 @@ def _step(
     entrance: Position,
     town: _Town,
     heading: Counter[str],
+    drawn: int,
 ) -> tuple[Visitor, dict[str, float], str | None, tuple[str, ...]]:
     """The visitor after the phase that has just ended, the people it has counted at each ad
     slot it passed, the parcel of the workspace, mall or game hall it has just paid to get
     into, if any, and the parcels of the portals it has set off through, in order, if any. `heading`
-    is how many visitors are going or standing at each place, and is kept up to date."""
+    is how many visitors are going or standing at each place, and is kept up to date. A visitor
+    whose absence ends while its id is `drawn` or more, beyond the visitors the town draws now,
+    stays away a while longer and looks again."""
     now = visitor.until
     seed = world.crowd.seed
+    if visitor.phase == "away" and visitor.id >= drawn:
+        low, high = WAIT_FOR_TOWN
+        wait = low + _dice(seed, visitor, "wait") * (high - low)
+        # Counting the wait as a step gives the next wait dice of its own.
+        return replace(visitor, until=now + wait, step=visitor.step + 1), {}, None, ()
     if visitor.phase == "away":
         working = _dice(seed, visitor, "route") < ROUTE_SHARE
         stops = MIN_STOPS + int(_dice(seed, visitor, "stops") * (MAX_STOPS - MIN_STOPS + 1))

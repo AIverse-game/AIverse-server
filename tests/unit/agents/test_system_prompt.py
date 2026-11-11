@@ -15,10 +15,14 @@ from aiverse_server.economy.compute import (
 )
 from aiverse_server.economy.sponsors import PAY_PERIOD
 from aiverse_server.economy.visitors import (
+    GROWTH_FACILITIES,
+    MAX_VISITORS,
     MIN_VIEW_SECONDS,
     ROUTE_SHARE,
     SEEN_FOR,
     VIEW_RADIUS,
+    VISITOR_COUNT,
+    visitors_for,
 )
 from aiverse_server.game.layout import create_default_world
 
@@ -161,3 +165,13 @@ def test_the_prompt_says_how_many_nodes_of_each_kind_the_town_has() -> None:
     assert supply == 3
     assert f"the town has only {supply} generative and {supply} render nodes" in prompt
     assert "compute.town_nodes" in prompt
+
+
+def test_the_prompt_says_the_visitors_grow_with_the_facilities_built() -> None:
+    prompt = " ".join(system_prompt("甲", "a").split())
+
+    assert (
+        f"{VISITOR_COUNT} x sqrt(1 + facilities / {GROWTH_FACILITIES:g}), so {VISITOR_COUNT} with "
+        f"none, {visitors_for(24)} with 24 and at most {MAX_VISITORS}"
+    ) in prompt
+    assert "land.visitors_drawn" in prompt

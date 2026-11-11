@@ -38,13 +38,16 @@ from ..economy.land import PARCEL_SIZE, plots
 from ..economy.sponsors import PAY_PERIOD, default_sponsors
 from ..economy.visitors import (
     GARDEN_PIECES,
+    GROWTH_FACILITIES,
     MALL_PIECES,
+    MAX_VISITORS,
     MIN_VIEW_SECONDS,
     ROUTE_SHARE,
     SEEN_FOR,
     VIEW_RADIUS,
     VISITOR_COUNT,
     WORKSPACE_PIECES,
+    visitors_for,
 )
 from ..game.layout import BLOCK_CELLS, BLOCKS, MAP_SIZE, VENUE_CELLS, create_default_world
 from ..game.lifecycle import EARLY_ENDING_NOTICE_SECONDS, ENDING_NOTICE_SECONDS
@@ -86,6 +89,7 @@ def system_prompt(
     on_demand_cost_ratio = ON_DEMAND_PRICE / sub_per_workload
     sponsor_coins = sum(sponsor.rate for sponsor in default_sponsors().sponsors)
     supply = node_supply(town)
+    drawn_24 = visitors_for(24)
     floor_at = next(made for made in range(100) if practice_factor(made) <= PRACTICE_FLOOR)
     prompt = f"""You are {name} (id {resident_id}) in AIverse, a virtual world. Maximize your coins
 at game end. Only coins count; land and items are worth nothing at the end.
@@ -183,10 +187,14 @@ Whoever holds any shares of a parcel may build on it and put content in it.
 price for a number of shares, you pay the rest and keep the other shares. Both of you may
 build on it. No coins are locked while it waits: you both pay when they accept, and it lapses
 after {JOINT_PURCHASE_SECONDS:g}s. If someone buys it first, withdraw.
-- {VISITOR_COUNT} scripted visitors come in at the middle of the map and go to workspaces and game
+- Scripted visitors come in at the middle of the map and go to workspaces and game
 halls showing games, more to ones with more pieces (a workspace counts as {WORKSPACE_PIECES},
 a mall as {MALL_PIECES}) and nearer to them, fewer to crowded ones, paying the fee at each door;
-then they leave and come again, and each stands for more people as the game goes on. Some
+then they leave and come again, and each stands for more people as the game goes on. The more
+facilities of any kind the town has built, by anyone, the more visitors come:
+{VISITOR_COUNT} x sqrt(1 + facilities / {GROWTH_FACILITIES:g}), so {VISITOR_COUNT} with none,
+{drawn_24} with 24 and at most {MAX_VISITORS}; new ones arrive within a minute or two of a
+facility being finished. land.facilities_built and land.visitors_drawn show both now. Some
 trips follow the working route instead, see build_venue.
 The land observation shows how many people are passing each parcel now.
 The observation's recent_payments counts the coins residents paid each other in the past

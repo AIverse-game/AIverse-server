@@ -8,6 +8,7 @@ from aiverse_server.core.land import Facility, Parcel
 from aiverse_server.core.sponsors import Sponsor, SponsorBook
 from aiverse_server.core.visitors import Crowd
 from aiverse_server.core.world import Position, Resident, World, WorldMap
+from aiverse_server.economy.visitors import visitors_drawn
 from aiverse_server.residents.perception import begin_turn
 
 SLOT = Facility("ad", 0.0, (500.0,))
@@ -57,3 +58,18 @@ def test_a_resident_is_told_how_many_people_went_into_their_workspace_and_what_i
     mine = {parcel.id: parcel for parcel in land.mine}["L2-2"]
     assert (mine.facility, mine.people_admitted, mine.income_last_payday) == ("workspace", 7.3, 28)
     assert mine.my_cut_last_payday == 28
+
+
+def test_a_resident_is_told_how_many_facilities_the_town_has_and_the_visitors_it_draws() -> None:
+    others = tuple(Parcel(col, 3, "b", Facility("ad", 0.0)) for col in range(7))
+    world = replace(
+        WORLD,
+        residents=(*WORLD.residents, Resident("b", "乙", "#445566", Position(5, 5))),
+        parcels=(*WORLD.parcels, *others),
+    )
+
+    perception = begin_turn(world, "a")[1]
+    land = observe(world, "a", perception, 600).land
+
+    assert (land.facilities_built, land.visitors_drawn) == (8, visitors_drawn(world))
+    assert land.visitors_drawn == 282

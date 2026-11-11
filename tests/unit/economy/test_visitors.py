@@ -15,19 +15,25 @@ from aiverse_server.economy.ads import CONTENT_LIFETIME, GAME_LIFETIME
 from aiverse_server.economy.visitors import (
     DWELL,
     MAX_STOPS,
+    MAX_VISITORS,
     MIN_STOPS,
     TRAFFIC_REACH,
     VISITOR_COUNT,
     VISITOR_SPEED,
+    WAIT_FOR_TOWN,
     Traffic,
     advance_crowd,
+    facilities_built,
     new_crowd,
     next_visit,
     people_near,
     remaining_legs,
     visitor_position,
     visitor_weight,
+    visitors_drawn,
+    visitors_for,
 )
+from aiverse_server.game.actions import BuildVenue, perform
 from aiverse_server.game.clock import next_due, settle_due
 from aiverse_server.game.layout import create_default_world
 from aiverse_server.residents.walking import WALK_SPEED
@@ -701,7 +707,8 @@ def test_nothing_changes_before_a_visitors_step_is_due() -> None:
 def test_the_default_world_has_a_crowd_that_has_not_come_in_yet() -> None:
     world = create_default_world()
 
-    assert len(world.crowd.visitors) == VISITOR_COUNT
+    assert len(world.crowd.visitors) == MAX_VISITORS
+    assert visitors_drawn(world) == VISITOR_COUNT
     assert all(v.phase == "away" for v in world.crowd.visitors)
     assert all(0 < v.until <= 120.0 for v in world.crowd.visitors)
 
@@ -775,3 +782,59 @@ def test_a_visitor_who_has_arrived_has_no_legs_left_even_before_the_step_is_take
     walker = visitor(phase="walking", at=Position(0, 0), target=Position(10, 0))
 
     assert remaining_legs(walker, 1_000.0) == []
+
+
+def ads_built(count: int) -> tuple[Parcel, ...]:
+    """`count` bare ad slots on a 10 x 10 grid of parcels, none showing anything."""
+    return tuple(Parcel(n % 10, n // 10, "a", Facility("ad", 0.0)) for n in range(count))
+
+
+@pytest.mark.parametrize(
+    ("built", "drawn"), [(0, 200), (1, 212), (8, 282), (24, 400), (64, 600), (100, 600)]
+)
+def test_the_town_draws_more_visitors_the_more_it_has_built_up_to_a_limit(
+    built: int, drawn: int
+) -> None:
+    world = world_of(*ads_built(built))
+
+    assert visitors_drawn(world) == drawn
+    assert drawn == min(MAX_VISITORS, int(VISITOR_COUNT * math.sqrt(1 + built / 8)))
+    assert visitors_for(built) == drawn
+
+
+def test_a_visitor_the_town_cannot_draw_yet_stays_away_and_comes_once_it_has_built_more() -> None:
+    late = visitor(id=VISITOR_COUNT + 50, until=5.0)
+    small = world_of(hall(2, 5), crowd=crowd_of(late))
+    built_up = world_of(hall(2, 5), *ads_built(8)[1:], crowd=crowd_of(late))
+
+    waiting = advance_crowd(replace(small, time=5.0)).crowd.visitors[0]
+    coming = advance_crowd(replace(built_up, time=5.0)).crowd.visitors[0]
+
+    assert waiting.phase == "away"
+    assert 5.0 + WAIT_FOR_TOWN[0] <= waiting.until <= 5.0 + WAIT_FOR_TOWN[1]
+    assert visitors_drawn(small) <= VISITOR_COUNT + 50 < visitors_drawn(built_up)
+    assert coming.phase == "walking"
+
+
+def test_a_waiting_visitor_throws_new_dice_for_each_wait() -> None:
+    late = visitor(id=VISITOR_COUNT, until=5.0)
+    world = world_of(crowd=crowd_of(late))
+
+    first = advance_crowd(replace(world, time=5.0)).crowd.visitors[0]
+    second = advance_crowd(replace(world, time=first.until, crowd=crowd_of(first)))
+    again = second.crowd.visitors[0]
+
+    assert again.phase == "away"
+    assert again.until - first.until != first.until - 5.0
+
+
+def test_a_venue_counts_once_and_only_when_it_is_finished() -> None:
+    block = WorldMap(size=100, block_cells=3, venue_cells=2)
+    land = tuple(Parcel(col, row, "a") for col in range(3) for row in range(3))
+    world = replace(world_of(*land), map=block)
+
+    building = perform(world, BuildVenue("a", "L0-0", "workspace", "self"))
+    built = settle_due(replace(building, time=building.compute.jobs[0].ends_at))
+
+    assert (facilities_built(building), visitors_drawn(building)) == (0, VISITOR_COUNT)
+    assert (facilities_built(built), visitors_drawn(built)) == (1, visitors_for(1))

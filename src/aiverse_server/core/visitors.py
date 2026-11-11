@@ -57,7 +57,8 @@ class Visitor:
     """Visits to town so far, counting this one; with `step` it gives the dice of each choice
     their own seed."""
     step: int = 0
-    """Choices made on this trip."""
+    """Choices made on this trip, and after it each wait outside while the town cannot draw the
+    visitor yet; it starts again at 0 on the next trip."""
     stops_left: int = 0
     """Venues still to visit on this trip before leaving."""
     seen: tuple[tuple[str, float], ...] = ()

@@ -83,7 +83,7 @@ from ..economy.portals import (
 from ..economy.shares import ShareOffer, split_income
 from ..economy.sponsors import BUDGET_CAP_SECONDS, PAY_PERIOD
 from ..economy.trade import PurchaseOffer, SaleOffer, reserved_coins
-from ..economy.visitors import Traffic, people_near
+from ..economy.visitors import Traffic, facilities_built, people_near, visitors_drawn
 from ..game.lifecycle import ranks, total_coins
 from ..residents.information_offer import InformationOffer
 from ..residents.perception import Perception
@@ -508,6 +508,10 @@ class LandView:
     `MyParcelView.content_appeal`."""
     pay_period: float
     """Seconds between paydays, which fall at multiples of it."""
+    facilities_built: int
+    """Facilities of any kind built in the whole town, each venue counting once."""
+    visitors_drawn: int
+    """Visitors the town draws now; it grows with `facilities_built`, see the system prompt."""
     sponsors: tuple[SponsorView, ...]
     """Who pays for views of ad slots; at a payday the sponsors who pay most buy the views of
     all slots first, and when their budgets run short every slot is paid for the same share of
@@ -945,6 +949,8 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
         slot_capacity=AD_SLOT_CAPACITY,
         ad_content_lasts=CONTENT_LIFETIME,
         pay_period=PAY_PERIOD,
+        facilities_built=facilities_built(world),
+        visitors_drawn=visitors_drawn(world),
         sponsors=_sponsor_views(world),
         here=view(square_here) if standing and square_here is not None else None,
         mine=tuple(mine_view(square) for square in mine),

@@ -6,7 +6,7 @@ Every match uses the same map and residents.
 from ..core.world import Position, Resident, World, WorldMap
 from ..economy.land import PARCEL_SIZE, town_centre
 from ..economy.sponsors import default_sponsors
-from ..economy.visitors import new_crowd
+from ..economy.visitors import MAX_VISITORS, new_crowd
 
 BLOCK_CELLS = 3
 """Parcels along each side of a block, the unit land is bought in."""
@@ -58,6 +58,6 @@ def create_default_world() -> World:
             venue_cells=VENUE_CELLS,
         ),
         residents=DEFAULT_RESIDENTS,
-        crowd=new_crowd(),
+        crowd=new_crowd(MAX_VISITORS),
         sponsors=default_sponsors(),
     )
