@@ -47,6 +47,7 @@ from ..economy.compute import (
     garden_room,
     job_seconds,
     on_demand_cost,
+    portal_room,
     promised_builder,
 )
 from ..economy.contracts import ContractProposal, contract_coins, contracts_of
@@ -258,6 +259,10 @@ class MyParcelView:
     counts one; a game counts less the longer it has been in the hall, halving every
     `GAME_HALF_LIFE` seconds. A hall with old games draws less than its game count says; a fresh
     game replaces the oldest when the hall is full."""
+    portal_room: bool = False
+    """Whether a portal could be started on this parcel now, whoever of its holders builds it:
+    bare, untaken, not promised, and its owner has fewer than `TransportView.max_portals` portals
+    on their parcels, built or being built."""
 
 
 @dataclass(frozen=True)
@@ -370,7 +375,7 @@ class TransportView:
     """Portals and the lines between them."""
 
     max_portals: int
-    """Portals one resident may hold, built or being built."""
+    """Portals the parcels of one resident may carry, built or being built by anyone."""
     max_lines_per_portal: int
     min_line_distance: float
     """Least distance between the centres of a line's two parcels."""
@@ -889,6 +894,7 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
             parcel.owner_id == resident_id and garden_room(world, parcel, taken),
             block_has_garden(world, square.id),
             _appeal(world, facilities.get(square.id)),
+            portal_room(world, parcel, taken),
         )
 
     return LandView(

@@ -180,8 +180,9 @@ class BuildAdArgs(_Args):
 
 class BuildPortalArgs(_Args):
     parcel_id: str = Field(
-        description="id of one of your parcels with no facility and no job, not taken up by a "
-        "venue (land.mine[].covered_by is null)."
+        description="id of one of your parcels, or one you hold shares in, with no facility and no "
+        "job, not taken up by a venue; land.mine[].portal_room says whether a portal can be "
+        "started there now."
     )
     source: Literal["self", "on_demand", "subscription"] = Field(
         description="self: your own compute, free; on_demand: a node hired for this job, "
@@ -551,13 +552,16 @@ TOOLS = (
     ),
     ToolSpec(
         "build_portal",
-        "Start building a portal on one of your parcels, from anywhere, even while walking; it "
-        f"appears when the job ends. Up to {MAX_PORTALS} portals, built or being built. It "
+        "Start building a portal on one of your parcels or one you hold shares in, from "
+        "anywhere, even while walking; it "
+        f"appears when the job ends. The parcels of one owner may carry up to {MAX_PORTALS} "
+        "portals, built or being built. It "
         f"takes {PORTAL_WORKLOAD:g} workload: {job_seconds(PORTAL_WORKLOAD, 'self'):g} s on "
         f"your own compute (free, one at a time, later jobs queue), "
         f"{job_seconds(PORTAL_WORKLOAD, 'on_demand'):g} s on a node hired for it "
         f"({on_demand_cost(PORTAL_WORKLOAD)} coins), or on one of your subscribed generative "
-        "nodes. A portal earns only tolls: it matters through its lines (link_portals), and "
+        "nodes. The parcel's owner links it. A portal earns only tolls: it matters through its "
+        "lines (link_portals), and "
         "visitors crossing a line that ends at it pay a small toll shared by the holders of "
         "the portals at the two ends of the line.",
         BuildPortalArgs,

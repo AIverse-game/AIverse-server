@@ -274,15 +274,16 @@ def start_build_portal(
     node_id: int | None = None,
 ) -> World:
     """Start building a portal on the bare parcel `parcel_id` of the resident, as
-    `start_build_ad` does for an ad slot. The resident may have at most `MAX_PORTALS`, built
-    or being built."""
+    `start_build_ad` does for an ad slot: the parcel is theirs when they bought it or hold
+    shares in it, and the portal belongs to the parcel, so its owner links it and its holders
+    share what it earns. The parcel's owner may have at most `MAX_PORTALS` on their parcels,
+    built or being built by anyone, see `portal_count`."""
     _find(world, resident_id)
     parcel = _bare_parcel(world, resident_id, parcel_id)
-    if parcel.owner_id != resident_id:
-        # A portal is linked and tolled by the parcel's owner, so only they build one.
-        raise ComputeError("not_your_parcel", f"parcel {parcel_id!r} is not {resident_id}'s")
-    if portal_count(world, resident_id) >= MAX_PORTALS:
-        raise ComputeError("too_many_portals", f"at most {MAX_PORTALS} portals may be held")
+    if portal_count(world, parcel.owner_id) >= MAX_PORTALS:
+        raise ComputeError(
+            "too_many_portals", f"at most {MAX_PORTALS} portals may stand on one resident's parcels"
+        )
     return _start_job(world, resident_id, "build_portal", parcel.id, source, node_id)
 
 
@@ -307,6 +308,18 @@ def start_build_garden(
             "garden_exists", f"the block of {parcel_id} already has a garden, or one being built"
         )
     return _start_job(world, resident_id, "build_garden", parcel.id, source, node_id)
+
+
+def portal_room(world: World, parcel: Parcel, taken: dict[tuple[int, int], str]) -> bool:
+    """Whether a portal could be started on `parcel` now by someone who may build there: it is
+    bare and untaken, no one holds a permit for it, and its owner has room for another. `taken`
+    is `land.claimed(world)`."""
+    return (
+        parcel.facility is None
+        and (parcel.col, parcel.row) not in taken
+        and promised_builder(world, parcel.id, None) is None
+        and portal_count(world, parcel.owner_id) < MAX_PORTALS
+    )
 
 
 def garden_room(world: World, parcel: Parcel, taken: dict[tuple[int, int], str]) -> bool:

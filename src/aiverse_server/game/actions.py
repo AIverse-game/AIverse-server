@@ -303,9 +303,9 @@ class BuildAd:
 
 @dataclass(frozen=True)
 class BuildPortal:
-    """Start building a portal on the resident's own bare parcel `parcel_id`, on the same
-    sources as `BuildAd`, see `compute.py` and `portals.py`. The portal appears when the job
-    ends."""
+    """Start building a portal on the bare parcel `parcel_id` of the resident, who owns it or
+    holds shares in it, on the same sources as `BuildAd`, see `compute.py` and `portals.py`. The
+    portal appears when the job ends."""
 
     resident_id: str
     parcel_id: str

@@ -12,6 +12,7 @@ from aiverse_server.economy.portals import (
     MAX_PORTALS,
     MIN_LINK_DISTANCE,
     effective_distance,
+    portal_count,
 )
 from aiverse_server.economy.shares import MAX_PENDING_PER_PAIR
 from aiverse_server.economy.sponsors import next_payday, pay_sponsors
@@ -83,13 +84,58 @@ def test_a_portal_is_built_by_a_generative_job_and_appears_when_it_ends() -> Non
     assert done.compute.jobs == ()
 
 
-def test_only_the_owner_builds_a_portal_not_a_holder_of_shares() -> None:
+def test_a_holder_of_shares_builds_a_portal_on_the_parcel_but_a_stranger_cannot() -> None:
     world = replace(WORLD, parcels=(Parcel(2, 2, "a", shares=(("a", 50), ("b", 50))),))
 
+    started = perform(world, BuildPortal("b", "L2-2", "self"))
+    done = settle_due(replace(started, time=PORTAL_WORKLOAD / SELF_RATE))
     with pytest.raises(ActionRejected) as raised:
-        perform(world, BuildPortal("b", "L2-2", "self"))
+        perform(world, BuildPortal("c", "L2-2", "self"))
 
+    assert done.parcels[0].facility == Facility("portal", PORTAL_WORKLOAD / SELF_RATE)
+    assert done.parcels[0].owner_id == "a"
     assert raised.value.code == "not_your_parcel"
+
+
+def test_a_portal_a_holder_builds_counts_against_the_owner_not_the_holder() -> None:
+    world = replace(WORLD, parcels=(Parcel(2, 2, "a", shares=(("a", 50), ("b", 50))),))
+
+    started = perform(world, BuildPortal("b", "L2-2", "self"))
+    done = settle_due(replace(started, time=PORTAL_WORKLOAD / SELF_RATE))
+
+    assert (portal_count(started, "a"), portal_count(started, "b")) == (1, 0)
+    assert (portal_count(done, "a"), portal_count(done, "b")) == (1, 0)
+
+
+def test_holders_cannot_build_portals_past_the_owners_limit() -> None:
+    shared = tuple(
+        Parcel(col, 3, "a", shares=(("a", 50), ("b", 50))) for col in range(MAX_PORTALS + 1)
+    )
+    rich = tuple(replace(resident, coins=100_000) for resident in WORLD.residents)
+    world = replace(WORLD, residents=rich, parcels=shared)
+    for index in range(MAX_PORTALS):
+        world = perform(world, BuildPortal("b", f"L{index}-3", "on_demand"))
+
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, BuildPortal("b", f"L{MAX_PORTALS}-3", "on_demand"))
+
+    assert raised.value.code == "too_many_portals"
+    assert portal_count(world, "a") == MAX_PORTALS
+
+
+def test_portals_a_holder_has_building_count_for_the_owner_s_own_limit() -> None:
+    shared = tuple(
+        Parcel(col, 3, "a", shares=(("a", 50), ("b", 50))) for col in range(MAX_PORTALS + 1)
+    )
+    rich = tuple(replace(resident, coins=100_000) for resident in WORLD.residents)
+    world = replace(WORLD, residents=rich, parcels=shared)
+    for index in range(MAX_PORTALS):
+        world = perform(world, BuildPortal("b", f"L{index}-3", "on_demand"))
+
+    with pytest.raises(ActionRejected) as raised:
+        perform(world, BuildPortal("a", f"L{MAX_PORTALS}-3", "on_demand"))
+
+    assert raised.value.code == "too_many_portals"
 
 
 def test_a_portal_is_built_while_walking_and_may_share_its_parcel_with_another_job() -> None:

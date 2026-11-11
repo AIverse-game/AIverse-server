@@ -6,8 +6,9 @@ crosses a line that ends there. Two portals are joined by a line, a `Link`, with
 owners of both parcels must agree: `link_portals` joins two portals of one resident at once, while a
 resident whose portal is to be joined to someone else's sends them a `LinkProposal`, an event,
 see `events.py`, which they accept or reject. A portal may have at most `MAX_LINKS_PER_PORTAL`
-lines, a resident may have at most `MAX_PORTALS` portals built or being built, and the two
-parcels of a line lie at least `MIN_LINK_DISTANCE` apart, since a shorter line saves nothing.
+lines, the parcels of a resident may carry at most `MAX_PORTALS` portals built or being built (by
+anyone who may build there), and the two parcels of a line lie at least `MIN_LINK_DISTANCE` apart,
+since a shorter line saves nothing.
 
 Lines do two things.
 
@@ -56,7 +57,8 @@ if TYPE_CHECKING:
     from ..core.world import World
 
 MAX_PORTALS = 4
-"""Portals one resident may have, counting those still being built."""
+"""Portals the parcels of one resident may carry, counting those still being built, whoever
+builds them."""
 
 MAX_LINKS_PER_PORTAL = 3
 """Lines one portal may end. With no limit one portal in the middle could pull the whole map
@@ -88,15 +90,15 @@ class PortalsError(Exception):
 
 
 def portal_count(world: World, resident_id: str) -> int:
-    """Portals the resident has built or is building."""
+    """Portals standing or being built on the parcels the resident owns, whoever builds them: a
+    holder of shares who builds one on the parcel counts against its owner, not themselves."""
+    owned = {parcel.id for parcel in world.parcels if parcel.owner_id == resident_id}
     built = sum(
-        parcel.owner_id == resident_id
-        and parcel.facility is not None
-        and parcel.facility.kind == "portal"
+        parcel.id in owned and parcel.facility is not None and parcel.facility.kind == "portal"
         for parcel in world.parcels
     )
     building = sum(
-        job.owner_id == resident_id and job.kind == "build_portal" for job in world.compute.jobs
+        job.kind == "build_portal" and job.parcel_id in owned for job in world.compute.jobs
     )
     return built + building
 

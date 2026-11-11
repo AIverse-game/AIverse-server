@@ -317,8 +317,21 @@ def test_a_portal_being_built_counts_towards_the_limit_for_offering_build_portal
     assert "build_portal" not in names | final
 
 
-def test_a_portal_is_not_offered_on_a_parcel_one_only_holds_shares_in() -> None:
+def test_a_portal_is_offered_on_a_parcel_one_only_holds_shares_in() -> None:
     parcels = (Parcel(5, 5, "b", shares=(("a", 50), ("b", 50))),)
+    game = make_game(with_node(replace(WORLD, parcels=parcels)))
+
+    names = selected_tool_names(look(game, "a"))
+    final = last_request_tool_names(ResidentTools(game, "a"))
+    built = ResidentTools(game, "a").build_portal("L5-5", "subscription", 1)
+
+    assert "build_portal" in names
+    assert "build_portal" in final
+    assert built.ok
+
+
+def test_a_portal_is_not_offered_on_a_parcel_one_has_no_shares_in() -> None:
+    parcels = (Parcel(5, 5, "b"),)
     game = make_game(with_node(replace(WORLD, parcels=parcels)))
 
     names = selected_tool_names(look(game, "a"))
@@ -359,3 +372,18 @@ def test_link_portals_needs_no_toll_since_nobody_pays_it() -> None:
 
     assert result.ok
     assert game.world.links == (Link("L0-0", "L9-9", 0),)
+
+
+def test_a_portal_is_not_offered_to_a_holder_when_the_owner_has_no_room_for_another() -> None:
+    parcels = (
+        Parcel(5, 5, "b", shares=(("a", 50), ("b", 50))),
+        *(Parcel(col, 0, "b", facility=PORTAL) for col in range(4)),
+    )
+    game = make_game(with_node(replace(WORLD, parcels=parcels)))
+
+    names = selected_tool_names(look(game, "a"))
+    final = last_request_tool_names(ResidentTools(game, "a"))
+    built = ResidentTools(game, "a").build_portal("L5-5", "subscription", 1)
+
+    assert "build_portal" not in names | final
+    assert built.code == "too_many_portals"

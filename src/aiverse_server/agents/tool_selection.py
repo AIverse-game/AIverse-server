@@ -15,11 +15,11 @@ from ..economy.compute import (
     MAX_NODES,
     NODE_SECONDS,
     garden_room,
+    portal_room,
     promised_builder,
     subscription_cost,
 )
 from ..economy.land import claimed, for_sale_at, venue_room
-from ..economy.portals import MAX_PORTALS, portal_count
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
@@ -90,23 +90,8 @@ def selected_tool_names(observation: Observation) -> set[str]:
         names.add("build_ad")
     if any(parcel.garden_room for parcel in observation.land.mine):
         names.add("build_garden")
-    # A portal is built only by a parcel's owner; `land.mine` also lists parcels one merely
-    # holds shares in, which `land.stakes` names.
-    stakes = {stake.id for stake in observation.land.stakes}
-    portals_held = (len(observation.transport.mine) if observation.transport else 0) + sum(
-        job.kind == "build_portal" for job in compute.my_jobs
-    )
-    if (
-        portals_held < MAX_PORTALS
-        and any(node.kind == "generative" and node.working_on is None for node in compute.my_nodes)
-        and any(
-            parcel.id not in stakes
-            and parcel.facility is None
-            and parcel.building_ends_in is None
-            and parcel.covered_by is None
-            and parcel.promised_to is None
-            for parcel in observation.land.mine
-        )
+    if any(parcel.portal_room for parcel in observation.land.mine) and any(
+        node.kind == "generative" and node.working_on is None for node in compute.my_nodes
     ):
         names.add("build_portal")
     if any(
@@ -201,22 +186,13 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
     if any(parcel.owner_id == me.id and garden_room(world, parcel, taken) for parcel in my_parcels):
         names.add("build_garden")
     busy_nodes = {job.node_id for job in book.jobs if job.owner_id == me.id}
-    if (
-        portal_count(world, me.id) < MAX_PORTALS
-        and any(
-            node.owner_id == me.id
-            and node.kind == "generative"
-            and node.expires_at > world.time
-            and node.id not in busy_nodes
-            for node in book.nodes
-        )
-        and any(
-            parcel.owner_id == me.id
-            and (parcel.col, parcel.row) not in taken
-            and promised_builder(world, parcel.id, None) is None
-            for parcel in my_parcels
-        )
-    ):
+    if any(
+        node.owner_id == me.id
+        and node.kind == "generative"
+        and node.expires_at > world.time
+        and node.id not in busy_nodes
+        for node in book.nodes
+    ) and any(portal_room(world, parcel, taken) for parcel in my_parcels):
         names.add("build_portal")
     if any(
         (
