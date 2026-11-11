@@ -613,7 +613,7 @@ class World:
     sponsors: SponsorBook = SponsorBook()
     """Who pays for those views and what they were paid, see `sponsors.py`."""
     admissions: AdmissionBook = AdmissionBook()
-    """Fees visitors paid at the doors of workspaces and game halls, see `admissions.py`."""
+    """Fees visitors paid at the doors of venues and tolls at portals, see `admissions.py`."""
     world_log: WorldLog = WorldLog()
     """Everything residents did, for the pages' world log, see `game/world_log.py`."""
 

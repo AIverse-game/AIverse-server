@@ -8,7 +8,7 @@ from typing import Literal
 
 FacilityKind = Literal["ad", "portal", "game_hall", "workspace", "mall", "garden"]
 """What a facility is: an ad slot, which earns from the content it shows; a portal, which
-earns nothing itself but joins parcels into a transport network, see `economy/portals.py`; a
+joins parcels into a transport network and earns only tolls, see `economy/portals.py`; a
 game hall or a workspace, venues that earn from the fees visitors pay at the door, see
 `economy/admissions.py`; a mall, which draws visitors without content but earns little; or a
 garden, a small place of rest on one parcel that raises every income in its block, see

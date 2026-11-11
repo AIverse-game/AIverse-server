@@ -1,5 +1,5 @@
-"""Immutable state of the admission fees visitors pay workspaces and game halls; the rules live
-in economy/admissions.py."""
+"""Immutable state of the admission fees visitors pay workspaces and game halls and of the tolls
+they pay portals; the rules live in economy/admissions.py."""
 
 import math
 from dataclasses import dataclass
@@ -8,8 +8,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class AdmissionBook:
     unpaid: tuple[tuple[str, float], ...] = ()
-    """(parcel id, coins) pairs sorted by parcel: fees visitors have paid at the door and the
-    holders have not been paid yet; paid out in whole coins at paydays, the rest carried."""
+    """(parcel id, coins) pairs sorted by parcel: fees visitors have paid at the door, and tolls
+    on portal parcels, that the holders have not been paid yet; paid out in whole coins at
+    paydays, the rest carried."""
     admitted: tuple[tuple[str, float], ...] = ()
     """(parcel id, people) pairs sorted by parcel: people let in so far. A visitor stands for
     more than one person, so these are fractions."""

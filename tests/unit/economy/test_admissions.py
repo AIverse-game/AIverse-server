@@ -13,6 +13,7 @@ from aiverse_server.economy import visitors
 from aiverse_server.economy.admissions import (
     FEES,
     admit,
+    charge,
     due_fees,
     next_admission_payday,
     pay_admissions,
@@ -157,3 +158,15 @@ def test_working_tourists_who_go_in_earn_the_owner_coins_from_outside_the_town(
     )
     admitted = sum(people for _, people in after.admissions.admitted)
     assert 0 < taken <= admitted * max(FEES.values())
+
+
+def test_a_toll_is_paid_to_the_holders_with_the_fees_and_lets_nobody_in() -> None:
+    book = charge(charge(AdmissionBook(), "L7-7", 2.5), "L7-8", 1.0)
+    world = replace(WORLD, admissions=book)
+
+    paid = settle_due(replace(world, time=PAY_PERIOD))
+
+    assert coins(paid, "a") == 3
+    assert dict(paid.admissions.unpaid) == {"L7-7": pytest.approx(0.5)}
+    assert paid.admissions.admitted == ()
+    assert {t.channel for t in paid.ledger.transfers} == {"visitors"}

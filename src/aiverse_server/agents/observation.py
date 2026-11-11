@@ -918,8 +918,8 @@ def _land_view(world: World, resident_id: str, here: Position, *, standing: bool
 
 
 def _income(world: World, parcel: Parcel | None) -> int:
-    """Coins the facility on `parcel` was paid at the last payday, from sponsors and from fees at
-    the door, 0 without."""
+    """Coins the facility on `parcel` was paid at the last payday, from sponsors, from fees at
+    the door and from visitors' tolls, 0 without."""
     if parcel is None:
         return 0
     return world.sponsors.last_paid_to(parcel.id) + world.admissions.last_paid_to(parcel.id)

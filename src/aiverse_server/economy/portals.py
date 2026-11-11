@@ -1,7 +1,8 @@
 """Portals: facilities that join parcels into a transport network.
 
-A portal is built on a parcel like an ad slot, by a generative job, see `compute.py`, and
-earns nothing itself. Two portals are joined by a line, a `Link`, with a toll. The owners of
+A portal is built on a parcel like an ad slot, by a generative job, see `compute.py`. It
+earns only tolls: those of residents who teleport and a small fixed one from each visitor who
+goes through its network. Two portals are joined by a line, a `Link`, with a toll. The owners of
 both parcels must agree: `link_portals` joins two portals of one resident at once, while a
 resident whose portal is to be joined to someone else's sends them a `LinkProposal`, an event,
 see `events.py`, which they accept or reject. A portal may have at most `MAX_LINKS_PER_PORTAL`
@@ -21,8 +22,10 @@ Lines do two things.
 - `Router` gives the same for a walk from one spot to another: the shorter of walking on foot
   (straight, or across the bridges between islands where the map has them, see `islands.py`)
   and walking to the nearest portal of a network, coming out at once at the portal of it
-  nearest the goal. The scripted visitors, see `visitors.py`, walk by it and take the lines
-  for nothing, so which lines carry traffic is up to their choices.
+  nearest the goal. The scripted visitors, see `visitors.py`, walk by it, so which lines
+  carry traffic is up to their choices. A trip through a network says which two portals it
+  went in and out at, `Route.portals`, and the visitor pays the system's small toll for it,
+  see `admissions.VISITOR_TOLL`, not the owners' tolls, which are for residents.
 
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched; on error nothing changes.
@@ -213,10 +216,10 @@ def _components(
     world_map: WorldMap,
     portals: tuple[tuple[str, int, int], ...],
     lines: tuple[tuple[str, str], ...],
-) -> tuple[tuple[Position, str], ...]:
+) -> tuple[tuple[Position, str, str], ...]:
     """Each portal's centre, with a name for its network (the portals its lines reach, and
-    theirs in turn), the same for all portals of one network. Worked out once per layout of
-    portals and lines, since a layout is asked about many times."""
+    theirs in turn), the same for all portals of one network, and the id of its parcel. Worked
+    out once per layout of portals and lines, since a layout is asked about many times."""
     centres = {parcel_id: parcel_centre(world_map, col, row) for parcel_id, col, row in portals}
     group = {parcel_id: parcel_id for parcel_id in centres}
 
@@ -228,10 +231,10 @@ def _components(
 
     for first, second in lines:
         group[root(first)] = root(second)
-    return tuple((there, root(parcel_id)) for parcel_id, there in centres.items())
+    return tuple((there, root(parcel_id), parcel_id) for parcel_id, there in centres.items())
 
 
-def _layout(world: World) -> tuple[tuple[Position, str], ...]:
+def _layout(world: World) -> tuple[tuple[Position, str, str], ...]:
     portals = tuple(
         sorted(
             (parcel.id, parcel.col, parcel.row)
@@ -254,10 +257,10 @@ def _network(
     town = town_centre(world_map.size)
     components = _components(world_map, portals, lines)
     nearest: dict[str, float] = {}
-    for there, name in components:
+    for there, name, _ in components:
         gap = math.dist((there.x, there.y), (town.x, town.y))
         nearest[name] = min(nearest.get(name, gap), gap)
-    return tuple((there, nearest[name]) for there, name in components)
+    return tuple((there, nearest[name]) for there, name, _ in components)
 
 
 @dataclass(frozen=True)
@@ -270,6 +273,10 @@ class Route:
     """The straight stretches walked, in order; going through a network of portals leaves a break
     between the one that ends at the portal walked to and the one that starts at the portal come
     out of."""
+    portals: tuple[str, str] | None = None
+    """The parcels of the portal it went in at and the one it came out of, None when it only
+    walked. Never the same one twice: going in and out at one portal is no trip through a
+    network."""
 
 
 class Router:
@@ -283,26 +290,27 @@ class Router:
         self._map = world.map
         self._start = walk_from(world.map, start)
         self._portals = _layout(world)
-        self._entry: dict[str, tuple[float, Position]] = {}
-        for there, name in self._portals:
+        self._entry: dict[str, tuple[float, Position, str]] = {}
+        for there, name, parcel_id in self._portals:
             gap = self._start.distance(there)
             if name not in self._entry or gap < self._entry[name][0]:
-                self._entry[name] = (gap, there)
+                self._entry[name] = (gap, there, parcel_id)
 
     def to(self, end: Position) -> Route:
-        """The shortest way to `end`. Residents pay a toll for a line, but visitors do not."""
+        """The shortest way to `end`. The tolls are not counted in the distance: a visitor does
+        not weigh coins."""
         best = self._start.distance(end)
-        via: tuple[Position, Position] | None = None
-        for there, name in self._portals:
-            gap, entry = self._entry[name]
+        via: tuple[Position, str, Position, str] | None = None
+        for there, name, parcel_id in self._portals:
+            gap, entry, entry_id = self._entry[name]
             total = gap + walk_from(self._map, there).distance(end)
             if total < best:
-                best, via = total, (entry, there)
+                best, via = total, (entry, entry_id, there, parcel_id)
         if via is None:
             return Route(best, self._start.legs(end))
-        entry, there = via
+        entry, entry_id, there, exit_id = via
         legs = (*self._start.legs(entry), *walk_from(self._map, there).legs(end))
-        return Route(best, legs)
+        return Route(best, legs, (entry_id, exit_id) if entry_id != exit_id else None)
 
 
 def _check_link(

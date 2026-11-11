@@ -10,6 +10,7 @@ from aiverse_server.core.land import Facility, Link, Parcel
 from aiverse_server.core.visitors import Crowd, Visitor
 from aiverse_server.core.world import Position, Resident, World, WorldMap
 from aiverse_server.economy import visitors
+from aiverse_server.economy.admissions import VISITOR_TOLL
 from aiverse_server.economy.ads import CONTENT_LIFETIME, GAME_LIFETIME
 from aiverse_server.economy.visitors import (
     DWELL,
@@ -522,6 +523,74 @@ def test_portals_that_are_not_joined_save_the_visitor_nothing() -> None:
 
     assert the_visitor(after).legs == ((Position(10, 55), Position(85, 55)),)
     assert the_visitor(after).until == 1.0 + 75 / VISITOR_SPEED
+
+
+def joined_portals_world(toll: int = 0, walker: Visitor | None = None) -> World:
+    """Portals on L0-5 and L9-5 joined by a line costing `toll`, a hall on L8-5 and a visitor at
+    (10, 55) who is to pick its first venue at time 1: through the portals is far the shorter
+    way."""
+    portals = (Parcel(0, 5, "a", PORTAL), Parcel(9, 5, "a", PORTAL))
+    base = replace(world_of(*portals, hall(8, 5)), links=(Link("L0-5", "L9-5", toll),))
+    walk = walker or visitor(
+        phase="staying", until=1.0, at=Position(10, 55), target=Position(10, 55), stops_left=2
+    )
+    return replace(base, crowd=crowd_of(walk))
+
+
+def test_a_visitor_going_through_portals_pays_the_visitor_toll_half_to_each_end() -> None:
+    world = joined_portals_world()
+
+    after = at(world, 1.0)
+
+    half = visitor_weight(1.0) * VISITOR_TOLL / 2
+    assert dict(after.admissions.unpaid) == {
+        "L0-5": pytest.approx(half),
+        "L9-5": pytest.approx(half),
+    }
+    assert after.admissions.admitted == ()
+
+
+def test_the_owners_toll_does_not_change_what_a_visitor_pays() -> None:
+    cheap = at(joined_portals_world(toll=0), 1.0)
+
+    dear = at(joined_portals_world(toll=1_000), 1.0)
+
+    assert dear.admissions == cheap.admissions
+    assert the_visitor(dear).legs == the_visitor(cheap).legs
+
+
+def test_a_visitor_who_walks_pays_no_toll() -> None:
+    portals = (Parcel(0, 5, "a", PORTAL), Parcel(9, 5, "a", PORTAL))
+    walk = visitor(
+        phase="staying", until=1.0, at=Position(10, 55), target=Position(10, 55), stops_left=2
+    )
+    unjoined = world_of(*portals, hall(8, 5), crowd=crowd_of(walk))
+
+    after = at(unjoined, 1.0)
+
+    assert the_visitor(after).legs == ((Position(10, 55), Position(85, 55)),)
+    assert after.admissions.unpaid == ()
+
+
+def test_a_visitor_pays_the_toll_for_the_trip_back_to_the_entrance_too() -> None:
+    # Portals on L9-5 (95, 55) and L4-5 (45, 55), the second beside the entrance (50, 50): from
+    # (99, 55) the way out is 4 + 7 through them against 49 on foot.
+    portals = (Parcel(9, 5, "a", PORTAL), Parcel(4, 5, "a", PORTAL))
+    walk = visitor(
+        phase="staying", until=1.0, at=Position(99, 55), target=Position(99, 55), stops_left=0
+    )
+    base = replace(world_of(*portals), links=(Link("L4-5", "L9-5", 0),))
+    world = replace(base, crowd=crowd_of(walk))
+
+    after = at(world, 1.0)
+
+    half = visitor_weight(1.0) * VISITOR_TOLL / 2
+    assert the_visitor(after).goal == "exit"
+    assert len(the_visitor(after).legs) == 2
+    assert dict(after.admissions.unpaid) == {
+        "L9-5": pytest.approx(half),
+        "L4-5": pytest.approx(half),
+    }
 
 
 def test_a_visitor_walking_through_portals_sees_the_slots_on_the_stretches_it_walks() -> None:

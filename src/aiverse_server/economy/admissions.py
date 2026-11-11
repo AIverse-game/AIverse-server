@@ -9,6 +9,11 @@ the holders of the parcel's shares, see `shares.py`, in whole coins, the part of
 carried to the next payday. Ledger channel `visitors`. A garden in the block adds a tenth,
 `gardens.py`.
 
+Visitors also pay a small toll, `VISITOR_TOLL`, for each trip through a network of portals, see
+`portals.Router`. It is set by the system, not by the owners of the line, and comes from outside
+the town like a fee; `charge` puts it on the books of the two portals' parcels, half each, and it
+is paid out at the paydays with the fees. Visitors do not weigh it when they choose where to go.
+
 Like the rest of the world, every function returns a new world and leaves its argument
 untouched.
 """
@@ -25,6 +30,11 @@ from .sponsors import latest_payday, next_payday_after
 
 FEES: dict[str, int] = {"workspace": 8, "game_hall": 12, "mall": 2, "garden": 1}
 """Coins one person pays to get into a facility of each kind."""
+
+VISITOR_TOLL = 1
+"""Coins one person pays for one trip through a network of portals: the price of the cheapest
+door, a garden's. Half goes to the holders of the portal they went in at, half to those of the
+portal they came out of. The owners' tolls, `Link.toll`, are for residents only."""
 
 _SLACK = 1e-9
 
@@ -89,10 +99,13 @@ def next_admission_payday(world: World) -> float | None:
 
 def admit(book: AdmissionBook, parcel_id: str, people: float, fee: int) -> AdmissionBook:
     """`book` after `people` went into the facility on `parcel_id` at `fee` coins each."""
-    unpaid = dict(book.unpaid)
-    unpaid[parcel_id] = unpaid.get(parcel_id, 0.0) + people * fee
     admitted = dict(book.admitted)
     admitted[parcel_id] = admitted.get(parcel_id, 0.0) + people
-    return replace(
-        book, unpaid=tuple(sorted(unpaid.items())), admitted=tuple(sorted(admitted.items()))
-    )
+    return replace(charge(book, parcel_id, people * fee), admitted=tuple(sorted(admitted.items())))
+
+
+def charge(book: AdmissionBook, parcel_id: str, coins: float) -> AdmissionBook:
+    """`book` with `coins` more owed to the holders of `parcel_id`, nobody being let in."""
+    unpaid = dict(book.unpaid)
+    unpaid[parcel_id] = unpaid.get(parcel_id, 0.0) + coins
+    return replace(book, unpaid=tuple(sorted(unpaid.items())))

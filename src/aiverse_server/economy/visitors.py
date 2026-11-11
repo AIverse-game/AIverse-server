@@ -24,7 +24,11 @@ see `ads.appeal`), less
 or standing there and `SAME_KIND_COST` for a venue of the kind it has just left, plus noise.
 The walk is the shorter of walking on foot and going through a network of portals, see
 `portals.Router`, so the lines change which ad slots are passed, and whether a visitor takes
-one is its own choice. Visitors use the lines for nothing. Where the map has islands the walk
+one is its own choice. A visitor pays `admissions.VISITOR_TOLL` coins a person for each trip
+through a network, half to the holders of the portal it goes in at and half to those of the
+portal it comes out of, from outside the town like a door fee, see `_charge_toll`; the owners'
+tolls are for residents. A visitor does not weigh coins, so the toll does not change where it
+goes. Where the map has islands the walk
 keeps to them and crosses from one to the next only by the bridges, see `islands.py`;
 residents are not held to that. With no venue to go to the visitor roams to a random spot
 nearby, on its own island, and looks again.
@@ -48,9 +52,10 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
+from ..core.admissions import AdmissionBook
 from ..core.visitors import Crowd, Goal, Visitor
 from ..core.world import Position, World
-from .admissions import FEES, admit
+from .admissions import FEES, VISITOR_TOLL, admit, charge
 from .ads import appeal
 from .islands import on_island
 from .land import facility_centre, town_centre
@@ -273,7 +278,7 @@ def advance_crowd(world: World) -> World:
     admissions = world.admissions
     moved: dict[int, Visitor] = {}
     for visitor in due:
-        stepped, seen, entered = _step(world, visitor, entrance, town, heading)
+        stepped, seen, entered, crossed = _step(world, visitor, entrance, town, heading)
         moved[visitor.id] = stepped
         for parcel_id, people in seen.items():
             views[parcel_id] = views.get(parcel_id, 0.0) + people
@@ -281,6 +286,8 @@ def advance_crowd(world: World) -> World:
             admissions = admit(
                 admissions, entered, visitor_weight(visitor.until), FEES[town.kinds[entered]]
             )
+        if crossed is not None:
+            admissions = _charge_toll(admissions, crossed, visitor_weight(visitor.until))
     visitors = tuple(moved.get(visitor.id, visitor) for visitor in world.crowd.visitors)
     return replace(
         world,
@@ -295,11 +302,11 @@ def _step(
     entrance: Position,
     town: _Town,
     heading: Counter[str],
-) -> tuple[Visitor, dict[str, float], str | None]:
+) -> tuple[Visitor, dict[str, float], str | None, tuple[str, str] | None]:
     """The visitor after the phase that has just ended, the people it has counted at each ad
-    slot it passed, and the parcel of the workspace, mall or game hall it has just paid to get
-    into, if any. `heading` is how many visitors are going or standing at each place, and is
-    kept up to date."""
+    slot it passed, the parcel of the workspace, mall or game hall it has just paid to get
+    into, if any, and the parcels of the two portals it has set off through, if any. `heading`
+    is how many visitors are going or standing at each place, and is kept up to date."""
     now = visitor.until
     seed = world.crowd.seed
     if visitor.phase == "away":
@@ -318,12 +325,14 @@ def _step(
             route=("workspace", "game_hall") if working else (),
             stops_left=0 if working else stops,
         )
-        return _head_for(world, arrived, now, town, heading), {}, None
+        sent, crossed = _head_for(world, arrived, now, town, heading)
+        return sent, {}, None, crossed
     if visitor.phase == "staying":
         if visitor.stop is not None:
             heading[visitor.stop] -= 1
         gone = replace(visitor, stop=None, goal="exit")
-        return _head_for(world, gone, now, town, heading, just_left=visitor.stop), {}, None
+        sent, crossed = _head_for(world, gone, now, town, heading, just_left=visitor.stop)
+        return sent, {}, None, crossed
     # A walk has ended.
     kind = town.kinds[visitor.stop] if visitor.stop is not None else None
     dwell = 0.0
@@ -339,11 +348,12 @@ def _step(
         # Going in uses up a stop too; a visitor on the route has none of its own to count.
         left = max(visitor.stops_left - 1, 0)
         stays = replace(here, phase="staying", until=now + dwell, stops_left=left)
-        return stays, gained, visitor.stop
+        return stays, gained, visitor.stop, None
     if visitor.goal == "exit":
         gap = MIN_AWAY + _dice(seed, visitor, "away") * (MAX_AWAY - MIN_AWAY)
-        return replace(here, phase="away", until=now + gap, stop=None), gained, None
-    return _head_for(world, here, now, town, heading), gained, None
+        return replace(here, phase="away", until=now + gap, stop=None), gained, None, None
+    sent, crossed = _head_for(world, here, now, town, heading)
+    return sent, gained, None, crossed
 
 
 def _head_for(
@@ -353,9 +363,10 @@ def _head_for(
     town: _Town,
     heading: Counter[str],
     just_left: str | None = None,
-) -> Visitor:
+) -> tuple[Visitor, tuple[str, str] | None]:
     """Send the visitor, standing at `visitor.target`, to the next venue it picks, to the
-    entrance when it has had enough, or roaming when it finds no venue to go to. A visitor on a
+    entrance when it has had enough, or roaming when it finds no venue to go to; with the
+    parcels of the two portals it goes through on the way, if any. A visitor on a
     route goes to a venue for each stop on it, skipping those with nowhere to go. The venue it
     has just left, `just_left`, is not picked again straight away: from there the walk is free,
     so it would win every time, and each entry pays a fee."""
@@ -381,7 +392,7 @@ def _head_for(
     if stop is not None:
         heading[stop] += 1
     route = router.to(target)
-    return replace(
+    sent = replace(
         visitor,
         phase="walking",
         until=now + route.distance / VISITOR_SPEED,
@@ -395,6 +406,15 @@ def _head_for(
         step=visitor.step + 1,
         seen=tuple((parcel_id, until) for parcel_id, until in visitor.seen if until > now),
     )
+    return sent, route.portals
+
+
+def _charge_toll(book: AdmissionBook, crossed: tuple[str, str], weight: float) -> AdmissionBook:
+    """`book` with the toll of one visitor, who stands for `weight` people, going in at the first
+    of the two portals and out at the second: half of it on each parcel."""
+    for parcel_id in crossed:
+        book = charge(book, parcel_id, weight * VISITOR_TOLL / 2)
+    return book
 
 
 def _pick(

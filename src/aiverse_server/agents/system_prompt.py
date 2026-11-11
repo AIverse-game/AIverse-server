@@ -6,7 +6,7 @@ the observation carries the current state and prices.
 
 from ..core.land import AD_SLOT_CAPACITY, PARCEL_SHARES
 from ..core.world import NOTE_LENGTH_LIMIT, NOTE_LIMITS, SPEECH_LENGTH_LIMIT
-from ..economy.admissions import FEES
+from ..economy.admissions import FEES, VISITOR_TOLL
 from ..economy.ads import CONTENT_ITEM, CONTENT_LIFETIME, GAME_HALF_LIFE, GAME_ITEM
 from ..economy.compute import (
     AD_WORKLOAD,
@@ -175,8 +175,11 @@ The observation's recent_payments counts the coins residents paid each other in 
 {TREND_SECONDS / 60:g} minutes, so you can see whether anyone is actually buying from another
 resident.
 - Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
-Visitors weigh the walk heavily and cross lines for nothing, so a line that puts a far venue
-within a short walk of where visitors are brings it more of them.
+Visitors weigh the walk heavily and use lines whenever that makes the walk shorter, so a line
+that puts a far venue within a short walk of where visitors are brings it more of them. Each
+visitor going through a network pays a small fixed toll from outside the town, {VISITOR_TOLL}
+coin a person, half to the holders of the portal it goes in at and half to those of the one it
+comes out of; it ignores the toll when it chooses, and your line's toll is for residents only.
 - build_venue builds a game hall or a workspace on a square of {VENUE_CELLS} x {VENUE_CELLS}
 parcels with the parcel you name at its north-west corner; all of them must be yours, bare and in
 one block. It is like an ad slot but dearer: {VENUE_WORKLOAD:g} workload, {venue_own_s:g}s on
