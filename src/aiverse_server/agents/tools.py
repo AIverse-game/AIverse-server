@@ -82,7 +82,6 @@ from ..game.actions import (
     ProposeContract,
     RespondToEvent,
     Say,
-    Teleport,
     WithdrawEvent,
 )
 from ..game.layout import VENUE_CELLS
@@ -240,14 +239,9 @@ class LinkPortalsArgs(_Args):
         "resident's, who is then asked."
     )
     toll: StrictInt = Field(
-        description=f"Coins one trip along the line costs, 0 to {MAX_TOLL}, paid by whoever "
-        "travels to the holders of both parcels' shares."
-    )
-
-
-class TeleportArgs(_Args):
-    to_parcel_id: str = Field(
-        description="id of the parcel at the other end of a line from the portal you stand in."
+        default=0,
+        description=f"0 to {MAX_TOLL}. Residents do not teleport, so nobody pays it; visitors "
+        "pay the system's fixed toll, not this one.",
     )
 
 
@@ -563,9 +557,9 @@ TOOLS = (
         f"your own compute (free, one at a time, later jobs queue), "
         f"{job_seconds(PORTAL_WORKLOAD, 'on_demand'):g} s on a node hired for it "
         f"({on_demand_cost(PORTAL_WORKLOAD)} coins), or on one of your subscribed generative "
-        "nodes. A portal earns only tolls: it matters through its lines (link_portals) "
-        "and trips (teleport), and visitors crossing a line that ends at it pay a small toll "
-        "shared by the holders of the portals at the two ends of the line.",
+        "nodes. A portal earns only tolls: it matters through its lines (link_portals), and "
+        "visitors crossing a line that ends at it pay a small toll shared by the holders of "
+        "the portals at the two ends of the line.",
         BuildPortalArgs,
     ),
     ToolSpec(
@@ -602,17 +596,10 @@ TOOLS = (
         "the line is drawn at once; when the other belongs to someone else they are asked, and "
         "it is drawn if they accept. The portals must be at least "
         f"{MIN_LINK_DISTANCE:g} units apart and a portal ends at most {MAX_LINKS_PER_PORTAL} "
-        "lines. A line lets residents teleport between the two portals for the toll. Visitors "
-        "may also go through the network it makes when that shortens their walk to a venue; "
-        "they pay the system's small fixed toll for each line they cross, not yours.",
+        "lines. Residents only walk, they never teleport. Visitors go through the network "
+        "when that shortens their walk to a venue; they pay the system's small fixed toll for "
+        "each line they cross, half to the holders of the portal at each end.",
         LinkPortalsArgs,
-    ),
-    ToolSpec(
-        "teleport",
-        "Travel at once from the portal in the parcel you stand in to the portal at the other "
-        "end of one of its lines, paying the line's toll to the holders of the shares of both "
-        "parcels. No time is spent, and you cannot while walking.",
-        TeleportArgs,
     ),
     ToolSpec(
         "make_content",
@@ -833,9 +820,6 @@ class ResidentTools:
         arguments = {"parcel_id": parcel_id, "other_parcel_id": other_parcel_id, "toll": toll}
         return self.call("link_portals", arguments)
 
-    def teleport(self, to_parcel_id: str) -> ToolResult:
-        return self.call("teleport", {"to_parcel_id": to_parcel_id})
-
     def make_content(
         self,
         source: JobSource,
@@ -970,9 +954,6 @@ class ResidentTools:
                 if len(self.game.world.links) > lines:
                     return f"{args.parcel_id} and {args.other_parcel_id} are now linked"
                 return f"asked the owner of {args.other_parcel_id}; the line waits for their answer"
-            case TeleportArgs():
-                act(Teleport(me, args.to_parcel_id))
-                return f"arrived at {args.to_parcel_id}"
             case MakeContentArgs():
                 act(MakeContent(me, args.source, args.node_id, args.content))
                 job = self.game.world.compute.jobs[-1]

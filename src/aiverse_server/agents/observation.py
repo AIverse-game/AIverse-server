@@ -351,7 +351,8 @@ class LineView:
     to_owner: str
     to_centre: Position
     toll: int
-    """Coins one trip along the line costs, either way."""
+    """The toll its owners set, 0 to `max_toll`. Residents do not teleport, so nobody pays it;
+    visitors pay the system's fixed toll instead."""
 
 
 @dataclass(frozen=True)
@@ -366,7 +367,7 @@ class PortalView:
 
 @dataclass(frozen=True)
 class TransportView:
-    """Portals, the lines between them and the trips along them."""
+    """Portals and the lines between them."""
 
     max_portals: int
     """Portals one resident may hold, built or being built."""
@@ -375,8 +376,8 @@ class TransportView:
     """Least distance between the centres of a line's two parcels."""
     max_toll: int
     here: PortalView | None
-    """The portal in the parcel the resident stands in, whoever owns it: teleport to one of
-    its lines. None without one, and while walking."""
+    """The portal in the parcel the resident stands in, whoever owns it, with its lines. None
+    without one, and while walking."""
     mine: tuple[PortalView, ...]
     others: tuple[PortalView, ...]
     """Portals of other residents, nearest the middle of the map first, a few of them."""
@@ -394,8 +395,8 @@ class LinkProposalView:
     from_centre: Position
     to_centre: Position
     toll: int
-    """Coins one trip along the line would cost, split between the holders of both parcels'
-    shares."""
+    """The toll the proposer set, 0 to `max_toll`. Residents do not teleport, so nobody pays it;
+    visitors pay the system's fixed toll instead."""
 
 
 @dataclass(frozen=True)

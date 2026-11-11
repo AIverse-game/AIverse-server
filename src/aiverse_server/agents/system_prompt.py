@@ -174,12 +174,12 @@ The land observation shows how many people are passing each parcel now.
 The observation's recent_payments counts the coins residents paid each other in the past
 {TREND_SECONDS / 60:g} minutes, so you can see whether anyone is actually buying from another
 resident.
-- Portals (discover_tools: transport) join parcels by lines; teleport crosses one for a toll.
-Visitors weigh the walk heavily and use lines whenever that makes the walk shorter, so a line
-that puts a far venue within a short walk of where visitors are brings it more of them. A
-visitor pays a small fixed toll from outside the town, {VISITOR_TOLL} coin a person, for each
-line it crosses, half to the holders of the portal at each end of the line; it ignores the toll
-when it chooses, and your line's toll is for residents only.
+- Portals (build_portal) join parcels by lines (link_portals); residents only walk. Visitors
+weigh the walk heavily and use lines whenever that makes the walk shorter, and pay a small fixed
+toll from outside the town, {VISITOR_TOLL} coin a person, for each line they cross, half to the
+holders of the portal at each end of the line; they ignore the toll when they choose. So the
+holder of a portal at the end of a line that visitors cross on their way is paid a share of the
+toll.
 - build_venue builds a game hall or a workspace on a square of {VENUE_CELLS} x {VENUE_CELLS}
 parcels with the parcel you name at its north-west corner; all of them must be yours, bare and in
 one block. It is like an ad slot but dearer: {VENUE_WORKLOAD:g} workload, {venue_own_s:g}s on

@@ -18,7 +18,8 @@ from ..economy.compute import (
     promised_builder,
     subscription_cost,
 )
-from ..economy.land import claimed, for_sale_at, plot_at, venue_room
+from ..economy.land import claimed, for_sale_at, venue_room
+from ..economy.portals import MAX_PORTALS, portal_count
 from .observation import Observation
 from .tools import TOOLS, ResidentTools
 
@@ -26,7 +27,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "land": ("buy_parcel", "joint_buy_parcel"),
     "compute": ("buy_node", "build_ad", "build_garden", "build_venue", "commission_build"),
     "content": ("make_content", "place_content"),
-    "transport": ("build_portal", "link_portals", "teleport"),
+    "transport": ("build_portal", "link_portals"),
     "exchange": ("place_order", "cancel_order"),
     "offers": (
         "offer_to_buy",
@@ -89,6 +90,25 @@ def selected_tool_names(observation: Observation) -> set[str]:
         names.add("build_ad")
     if any(parcel.garden_room for parcel in observation.land.mine):
         names.add("build_garden")
+    # A portal is built only by a parcel's owner; `land.mine` also lists parcels one merely
+    # holds shares in, which `land.stakes` names.
+    stakes = {stake.id for stake in observation.land.stakes}
+    portals_held = (len(observation.transport.mine) if observation.transport else 0) + sum(
+        job.kind == "build_portal" for job in compute.my_jobs
+    )
+    if (
+        portals_held < MAX_PORTALS
+        and any(node.kind == "generative" and node.working_on is None for node in compute.my_nodes)
+        and any(
+            parcel.id not in stakes
+            and parcel.facility is None
+            and parcel.building_ends_in is None
+            and parcel.covered_by is None
+            and parcel.promised_to is None
+            for parcel in observation.land.mine
+        )
+    ):
+        names.add("build_portal")
     if any(
         (parcel.venue_room or parcel.mall_orientations) and parcel.promised_to is None
         for parcel in observation.land.mine
@@ -124,8 +144,6 @@ def selected_tool_names(observation: Observation) -> set[str]:
             names.add("joint_buy_parcel")
             if me.coins >= here.price:
                 names.add("buy_parcel")
-        if transport is not None and transport.here is not None and transport.here.lines:
-            names.add("teleport")
         if any(not resident.left and resident.id != me.id for resident in observation.residents):
             names.add("commission_build")
         if (
@@ -182,6 +200,24 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         names.add("build_ad")
     if any(parcel.owner_id == me.id and garden_room(world, parcel, taken) for parcel in my_parcels):
         names.add("build_garden")
+    busy_nodes = {job.node_id for job in book.jobs if job.owner_id == me.id}
+    if (
+        portal_count(world, me.id) < MAX_PORTALS
+        and any(
+            node.owner_id == me.id
+            and node.kind == "generative"
+            and node.expires_at > world.time
+            and node.id not in busy_nodes
+            for node in book.nodes
+        )
+        and any(
+            parcel.owner_id == me.id
+            and (parcel.col, parcel.row) not in taken
+            and promised_builder(world, parcel.id, None) is None
+            for parcel in my_parcels
+        )
+    ):
+        names.add("build_portal")
     if any(
         (
             venue_room(world, parcel, taken, resident_id=me.id)
@@ -238,9 +274,6 @@ def last_request_tool_names(tools: ResidentTools) -> set[str]:
         )
     if any(parcel.held_by(me.id) for parcel in world.parcels):
         names.add("offer_shares")
-    here = plot_at(world, me.position).id
-    if any(link.joins(here) for link in world.links):
-        names.add("teleport")
     if any(event.recipient_id == me.id for event in world.events.pending):
         names.add("respond_to_offer")
     if any(event.sender_id == me.id for event in world.events.pending):
